@@ -60,6 +60,7 @@ static struct para_pair_s logo_args[] = {
 static struct para_pair_s mode_infos[] = {
 	{"640x480p60hz", TVMODE_640x480p60hz},
 	{"800x480p60hz", TVMODE_800x480p60hz},
+	{"480x800p60hz", TVMODE_480x800p60hz},
 	{"800x600p60hz", TVMODE_800x600p60hz},
 	{"1024x600p60hz", TVMODE_1024x600p60hz},
 	{"1024x768p60hz", TVMODE_1024x768p60hz},
@@ -94,6 +95,7 @@ static struct para_pair_s mode_infos[] = {
 	{"smpte24hz", VMODE_4K2K_SMPTE},
 	{"2160p50hz420", VMODE_4K2K_50HZ_Y420},
 	{"2160p60hz420", VMODE_4K2K_60HZ_Y420},
+	{"custombuilt", TVMODE_CUSTOMBUILT},
 };
 
 struct logo_info_s {
@@ -194,6 +196,25 @@ int set_osd_freescaler(int index, enum vmode_e new_mode)
 	pr_info("finish");
 	return 0;
 }
+
+enum vmode_e get_initial_vmode(void)
+{
+	enum vmode_e cur_mode = VMODE_MAX;
+
+#if defined(CONFIG_ARCH_MESON64_ODROIDC2)
+	int hdp_state = 1;
+#else
+	int hdp_state = get_hpd_state();
+#endif
+
+	if (hdp_state)
+		cur_mode = hdmimode;
+	else
+		cur_mode = cvbsmode;
+
+	return cur_mode;
+}
+EXPORT_SYMBOL(get_initial_vmode);
 
 static int refresh_mode_and_logo(bool first)
 {

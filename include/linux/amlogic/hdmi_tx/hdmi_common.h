@@ -170,6 +170,7 @@ enum hdmi_vic {
 
 	HDMIV_640x480p60hz = HDMITX_VESA_OFFSET,
 	HDMIV_800x480p60hz,
+	HDMIV_480x800p60hz,
 	HDMIV_800x600p60hz,
 	HDMIV_1024x600p60hz,
 	HDMIV_1024x768p60hz,
@@ -179,12 +180,18 @@ enum hdmi_vic {
 	HDMIV_1366x768p60hz,
 	HDMIV_1440x900p60hz,
 	HDMIV_1600x900p60hz,
+	HDMIV_1600x1200p60hz,
 	HDMIV_1680x1050p60hz,
 	HDMIV_1920x1200p60hz,
 	HDMIV_2560x1440p60hz,
 	HDMIV_2560x1600p60hz,
 	HDMIV_2560x1080p60hz,
 	HDMIV_3440x1440p60hz,
+	/*
+	 the following vic is custom-built one
+	 and detailed parameters are defined in boot.ini
+	*/
+	HDMIV_CUSTOMBUILT,
 };
 
 /* Compliance with old definitions */

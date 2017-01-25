@@ -1601,6 +1601,7 @@ static struct dispmode_vic dispmode_vic_tab[] = {
 	{"2160p50hz420", HDMI_4k2k_50_y420},
 	{"640x480p60hz", HDMIV_640x480p60hz},
 	{"800x480p60hz", HDMIV_800x480p60hz},
+	{"480x800p60hz", HDMIV_480x800p60hz},
 	{"800x600p60hz", HDMIV_800x600p60hz},
 	{"1024x600p60hz", HDMIV_1024x600p60hz},
 	{"1024x768p60hz", HDMIV_1024x768p60hz},
@@ -1625,12 +1626,14 @@ hdmitx: video: get current mode: 1280x1024
 	{"1366x768p60hz", HDMIV_1366x768p60hz},
 	{"1440x900p60hz", HDMIV_1440x900p60hz},
 	{"1600x900p60hz", HDMIV_1600x900p60hz},
+	{"1600x1200p60hz", HDMIV_1600x1200p60hz},
 	{"1680x1050p60hz", HDMIV_1680x1050p60hz},
 	{"1920x1200p60hz", HDMIV_1920x1200p60hz},
 	{"2560x1440p60hz", HDMIV_2560x1440p60hz},
 	{"2560x1600p60hz", HDMIV_2560x1600p60hz},
 	{"2560x1080p60hz", HDMIV_2560x1080p60hz},
 	{"3440x1440p60hz", HDMIV_3440x1440p60hz},
+	{"custombuilt", HDMIV_CUSTOMBUILT},
 };
 
 int hdmitx_edid_VIC_support(enum hdmi_vic vic)

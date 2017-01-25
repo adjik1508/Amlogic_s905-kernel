@@ -33,7 +33,7 @@
 #include <linux/amlogic/hdmi_tx/hdmi_tx_module.h>
 #include <linux/amlogic/hdmi_tx/hdmi_tx_compliance.h>
 
-static unsigned char hdmi_output_rgb;
+unsigned char hdmi_output_rgb = 0;
 static void hdmitx_set_spd_info(struct hdmitx_dev *hdmitx_device);
 static void hdmi_set_vend_spec_infofram(struct hdmitx_dev *hdmitx_device,
 	enum hdmi_vic VideoCode);
@@ -455,6 +455,17 @@ static struct hdmitx_vidpara hdmi_tx_video_params[] = {
 		.sc		= SC_SCALE_HORIZ_VERT,
 	},
 	{
+		.VIC		= HDMIV_480x800p60hz,
+		.color_prefer	= COLOR_SPACE_RGB444,
+		.color_depth	= hdmi_color_depth_24B,
+		.bar_info	= B_BAR_VERT_HORIZ,
+		.repeat_time	= NO_REPEAT,
+		.aspect_ratio	= TV_ASPECT_RATIO_16_9,
+		.cc		= CC_ITU709,
+		.ss		= SS_SCAN_UNDER,
+		.sc		= SC_SCALE_HORIZ_VERT,
+	},
+	{
 		.VIC		= HDMIV_800x600p60hz,
 		.color_prefer	= COLOR_SPACE_RGB444,
 		.color_depth	= hdmi_color_depth_24B,
@@ -554,6 +565,17 @@ static struct hdmitx_vidpara hdmi_tx_video_params[] = {
 		.sc		= SC_SCALE_HORIZ_VERT,
 	},
 	{
+		.VIC		= HDMIV_1600x1200p60hz,
+		.color_prefer	= COLOR_SPACE_RGB444,
+		.color_depth	= hdmi_color_depth_24B,
+		.bar_info	= B_BAR_VERT_HORIZ,
+		.repeat_time	= NO_REPEAT,
+		.aspect_ratio	= TV_ASPECT_RATIO_4_3,
+		.cc		= CC_ITU709,
+		.ss		= SS_SCAN_UNDER,
+		.sc		= SC_SCALE_HORIZ_VERT,
+	},
+	{
 		.VIC		= HDMIV_1680x1050p60hz,
 		.color_prefer	= COLOR_SPACE_RGB444,
 		.color_depth	= hdmi_color_depth_24B,
@@ -616,6 +638,17 @@ static struct hdmitx_vidpara hdmi_tx_video_params[] = {
 		.repeat_time	= NO_REPEAT,
 		.aspect_ratio   = TV_ASPECT_RATIO_16_9,
 		.cc		= CC_ITU709,
+		.ss		= SS_SCAN_UNDER,
+		.sc		= SC_SCALE_HORIZ_VERT,
+	},
+	{
+		.VIC		= HDMIV_CUSTOMBUILT,
+		.color_prefer   = COLOR_SPACE_RGB444,
+		.color_depth	= hdmi_color_depth_24B,
+		.bar_info	= B_BAR_VERT_HORIZ,
+		.repeat_time	= NO_REPEAT,
+		.aspect_ratio   = TV_ASPECT_RATIO_16_9,
+		.cc		= CC_ITU709, /* FIXME for interlaced mode */
 		.ss		= SS_SCAN_UNDER,
 		.sc		= SC_SCALE_HORIZ_VERT,
 	},
