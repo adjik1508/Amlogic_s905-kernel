@@ -1,7 +1,7 @@
 /*
- * drivers/amlogic/cpu_version/cpu.c
+ * drivers/amlogic/cpu_version/meson64_cpu.c
  *
- * Copyright (C) 2015 Amlogic, Inc. All rights reserved.
+ * Copyright (C) 2017 Amlogic, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -13,7 +13,7 @@
  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
  * more details.
  *
-*/
+ */
 
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -34,11 +34,39 @@ int get_meson_cpu_version(int level)
 }
 EXPORT_SYMBOL(get_meson_cpu_version);
 
+/*
+ * detect if a cpu id is big cpu
+ */
+int arch_big_cpu(int cpu)
+{
+	int type;
+	struct device_node *cpu_version;
+
+	cpu_version = of_find_node_by_name(NULL, "cpu_version");
+	if (cpu_version)
+		assist_hw_rev = of_iomap(cpu_version, 0);
+	else
+		return 0;
+
+	type = readl(assist_hw_rev) >> 24;
+	switch (type) {
+	case MESON_CPU_MAJOR_ID_GXM:	/* 0 ~ 3 is faster cpu for GXM */
+		if (cpu < 4)
+			return 1;
+
+	default:
+		return 0;
+	}
+	return 0;
+}
+EXPORT_SYMBOL(arch_big_cpu);
+
 int __init meson_cpu_version_init(void)
 {
 	unsigned int ver;
 	struct device_node *cpu_version;
-	cpu_version = of_find_node_by_path("/cpu_version");
+
+	cpu_version = of_find_node_by_name(NULL, "cpu_version");
 	if (cpu_version)
 		assist_hw_rev = of_iomap(cpu_version, 0);
 	else
@@ -50,7 +78,10 @@ int __init meson_cpu_version_init(void)
 	ver = (readl(assist_hw_rev) >> 8) & 0xff;
 
 	meson_cpu_version[MESON_CPU_VERSION_LVL_MINOR] = ver;
-	pr_info("Meson chip version = Rev%X (%X:%X - %X:%X)\n", ver,
+	ver =  (readl(assist_hw_rev) >> 16) & 0xff;
+	meson_cpu_version[MESON_CPU_VERSION_LVL_PACK] = ver;
+	pr_info("Meson chip version = Rev%X (%X:%X - %X:%X)\n",
+		meson_cpu_version[MESON_CPU_VERSION_LVL_MINOR],
 		meson_cpu_version[MESON_CPU_VERSION_LVL_MAJOR],
 		meson_cpu_version[MESON_CPU_VERSION_LVL_MINOR],
 		meson_cpu_version[MESON_CPU_VERSION_LVL_PACK],

@@ -61,6 +61,8 @@
 #include "dwc_otg_dbg.h"
 #include <linux/platform_device.h>
 #include <linux/usb/gadget.h>
+#include <linux/amlogic/usb-gxl.h>
+#include <linux/of_device.h>
 
 static struct gadget_wrapper {
 	dwc_otg_pcd_t *pcd;
@@ -775,15 +777,10 @@ static int dwc_otg_pcd_udc_start(struct usb_gadget *g,
  *
  * @param driver The driver being unregistered
  */
-static int dwc_otg_pcd_udc_stop(struct usb_gadget *g,
-		struct usb_gadget_driver *driver)
+static int dwc_otg_pcd_udc_stop(struct usb_gadget *g)
 {
 	if (gadget_wrapper == 0) {
 		return -ENODEV;
-	}
-
-	if (driver == 0 || driver != gadget_wrapper->driver) {
-		return -EINVAL;
 	}
 
 	gadget_wrapper->driver = 0;
@@ -1164,6 +1161,11 @@ void gadget_add_eps(struct gadget_wrapper *d)
 		 * here?  Before EP type is set?
 		 */
 		ep->maxpacket = MAX_PACKET_SIZE;
+		ep->caps.dir_in = 1;
+		ep->caps.type_control = 1;
+		ep->caps.type_iso = 1;
+		ep->caps.type_bulk = 1;
+		ep->caps.type_int = 1;
 		usb_ep_set_maxpacket_limit(ep, MAX_PACKET_SIZE);
 		list_add_tail(&ep->ep_list, &d->gadget.ep_list);
 	}
@@ -1183,7 +1185,11 @@ void gadget_add_eps(struct gadget_wrapper *d)
 		 */
 		ep->maxpacket = MAX_PACKET_SIZE;
 		usb_ep_set_maxpacket_limit(ep, MAX_PACKET_SIZE);
-
+		ep->caps.dir_out = 1;
+		ep->caps.type_control = 1;
+		ep->caps.type_iso = 1;
+		ep->caps.type_bulk = 1;
+		ep->caps.type_int = 1;
 		list_add_tail(&ep->ep_list, &d->gadget.ep_list);
 	}
 
@@ -1234,6 +1240,7 @@ static struct gadget_wrapper *alloc_wrapper(struct platform_device *pdev)
 	d->gadget.is_dualspeed = dwc_otg_pcd_is_dualspeed(otg_dev->pcd);
 #endif
 	d->gadget.is_otg = dwc_otg_pcd_is_otg(otg_dev->pcd);
+	d->gadget.quirk_stall_not_supp = 1;
 
 	d->driver = 0;
 
@@ -1244,6 +1251,24 @@ static void free_wrapper(struct gadget_wrapper *d)
 {
 	DWC_FREE(d);
 	d = NULL;
+}
+
+int dwc_usb_change(struct notifier_block *nb,
+			      unsigned long value, void *pdata)
+{
+	dwc_otg_device_t *otg_dev;
+
+	otg_dev = container_of(nb, dwc_otg_device_t, nb);
+
+	if (value) {
+		DWC_DEBUGPL(DBG_PCDV, "start usb device\n");
+		otg_dev->pcd->core_if->pcd_cb->start(otg_dev->pcd);
+	} else {
+		DWC_DEBUGPL(DBG_PCDV, "stop usb device\n");
+		otg_dev->pcd->core_if->pcd_cb->stop(otg_dev->pcd);
+	}
+
+	return 0;
 }
 
 /**
@@ -1265,6 +1290,11 @@ int pcd_init(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
+#ifdef CONFIG_AMLOGIC_USB3PHY
+	aml_new_usb_register_notifier(&otg_dev->nb);
+	otg_dev->nb.notifier_call = dwc_usb_change;
+#endif
+
 	otg_dev->pcd->otg_dev = otg_dev;
 	gadget_wrapper = alloc_wrapper(pdev);
 
@@ -1276,13 +1306,15 @@ int pcd_init(struct platform_device *pdev)
 	 * Setup interupt handler
 	 */
 
+	of_dma_configure(&pdev->dev, pdev->dev.of_node);
+
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0)
 		return -ENODEV;
 
 	DWC_DEBUGPL(DBG_ANY, "registering handler for irq%d\n", irq);
 	retval = request_irq(irq, dwc_otg_pcd_irq,
-			     IRQF_SHARED | IRQF_DISABLED,
+			     IRQF_SHARED,
 			     gadget_wrapper->gadget.name, otg_dev->pcd);
 	if (retval != 0) {
 		DWC_ERROR("request of irq%d failed\n", irq);
@@ -1326,18 +1358,19 @@ void pcd_remove(struct platform_device *pdev)
 	free_irq(irq, pcd);
 	free_wrapper(gadget_wrapper);
 	dwc_otg_pcd_remove(otg_dev->pcd);
+#ifdef CONFIG_AMLOGIC_USB3PHY
+	aml_new_usb_unregister_notifier(&otg_dev->nb);
+#endif
 	otg_dev->pcd = 0;
 }
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
 int get_pcd_ums_state(dwc_otg_pcd_t *pcd)
 {
-#if 0
 	if (gadget_wrapper &&
 		(pcd == gadget_wrapper->pcd) &&
 		gadget_wrapper->gadget.priv_data)
 		return *(int *)gadget_wrapper->gadget.priv_data;
-#endif
 	return 0;
 }
 #endif

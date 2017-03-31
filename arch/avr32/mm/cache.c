@@ -12,7 +12,7 @@
 #include <asm/cacheflush.h>
 #include <asm/cachectl.h>
 #include <asm/processor.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/syscalls.h>
 
 /*
@@ -111,6 +111,7 @@ void flush_icache_range(unsigned long start, unsigned long end)
 	__flush_icache_range(start & ~(linesz - 1),
 			     (end + linesz - 1) & ~(linesz - 1));
 }
+EXPORT_SYMBOL(flush_icache_range);
 
 /*
  * This one is called from __do_fault() and do_swap_page().

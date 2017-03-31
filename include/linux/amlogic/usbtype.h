@@ -1,7 +1,7 @@
 /*
  * include/linux/amlogic/usbtype.h
  *
- * Copyright (C) 2015 Amlogic, Inc. All rights reserved.
+ * Copyright (C) 2017 Amlogic, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -13,12 +13,23 @@
  * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
  * more details.
  *
-*/
+ */
 
 #ifndef __USB_CLK_HEADER_
 #define __USB_CLK_HEADER_
 
 #include <linux/platform_device.h>
+
+#define MESON8		"meson8"
+#define G9TV		"g9TV"
+#define GXBABY		"gxbaby"
+#define GXBABYTV	"gxtvbaby"
+#define GXL		"gxl"
+
+#define USB_NORMAL	0
+#define USB_HOST_ONLY	1
+#define USB_DEVICE_ONLY  2
+#define	USB_OTG          3
 
 #define USB_BC_MODE_DISCONNECT	0	/* Disconnected */
 #define USB_BC_MODE_SDP		1	/* PC */
@@ -69,7 +80,7 @@ enum lm_device_type_e {
 };
 
 int clk_enable_usb(struct platform_device *pdev, const char *s_clock_name,
-		unsigned long usb_peri_reg, const char *cpu_type);
+	unsigned long usb_peri_reg, const char *cpu_type, int controller_type);
 
 int clk_disable_usb(struct platform_device *pdev, const char *s_clock_name,
 		unsigned long usb_peri_reg, const char *cpu_type);
@@ -80,7 +91,7 @@ int clk_resume_usb(struct platform_device *pdev, const char *s_clock_name,
 int clk_suspend_usb(struct platform_device *pdev, const char *s_clock_name,
 		unsigned long usb_peri_reg, const char *cpu_type);
 
-
+int device_status(unsigned long usb_peri_reg);
 
 extern int dwc_otg_power_register_notifier(struct notifier_block *nb);
 extern int dwc_otg_power_unregister_notifier(struct notifier_block *nb);

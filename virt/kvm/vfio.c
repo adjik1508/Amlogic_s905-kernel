@@ -18,6 +18,7 @@
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/vfio.h>
+#include "vfio.h"
 
 struct kvm_vfio_group {
 	struct list_head node;
@@ -59,6 +60,35 @@ static void kvm_vfio_group_put_external_user(struct vfio_group *vfio_group)
 	symbol_put(vfio_group_put_external_user);
 }
 
+static void kvm_vfio_group_set_kvm(struct vfio_group *group, struct kvm *kvm)
+{
+	void (*fn)(struct vfio_group *, struct kvm *);
+
+	fn = symbol_get(vfio_group_set_kvm);
+	if (!fn)
+		return;
+
+	fn(group, kvm);
+
+	symbol_put(vfio_group_set_kvm);
+}
+
+static bool kvm_vfio_group_is_coherent(struct vfio_group *vfio_group)
+{
+	long (*fn)(struct vfio_group *, unsigned long);
+	long ret;
+
+	fn = symbol_get(vfio_external_check_extension);
+	if (!fn)
+		return false;
+
+	ret = fn(vfio_group, VFIO_DMA_CC_IOMMU);
+
+	symbol_put(vfio_external_check_extension);
+
+	return ret > 0;
+}
+
 /*
  * Groups can use the same or different IOMMU domains.  If the same then
  * adding a new group may change the coherency of groups we've previously
@@ -75,13 +105,10 @@ static void kvm_vfio_update_coherency(struct kvm_device *dev)
 	mutex_lock(&kv->lock);
 
 	list_for_each_entry(kvg, &kv->group_list, node) {
-		/*
-		 * TODO: We need an interface to check the coherency of
-		 * the IOMMU domain this group is using.  For now, assume
-		 * it's always noncoherent.
-		 */
-		noncoherent = true;
-		break;
+		if (!kvm_vfio_group_is_coherent(kvg->vfio_group)) {
+			noncoherent = true;
+			break;
+		}
 	}
 
 	if (noncoherent != kv->noncoherent) {
@@ -141,7 +168,11 @@ static int kvm_vfio_set_group(struct kvm_device *dev, long attr, u64 arg)
 		list_add_tail(&kvg->node, &kv->group_list);
 		kvg->vfio_group = vfio_group;
 
+		kvm_arch_start_assignment(dev->kvm);
+
 		mutex_unlock(&kv->lock);
+
+		kvm_vfio_group_set_kvm(vfio_group, dev->kvm);
 
 		kvm_vfio_update_coherency(dev);
 
@@ -176,7 +207,11 @@ static int kvm_vfio_set_group(struct kvm_device *dev, long attr, u64 arg)
 			break;
 		}
 
+		kvm_arch_end_assignment(dev->kvm);
+
 		mutex_unlock(&kv->lock);
+
+		kvm_vfio_group_set_kvm(vfio_group, NULL);
 
 		kvm_vfio_group_put_external_user(vfio_group);
 
@@ -222,9 +257,11 @@ static void kvm_vfio_destroy(struct kvm_device *dev)
 	struct kvm_vfio_group *kvg, *tmp;
 
 	list_for_each_entry_safe(kvg, tmp, &kv->group_list, node) {
+		kvm_vfio_group_set_kvm(kvg->vfio_group, NULL);
 		kvm_vfio_group_put_external_user(kvg->vfio_group);
 		list_del(&kvg->node);
 		kfree(kvg);
+		kvm_arch_end_assignment(dev->kvm);
 	}
 
 	kvm_vfio_update_coherency(dev);
@@ -265,8 +302,12 @@ static int kvm_vfio_create(struct kvm_device *dev, u32 type)
 	return 0;
 }
 
-static int __init kvm_vfio_ops_init(void)
+int kvm_vfio_ops_init(void)
 {
 	return kvm_register_device_ops(&kvm_vfio_ops, KVM_DEV_TYPE_VFIO);
 }
-module_init(kvm_vfio_ops_init);
+
+void kvm_vfio_ops_exit(void)
+{
+	kvm_unregister_device_ops(KVM_DEV_TYPE_VFIO);
+}

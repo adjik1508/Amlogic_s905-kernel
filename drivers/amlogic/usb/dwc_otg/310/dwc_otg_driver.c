@@ -1,4 +1,4 @@
-/* ==========================================================================
+/*
  * $File: //dwh/usb_iip/dev/software/otg/linux/drivers/dwc_otg_driver.c $
  * $Revision: #94 $
  * $Date: 2012/12/21 $
@@ -57,6 +57,7 @@
 #include "dwc_otg_cil.h"
 #include "dwc_otg_pcd_if.h"
 #include "dwc_otg_hcd_if.h"
+#include "dwc_otg_pcd.h"
 
 #include <linux/of_platform.h>
 #include <linux/amlogic/aml_gpio_consumer.h>
@@ -69,9 +70,11 @@
 #include <linux/amlogic/usbtype.h>
 #include <linux/usb.h>
 #include <linux/usb/hcd.h>
+#include <linux/workqueue.h>
 
 #define DWC_DRIVER_VERSION	"3.10a 12-MAY-2014"
 #define DWC_DRIVER_DESC		"HS OTG USB Controller driver"
+
 static const char dwc_driver_name[] = "dwc_otg";
 extern int pcd_init(struct platform_device *pdev);
 extern int hcd_init(struct platform_device *pdev);
@@ -228,7 +231,7 @@ static struct dwc_otg_driver_module_params dwc_otg_module_params = {
 	.adp_enable = -1,
 };
 
-bool force_device_mode = 0;
+bool force_device_mode;
 module_param_named(otg_device, force_device_mode,
 		bool, S_IRUGO | S_IWUSR);
 
@@ -246,7 +249,7 @@ static const char *dma_config_name[] = {
 	"BURST_INCR",
 	"BURST_INCR4",
 	"BURST_INCR8",
-	"BURST_INCR16"
+	"BURST_INCR16",
 	"DISABLE",
 };
 
@@ -588,6 +591,29 @@ void dwc_otg_charger_detect_notifier_call(int bc_mode)
 	blocking_notifier_call_chain(&dwc_otg_charger_detect_notifier_list, bc_mode, NULL);
 }
 
+static void amlogic_device_detect_work(struct work_struct *work)
+{
+	dwc_otg_device_t *dwc_otg_device =
+		container_of(work, dwc_otg_device_t, work.work);
+	int ret;
+
+	if (USB_OTG == dwc_otg_device->core_if->controller_type) {
+		ret = device_status((unsigned long)dwc_otg_device->
+				core_if->usb_peri_reg);
+		if (!ret) {
+			DWC_PRINTF("usb device plug out, stop pcd!!!\n");
+			if (dwc_otg_device->pcd->core_if->pcd_cb->stop)
+				dwc_otg_device->pcd->core_if->
+					pcd_cb->stop(dwc_otg_device->pcd);
+		} else {
+			schedule_delayed_work(&dwc_otg_device->work,
+				msecs_to_jiffies(100));
+		}
+	}
+
+	return;
+}
+
 #define FORCE_ID_CLEAR	-1
 #define FORCE_ID_HOST	0
 #define FORCE_ID_SLAVE	1
@@ -915,7 +941,7 @@ static int dwc_otg_driver_probe(struct platform_device *pdev)
 	struct gpio_desc *usb_gd = NULL;
 	struct dwc_otg_driver_module_params *pcore_para;
 	static int dcount;
-	char sys_name[8] = "dwc2_a";
+	int controller_type = USB_NORMAL;
 
 	dev_dbg(&pdev->dev, "dwc_otg_driver_probe(%p)\n", pdev);
 
@@ -936,6 +962,10 @@ static int dwc_otg_driver_probe(struct platform_device *pdev)
 				port_index = of_read_ulong(prop, 1);
 				pdev->id = port_index;
 			}
+			prop = of_get_property(of_node,
+				"controller-type", NULL);
+			if (prop)
+				controller_type = of_read_ulong(prop, 1);
 			prop = of_get_property(of_node, "port-type", NULL);
 			if (prop)
 				port_type = of_read_ulong(prop, 1);
@@ -967,7 +997,7 @@ static int dwc_otg_driver_probe(struct platform_device *pdev)
 				} else {
 					gpio_vbus_power_pin = 1;
 					usb_gd = gpiod_get_index(&pdev->dev,
-								 NULL, 0);
+								 NULL, 0, GPIOD_OUT_LOW);
 					if (IS_ERR(usb_gd))
 						return -1;
 				}
@@ -1013,6 +1043,11 @@ static int dwc_otg_driver_probe(struct platform_device *pdev)
 			DWC_PRINTF("%s NOT match\n", __func__);
 			return -ENODEV;
 		}
+	}
+
+	if (controller_type == USB_HOST_ONLY && !force_device_mode) {
+		DWC_PRINTF("%s host only, not probe usb_otg!!!\n", __func__);
+		return -ENODEV;
 	}
 
 	dwc_otg_device = DWC_ALLOC(sizeof(dwc_otg_device_t));
@@ -1074,7 +1109,7 @@ static int dwc_otg_driver_probe(struct platform_device *pdev)
 	dev_dbg(&pdev->dev, "dwc_otg_device=0x%p\n", dwc_otg_device);
 
 	if (clk_enable_usb(pdev, s_clock_name,
-		(unsigned long)phy_reg_addr, cpu_type)) {
+		(unsigned long)phy_reg_addr, cpu_type, controller_type)) {
 		dev_err(&pdev->dev, "Set dwc_otg PHY clock failed!\n");
 		return -ENODEV;
 	}
@@ -1088,7 +1123,7 @@ static int dwc_otg_driver_probe(struct platform_device *pdev)
 	}
 
 	dwc_otg_device->core_if->usb_peri_reg = (usb_peri_reg_t *)phy_reg_addr;
-
+	dwc_otg_device->core_if->controller_type = controller_type;
 	/*
 	* Attempt to ensure this device is really a DWC_otg Controller.
 	* Read and verify the SNPSID register contents. The value should be
@@ -1141,6 +1176,33 @@ static int dwc_otg_driver_probe(struct platform_device *pdev)
 		}
 	}
 
+
+
+	if (USB_NORMAL != controller_type) {
+		if (dwc_otg_module_params.data_fifo_size == 728) {
+			dwc_otg_module_params.data_fifo_size = -1;
+			dwc_otg_module_params.host_rx_fifo_size = -1;
+			dwc_otg_module_params.host_nperio_tx_fifo_size = -1;
+			dwc_otg_module_params.host_perio_tx_fifo_size = -1;
+			dwc_otg_module_params.host_channels = -1;
+			dwc_otg_module_params.dev_rx_fifo_size = 164;
+			dwc_otg_module_params.dev_nperio_tx_fifo_size = 144;
+			dwc_otg_module_params.dev_tx_fifo_size[0] = 144;
+			dwc_otg_module_params.dev_tx_fifo_size[1] = 128;
+			dwc_otg_module_params.dev_tx_fifo_size[2] = 128;
+		} else {
+			dwc_otg_module_params.data_fifo_size = -1;
+			dwc_otg_module_params.host_rx_fifo_size = -1;
+			dwc_otg_module_params.host_nperio_tx_fifo_size = -1;
+			dwc_otg_module_params.host_perio_tx_fifo_size = -1;
+			dwc_otg_module_params.host_channels = -1;
+			dwc_otg_module_params.dev_rx_fifo_size = 164;
+			dwc_otg_module_params.dev_nperio_tx_fifo_size = 144;
+			dwc_otg_module_params.dev_tx_fifo_size[0] = 144;
+			dwc_otg_module_params.dev_tx_fifo_size[1] = -1;
+			dwc_otg_module_params.dev_tx_fifo_size[2] = -1;
+		}
+	}
 	/*
 	* Validate parameter values.
 	*/
@@ -1153,8 +1215,6 @@ static int dwc_otg_driver_probe(struct platform_device *pdev)
 	* Create Device Attributes in sysfs
 	*/
 	dwc_otg_attr_create(pdev);
-	sys_name[5] += pdev->id;
-	device_rename(&pdev->dev, sys_name);
 
 	/*
 	* Disable the global interrupt until all the interrupt
@@ -1173,7 +1233,7 @@ static int dwc_otg_driver_probe(struct platform_device *pdev)
 	DWC_DEBUGPL(DBG_CIL, "registering (common) handler for irq%d\n",
 		    irq);
 	retval = request_irq(irq, dwc_otg_common_irq,
-			     IRQF_SHARED | IRQF_DISABLED | IRQ_LEVEL, "dwc_otg",
+			     IRQF_SHARED | IRQ_LEVEL, "dwc_otg",
 			     dwc_otg_device);
 	if (retval) {
 		DWC_ERROR("request of irq%d failed\n", irq);
@@ -1280,6 +1340,8 @@ static int dwc_otg_driver_probe(struct platform_device *pdev)
 
 	dwc_otg_save_global_regs(dwc_otg_device->core_if);
 
+	INIT_DELAYED_WORK(&dwc_otg_device->work, amlogic_device_detect_work);
+
 	/*
 	 * Enable the global interrupt after all the interrupt
 	 * handlers are installed if there is no ADP support else
@@ -1302,6 +1364,12 @@ static int dwc_otg_driver_probe(struct platform_device *pdev)
 	dwc_otg_device->usb_early_suspend.param = dwc_otg_device;
 	register_early_suspend(&dwc_otg_device->usb_early_suspend);
 #endif
+
+#ifdef CONFIG_AMLOGIC_USB3PHY
+	if (USB_OTG == dwc_otg_device->core_if->controller_type)
+		aml_new_usb_init();
+#endif
+
 	return 0;
 
 fail:

@@ -24,6 +24,7 @@
 #include <linux/binfmts.h>
 #include <linux/in.h>
 #include <linux/spinlock.h>
+#include <net/net_namespace.h>
 #include "flask.h"
 #include "avc.h"
 
@@ -36,6 +37,12 @@ struct task_security_struct {
 	u32 sockcreate_sid;	/* fscreate SID */
 };
 
+enum label_initialized {
+	LABEL_INVALID,		/* invalid or not initialized */
+	LABEL_INITIALIZED,	/* initialized */
+	LABEL_PENDING
+};
+
 struct inode_security_struct {
 	struct inode *inode;	/* back pointer to inode object */
 	union {
@@ -46,7 +53,7 @@ struct inode_security_struct {
 	u32 sid;		/* SID of this object */
 	u16 sclass;		/* security class of this object */
 	unsigned char initialized;	/* initialization flag */
-	struct mutex lock;
+	spinlock_t lock;
 };
 
 struct file_security_struct {
@@ -78,6 +85,7 @@ struct ipc_security_struct {
 };
 
 struct netif_security_struct {
+	struct net *ns;			/* network namespace */
 	int ifindex;			/* device index */
 	u32 sid;			/* SID for this interface */
 };

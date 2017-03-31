@@ -1,19 +1,18 @@
 /*
- * System Control and Power Interface (SCPI) Message Protocol driver
+ * drivers/amlogic/mailbox/scpi_protocol.c
  *
- * Copyright (C) 2014 ARM Ltd.
+ * Copyright (C) 2017 Amlogic, Inc. All rights reserved.
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
- * This program is distributed in the hope it will be useful, but WITHOUT
+ * This program is distributed in the hope that it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
  * more details.
  *
- * You should have received a copy of the GNU General Public License along with
- * this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/err.h>
@@ -41,7 +40,7 @@
 	(((txsz) & CMD_DATA_SIZE_MASK) << CMD_DATA_SIZE_SHIFT))
 
 #define MAX_DVFS_DOMAINS	3
-#define MAX_DVFS_OPPS		8
+#define MAX_DVFS_OPPS		16
 #define DVFS_LATENCY(hdr)	((hdr) >> 16)
 #define DVFS_OPP_COUNT(hdr)	(((hdr) >> 8) & 0xff)
 
@@ -61,50 +60,6 @@ enum scpi_error_codes {
 	SCPI_ERR_MAX
 };
 
-enum scpi_client_id {
-	SCPI_CL_NONE,
-	SCPI_CL_CLOCKS,
-	SCPI_CL_DVFS,
-	SCPI_CL_POWER,
-	SCPI_CL_THERMAL,
-	SCPI_MAX,
-};
-
-enum scpi_std_cmd {
-	SCPI_CMD_INVALID		= 0x00,
-	SCPI_CMD_SCPI_READY		= 0x01,
-	SCPI_CMD_SCPI_CAPABILITIES	= 0x02,
-	SCPI_CMD_EVENT			= 0x03,
-	SCPI_CMD_SET_CSS_PWR_STATE	= 0x04,
-	SCPI_CMD_GET_CSS_PWR_STATE	= 0x05,
-	SCPI_CMD_CFG_PWR_STATE_STAT	= 0x06,
-	SCPI_CMD_GET_PWR_STATE_STAT	= 0x07,
-	SCPI_CMD_SYS_PWR_STATE		= 0x08,
-	SCPI_CMD_L2_READY		= 0x09,
-	SCPI_CMD_SET_AP_TIMER		= 0x0a,
-	SCPI_CMD_CANCEL_AP_TIME		= 0x0b,
-	SCPI_CMD_DVFS_CAPABILITIES	= 0x0c,
-	SCPI_CMD_GET_DVFS_INFO		= 0x0d,
-	SCPI_CMD_SET_DVFS		= 0x0e,
-	SCPI_CMD_GET_DVFS		= 0x0f,
-	SCPI_CMD_GET_DVFS_STAT		= 0x10,
-	SCPI_CMD_SET_RTC		= 0x11,
-	SCPI_CMD_GET_RTC		= 0x12,
-	SCPI_CMD_CLOCK_CAPABILITIES	= 0x13,
-	SCPI_CMD_SET_CLOCK_INDEX	= 0x14,
-	SCPI_CMD_SET_CLOCK_VALUE	= 0x15,
-	SCPI_CMD_GET_CLOCK_VALUE	= 0x16,
-	SCPI_CMD_PSU_CAPABILITIES	= 0x17,
-	SCPI_CMD_SET_PSU		= 0x18,
-	SCPI_CMD_GET_PSU		= 0x19,
-	SCPI_CMD_SENSOR_CAPABILITIES	= 0x1a,
-	SCPI_CMD_SENSOR_INFO		= 0x1b,
-	SCPI_CMD_SENSOR_VALUE		= 0x1c,
-	SCPI_CMD_SENSOR_CFG_PERIODIC	= 0x1d,
-	SCPI_CMD_SENSOR_CFG_BOUNDS	= 0x1e,
-	SCPI_CMD_SENSOR_ASYNC_VALUE	= 0x1f,
-	SCPI_CMD_COUNT
-};
 
 struct scpi_data_buf {
 	int client_id;
@@ -129,7 +84,7 @@ static int high_priority_cmds[] = {
 	SCPI_CMD_SENSOR_CFG_BOUNDS,
 };
 
-static struct scpi_opp *scpi_opps[MAX_DVFS_DOMAINS];
+static struct scpi_dvfs_info *scpi_opps[MAX_DVFS_DOMAINS];
 
 static int scpi_linux_errmap[SCPI_ERR_MAX] = {
 	0, -EINVAL, -ENOEXEC, -EMSGSIZE,
@@ -147,6 +102,7 @@ static inline int scpi_to_linux_errno(int errno)
 static bool high_priority_chan_supported(int cmd)
 {
 	int idx;
+
 	for (idx = 0; idx < ARRAY_SIZE(high_priority_cmds); idx++)
 		if (cmd == high_priority_cmds[idx])
 			return true;
@@ -157,6 +113,7 @@ static void scpi_rx_callback(struct mbox_client *cl, void *msg)
 {
 	struct mhu_data_buf *data = (struct mhu_data_buf *)msg;
 	struct scpi_data_buf *scpi_buf = data->cl_data;
+
 	complete(&scpi_buf->complete);
 }
 
@@ -198,6 +155,19 @@ do {						\
 	pdata->tx_size = sizeof(_tx_buf);	\
 	pdata->rx_buf = &_rx_buf;		\
 	pdata->rx_size = sizeof(_rx_buf);	\
+	scpi_buf.client_id = _client_id;	\
+	scpi_buf.data = pdata;			\
+} while (0)
+
+#define SCPI_SETUP_DBUF_SIZE(scpi_buf, mhu_buf, _client_id,\
+			_cmd, _tx_buf, _tx_size, _rx_buf, _rx_size) \
+do {						\
+	struct mhu_data_buf *pdata = &mhu_buf;	\
+	pdata->cmd = _cmd;			\
+	pdata->tx_buf = _tx_buf;		\
+	pdata->tx_size = _tx_size;	\
+	pdata->rx_buf = _rx_buf;		\
+	pdata->rx_size = _rx_size;	\
 	scpi_buf.client_id = _client_id;	\
 	scpi_buf.data = pdata;			\
 } while (0)
@@ -255,7 +225,7 @@ int scpi_clk_set_val(u16 clk_id, unsigned long rate)
 }
 EXPORT_SYMBOL_GPL(scpi_clk_set_val);
 
-struct scpi_opp *scpi_dvfs_get_opps(u8 domain)
+struct scpi_dvfs_info *scpi_dvfs_get_opps(u8 domain)
 {
 	struct scpi_data_buf sdata;
 	struct mhu_data_buf mdata;
@@ -264,7 +234,7 @@ struct scpi_opp *scpi_dvfs_get_opps(u8 domain)
 		u32 header;
 		struct scpi_opp_entry opp[MAX_DVFS_OPPS];
 	} buf;
-	struct scpi_opp *opps;
+	struct scpi_dvfs_info *opps;
 	size_t opps_sz;
 	int count, ret;
 
@@ -368,6 +338,7 @@ int scpi_get_sensor(char *name)
 	/* This should be handled by a generic macro */
 	do {
 		struct mhu_data_buf *pdata = &mdata;
+
 		pdata->cmd = SCPI_CMD_SENSOR_CAPABILITIES;
 		pdata->tx_size = 0;
 		pdata->rx_buf = &cap_buf;
@@ -416,3 +387,42 @@ int scpi_get_sensor_value(u16 sensor, u32 *val)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(scpi_get_sensor_value);
+
+/****Send fail when data size > 0x1fd.      ***
+ * Because of USER_LOW_TASK_SHARE_MEM_BASE ***
+ * size limitation.
+ * You can call scpi_send_usr_data()
+ * multi-times when your data is bigger
+ * than 0x1fe
+ */
+int scpi_send_usr_data(u32 client_id, u32 *val, u32 size)
+{
+	struct scpi_data_buf sdata;
+	struct mhu_data_buf mdata;
+	struct __packed {
+		u32 status;
+		u32 val;
+	} buf;
+	int ret;
+
+	/*client_id bit map should locates @ 0xff.
+	 * bl30 will send client_id via half-Word
+	 */
+	if (client_id & ~0xff)
+		return -E2BIG;
+
+	/*Check size here because of USER_LOW_TASK_SHARE_MEM_BASE
+	 * size limitation, and first Word is used as command,
+	 * second word is used as tx_size.
+	 */
+	if (size > 0x1fd)
+		return -EPERM;
+
+	SCPI_SETUP_DBUF_SIZE(sdata, mdata, client_id, SCPI_CMD_SET_USR_DATA,
+			val, size, &buf, sizeof(buf));
+	ret = scpi_execute_cmd(&sdata);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(scpi_send_usr_data);
+

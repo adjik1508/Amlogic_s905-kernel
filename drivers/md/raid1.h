@@ -61,6 +61,11 @@ struct r1conf {
 	 * block, or anything else.
 	 */
 	struct list_head	retry_list;
+	/* A separate list of r1bio which just need raid_end_bio_io called.
+	 * This mustn't happen for writes which had any errors if the superblock
+	 * needs to be written.
+	 */
+	struct list_head	bio_end_io_list;
 
 	/* queue pending writes to be submitted on unplug */
 	struct bio_list		pending_bio_list;
@@ -90,7 +95,6 @@ struct r1conf {
 	 */
 	int			recovery_disabled;
 
-
 	/* poolinfo contains information about the content of the
 	 * mempools - it changes when the array grows or shrinks
 	 */
@@ -103,11 +107,17 @@ struct r1conf {
 	 */
 	struct page		*tmppage;
 
-
 	/* When taking over an array from a different personality, we store
 	 * the new thread here until we fully activate the array.
 	 */
 	struct md_thread	*thread;
+
+	/* Keep track of cluster resync window to send to other
+	 * nodes.
+	 */
+	sector_t		cluster_sync_low;
+	sector_t		cluster_sync_high;
+
 };
 
 /*
@@ -151,14 +161,15 @@ struct r1bio {
 };
 
 /* bits for r1bio.state */
-#define	R1BIO_Uptodate	0
-#define	R1BIO_IsSync	1
-#define	R1BIO_Degraded	2
-#define	R1BIO_BehindIO	3
+enum r1bio_state {
+	R1BIO_Uptodate,
+	R1BIO_IsSync,
+	R1BIO_Degraded,
+	R1BIO_BehindIO,
 /* Set ReadError on bios that experience a readerror so that
  * raid1d knows what to do with them.
  */
-#define R1BIO_ReadError 4
+	R1BIO_ReadError,
 /* For write-behind requests, we call bi_end_io when
  * the last non-write-behind device completes, providing
  * any write was successful.  Otherwise we call when
@@ -166,13 +177,12 @@ struct r1bio {
  * with failure when last write completes (and all failed).
  * Record that bi_end_io was called with this flag...
  */
-#define	R1BIO_Returned 6
+	R1BIO_Returned,
 /* If a write for this request means we can clear some
  * known-bad-block records, we set this flag
  */
-#define	R1BIO_MadeGood 7
-#define	R1BIO_WriteError 8
-
-extern int md_raid1_congested(struct mddev *mddev, int bits);
-
+	R1BIO_MadeGood,
+	R1BIO_WriteError,
+	R1BIO_FailFast,
+};
 #endif

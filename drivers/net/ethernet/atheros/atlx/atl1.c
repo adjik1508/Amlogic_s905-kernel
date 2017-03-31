@@ -235,7 +235,7 @@ static void atl1_check_options(struct atl1_adapter *adapter)
 /*
  * atl1_pci_tbl - PCI Device ID Table
  */
-static DEFINE_PCI_DEVICE_TABLE(atl1_pci_tbl) = {
+static const struct pci_device_id atl1_pci_tbl[] = {
 	{PCI_DEVICE(PCI_VENDOR_ID_ATTANSIC, PCI_DEVICE_ID_ATTANSIC_L1)},
 	/* required last entry */
 	{0,}
@@ -910,7 +910,6 @@ static s32 atl1_get_speed_and_duplex(struct atl1_hw *hw, u16 *speed, u16 *duplex
 		if (netif_msg_hw(adapter))
 			dev_dbg(&pdev->dev, "error getting speed\n");
 		return ATLX_ERR_PHY_SPEED;
-		break;
 	}
 	if (phy_data & MII_ATLX_PSSR_DPLX)
 		*duplex = FULL_DUPLEX;
@@ -2118,18 +2117,17 @@ static u16 atl1_tpd_avail(struct atl1_tpd_ring *tpd_ring)
 }
 
 static int atl1_tso(struct atl1_adapter *adapter, struct sk_buff *skb,
-	struct tx_packet_desc *ptpd)
+		    struct tx_packet_desc *ptpd)
 {
 	u8 hdr_len, ip_off;
 	u32 real_len;
-	int err;
 
 	if (skb_shinfo(skb)->gso_size) {
-		if (skb_header_cloned(skb)) {
-			err = pskb_expand_head(skb, 0, 0, GFP_ATOMIC);
-			if (unlikely(err))
-				return -1;
-		}
+		int err;
+
+		err = skb_cow_head(skb, 0);
+		if (err < 0)
+			return err;
 
 		if (skb->protocol == htons(ETH_P_IP)) {
 			struct iphdr *iph = ip_hdr(skb);
@@ -2175,7 +2173,7 @@ static int atl1_tso(struct atl1_adapter *adapter, struct sk_buff *skb,
 			return 3;
 		}
 	}
-	return false;
+	return 0;
 }
 
 static int atl1_tx_csum(struct atl1_adapter *adapter, struct sk_buff *skb,
@@ -2417,8 +2415,8 @@ static netdev_tx_t atl1_xmit_frame(struct sk_buff *skb,
 		(u16) atomic_read(&tpd_ring->next_to_use));
 	memset(ptpd, 0, sizeof(struct tx_packet_desc));
 
-	if (vlan_tx_tag_present(skb)) {
-		vlan_tag = vlan_tx_tag_get(skb);
+	if (skb_vlan_tag_present(skb)) {
+		vlan_tag = skb_vlan_tag_get(skb);
 		vlan_tag = (vlan_tag << 4) | (vlan_tag >> 13) |
 			((vlan_tag >> 9) & 0x8);
 		ptpd->word3 |= 1 << TPD_INS_VL_TAG_SHIFT;
@@ -2703,15 +2701,7 @@ static void atl1_reset_dev_task(struct work_struct *work)
 static int atl1_change_mtu(struct net_device *netdev, int new_mtu)
 {
 	struct atl1_adapter *adapter = netdev_priv(netdev);
-	int old_mtu = netdev->mtu;
 	int max_frame = new_mtu + ETH_HLEN + ETH_FCS_LEN + VLAN_HLEN;
-
-	if ((max_frame < ETH_ZLEN + ETH_FCS_LEN) ||
-	    (max_frame > MAX_JUMBO_FRAME_SIZE)) {
-		if (netif_msg_link(adapter))
-			dev_warn(&adapter->pdev->dev, "invalid MTU setting\n");
-		return -EINVAL;
-	}
 
 	adapter->hw.max_frame_size = max_frame;
 	adapter->hw.tx_jumbo_task_th = (max_frame + 7) >> 3;
@@ -2719,7 +2709,7 @@ static int atl1_change_mtu(struct net_device *netdev, int new_mtu)
 	adapter->hw.rx_jumbo_th = adapter->rx_buffer_len / 8;
 
 	netdev->mtu = new_mtu;
-	if ((old_mtu != new_mtu) && netif_running(netdev)) {
+	if (netif_running(netdev)) {
 		atl1_down(adapter);
 		atl1_up(adapter);
 	}
@@ -3033,6 +3023,11 @@ static int atl1_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	/* is this valid? see atl1_setup_mac_ctrl() */
 	netdev->features |= NETIF_F_RXCSUM;
 
+	/* MTU range: 42 - 10218 */
+	netdev->min_mtu = ETH_ZLEN - (ETH_HLEN + VLAN_HLEN);
+	netdev->max_mtu = MAX_JUMBO_FRAME_SIZE -
+			  (ETH_HLEN + ETH_FCS_LEN + VLAN_HLEN);
+
 	/*
 	 * patch for some L1 of old version,
 	 * the final version of L1 may not need these
@@ -3219,66 +3214,72 @@ static int atl1_get_sset_count(struct net_device *netdev, int sset)
 	}
 }
 
-static int atl1_get_settings(struct net_device *netdev,
-	struct ethtool_cmd *ecmd)
+static int atl1_get_link_ksettings(struct net_device *netdev,
+				   struct ethtool_link_ksettings *cmd)
 {
 	struct atl1_adapter *adapter = netdev_priv(netdev);
 	struct atl1_hw *hw = &adapter->hw;
+	u32 supported, advertising;
 
-	ecmd->supported = (SUPPORTED_10baseT_Half |
+	supported = (SUPPORTED_10baseT_Half |
 			   SUPPORTED_10baseT_Full |
 			   SUPPORTED_100baseT_Half |
 			   SUPPORTED_100baseT_Full |
 			   SUPPORTED_1000baseT_Full |
 			   SUPPORTED_Autoneg | SUPPORTED_TP);
-	ecmd->advertising = ADVERTISED_TP;
+	advertising = ADVERTISED_TP;
 	if (hw->media_type == MEDIA_TYPE_AUTO_SENSOR ||
 	    hw->media_type == MEDIA_TYPE_1000M_FULL) {
-		ecmd->advertising |= ADVERTISED_Autoneg;
+		advertising |= ADVERTISED_Autoneg;
 		if (hw->media_type == MEDIA_TYPE_AUTO_SENSOR) {
-			ecmd->advertising |= ADVERTISED_Autoneg;
-			ecmd->advertising |=
+			advertising |= ADVERTISED_Autoneg;
+			advertising |=
 			    (ADVERTISED_10baseT_Half |
 			     ADVERTISED_10baseT_Full |
 			     ADVERTISED_100baseT_Half |
 			     ADVERTISED_100baseT_Full |
 			     ADVERTISED_1000baseT_Full);
 		} else
-			ecmd->advertising |= (ADVERTISED_1000baseT_Full);
+			advertising |= (ADVERTISED_1000baseT_Full);
 	}
-	ecmd->port = PORT_TP;
-	ecmd->phy_address = 0;
-	ecmd->transceiver = XCVR_INTERNAL;
+	cmd->base.port = PORT_TP;
+	cmd->base.phy_address = 0;
 
 	if (netif_carrier_ok(adapter->netdev)) {
 		u16 link_speed, link_duplex;
 		atl1_get_speed_and_duplex(hw, &link_speed, &link_duplex);
-		ethtool_cmd_speed_set(ecmd, link_speed);
+		cmd->base.speed = link_speed;
 		if (link_duplex == FULL_DUPLEX)
-			ecmd->duplex = DUPLEX_FULL;
+			cmd->base.duplex = DUPLEX_FULL;
 		else
-			ecmd->duplex = DUPLEX_HALF;
+			cmd->base.duplex = DUPLEX_HALF;
 	} else {
-		ethtool_cmd_speed_set(ecmd, -1);
-		ecmd->duplex = -1;
+		cmd->base.speed = SPEED_UNKNOWN;
+		cmd->base.duplex = DUPLEX_UNKNOWN;
 	}
 	if (hw->media_type == MEDIA_TYPE_AUTO_SENSOR ||
 	    hw->media_type == MEDIA_TYPE_1000M_FULL)
-		ecmd->autoneg = AUTONEG_ENABLE;
+		cmd->base.autoneg = AUTONEG_ENABLE;
 	else
-		ecmd->autoneg = AUTONEG_DISABLE;
+		cmd->base.autoneg = AUTONEG_DISABLE;
+
+	ethtool_convert_legacy_u32_to_link_mode(cmd->link_modes.supported,
+						supported);
+	ethtool_convert_legacy_u32_to_link_mode(cmd->link_modes.advertising,
+						advertising);
 
 	return 0;
 }
 
-static int atl1_set_settings(struct net_device *netdev,
-	struct ethtool_cmd *ecmd)
+static int atl1_set_link_ksettings(struct net_device *netdev,
+				   const struct ethtool_link_ksettings *cmd)
 {
 	struct atl1_adapter *adapter = netdev_priv(netdev);
 	struct atl1_hw *hw = &adapter->hw;
 	u16 phy_data;
 	int ret_val = 0;
 	u16 old_media_type = hw->media_type;
+	u32 advertising;
 
 	if (netif_running(adapter->netdev)) {
 		if (netif_msg_link(adapter))
@@ -3287,12 +3288,12 @@ static int atl1_set_settings(struct net_device *netdev,
 		atl1_down(adapter);
 	}
 
-	if (ecmd->autoneg == AUTONEG_ENABLE)
+	if (cmd->base.autoneg == AUTONEG_ENABLE)
 		hw->media_type = MEDIA_TYPE_AUTO_SENSOR;
 	else {
-		u32 speed = ethtool_cmd_speed(ecmd);
+		u32 speed = cmd->base.speed;
 		if (speed == SPEED_1000) {
-			if (ecmd->duplex != DUPLEX_FULL) {
+			if (cmd->base.duplex != DUPLEX_FULL) {
 				if (netif_msg_link(adapter))
 					dev_warn(&adapter->pdev->dev,
 						"1000M half is invalid\n");
@@ -3301,12 +3302,12 @@ static int atl1_set_settings(struct net_device *netdev,
 			}
 			hw->media_type = MEDIA_TYPE_1000M_FULL;
 		} else if (speed == SPEED_100) {
-			if (ecmd->duplex == DUPLEX_FULL)
+			if (cmd->base.duplex == DUPLEX_FULL)
 				hw->media_type = MEDIA_TYPE_100M_FULL;
 			else
 				hw->media_type = MEDIA_TYPE_100M_HALF;
 		} else {
-			if (ecmd->duplex == DUPLEX_FULL)
+			if (cmd->base.duplex == DUPLEX_FULL)
 				hw->media_type = MEDIA_TYPE_10M_FULL;
 			else
 				hw->media_type = MEDIA_TYPE_10M_HALF;
@@ -3314,7 +3315,7 @@ static int atl1_set_settings(struct net_device *netdev,
 	}
 	switch (hw->media_type) {
 	case MEDIA_TYPE_AUTO_SENSOR:
-		ecmd->advertising =
+		advertising =
 		    ADVERTISED_10baseT_Half |
 		    ADVERTISED_10baseT_Full |
 		    ADVERTISED_100baseT_Half |
@@ -3323,12 +3324,12 @@ static int atl1_set_settings(struct net_device *netdev,
 		    ADVERTISED_Autoneg | ADVERTISED_TP;
 		break;
 	case MEDIA_TYPE_1000M_FULL:
-		ecmd->advertising =
+		advertising =
 		    ADVERTISED_1000baseT_Full |
 		    ADVERTISED_Autoneg | ADVERTISED_TP;
 		break;
 	default:
-		ecmd->advertising = 0;
+		advertising = 0;
 		break;
 	}
 	if (atl1_phy_setup_autoneg_adv(hw)) {
@@ -3390,7 +3391,6 @@ static void atl1_get_drvinfo(struct net_device *netdev,
 		sizeof(drvinfo->version));
 	strlcpy(drvinfo->bus_info, pci_name(adapter->pdev),
 		sizeof(drvinfo->bus_info));
-	drvinfo->eedump_len = ATL1_EEDUMP_LEN;
 }
 
 static void atl1_get_wol(struct net_device *netdev,
@@ -3669,8 +3669,6 @@ static int atl1_nway_reset(struct net_device *netdev)
 }
 
 static const struct ethtool_ops atl1_ethtool_ops = {
-	.get_settings		= atl1_get_settings,
-	.set_settings		= atl1_set_settings,
 	.get_drvinfo		= atl1_get_drvinfo,
 	.get_wol		= atl1_get_wol,
 	.set_wol		= atl1_set_wol,
@@ -3687,6 +3685,8 @@ static const struct ethtool_ops atl1_ethtool_ops = {
 	.nway_reset		= atl1_nway_reset,
 	.get_ethtool_stats	= atl1_get_ethtool_stats,
 	.get_sset_count		= atl1_get_sset_count,
+	.get_link_ksettings	= atl1_get_link_ksettings,
+	.set_link_ksettings	= atl1_set_link_ksettings,
 };
 
 module_pci_driver(atl1_driver);

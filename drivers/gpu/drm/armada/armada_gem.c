@@ -17,12 +17,11 @@
 static int armada_gem_vm_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
 	struct armada_gem_object *obj = drm_to_armada_gem(vma->vm_private_data);
-	unsigned long addr = (unsigned long)vmf->virtual_address;
 	unsigned long pfn = obj->phys_addr >> PAGE_SHIFT;
 	int ret;
 
-	pfn += (addr - vma->vm_start) >> PAGE_SHIFT;
-	ret = vm_insert_pfn(vma, addr, pfn);
+	pfn += (vmf->address - vma->vm_start) >> PAGE_SHIFT;
+	ret = vm_insert_pfn(vma, vmf->address, pfn);
 
 	switch (ret) {
 	case 0:
@@ -46,14 +45,16 @@ static size_t roundup_gem_size(size_t size)
 	return roundup(size, PAGE_SIZE);
 }
 
-/* dev->struct_mutex is held here */
 void armada_gem_free_object(struct drm_gem_object *obj)
 {
 	struct armada_gem_object *dobj = drm_to_armada_gem(obj);
+	struct armada_private *priv = obj->dev->dev_private;
 
 	DRM_DEBUG_DRIVER("release obj %p\n", dobj);
 
 	drm_gem_free_mmap_offset(&dobj->obj);
+
+	might_lock(&priv->linear_lock);
 
 	if (dobj->page) {
 		/* page backed memory */
@@ -61,7 +62,9 @@ void armada_gem_free_object(struct drm_gem_object *obj)
 		__free_pages(dobj->page, order);
 	} else if (dobj->linear) {
 		/* linear backed memory */
+		mutex_lock(&priv->linear_lock);
 		drm_mm_remove_node(dobj->linear);
+		mutex_unlock(&priv->linear_lock);
 		kfree(dobj->linear);
 		if (dobj->addr)
 			iounmap(dobj->addr);
@@ -69,8 +72,9 @@ void armada_gem_free_object(struct drm_gem_object *obj)
 
 	if (dobj->obj.import_attach) {
 		/* We only ever display imported data */
-		dma_buf_unmap_attachment(dobj->obj.import_attach, dobj->sgt,
-					 DMA_TO_DEVICE);
+		if (dobj->sgt)
+			dma_buf_unmap_attachment(dobj->obj.import_attach,
+						 dobj->sgt, DMA_TO_DEVICE);
 		drm_prime_gem_destroy(&dobj->obj, NULL);
 	}
 
@@ -143,10 +147,10 @@ armada_gem_linear_back(struct drm_device *dev, struct armada_gem_object *obj)
 		if (!node)
 			return -ENOSPC;
 
-		mutex_lock(&dev->struct_mutex);
+		mutex_lock(&priv->linear_lock);
 		ret = drm_mm_insert_node(&priv->linear, node, size, align,
 					 DRM_MM_SEARCH_DEFAULT);
-		mutex_unlock(&dev->struct_mutex);
+		mutex_unlock(&priv->linear_lock);
 		if (ret) {
 			kfree(node);
 			return ret;
@@ -157,9 +161,9 @@ armada_gem_linear_back(struct drm_device *dev, struct armada_gem_object *obj)
 		/* Ensure that the memory we're returning is cleared. */
 		ptr = ioremap_wc(obj->linear->start, size);
 		if (!ptr) {
-			mutex_lock(&dev->struct_mutex);
+			mutex_lock(&priv->linear_lock);
 			drm_mm_remove_node(obj->linear);
-			mutex_unlock(&dev->struct_mutex);
+			mutex_unlock(&priv->linear_lock);
 			kfree(obj->linear);
 			obj->linear = NULL;
 			return -ENOMEM;
@@ -207,7 +211,7 @@ armada_gem_alloc_private_object(struct drm_device *dev, size_t size)
 	return obj;
 }
 
-struct armada_gem_object *armada_gem_alloc_object(struct drm_device *dev,
+static struct armada_gem_object *armada_gem_alloc_object(struct drm_device *dev,
 	size_t size)
 {
 	struct armada_gem_object *obj;
@@ -226,7 +230,7 @@ struct armada_gem_object *armada_gem_alloc_object(struct drm_device *dev,
 
 	obj->dev_addr = DMA_ERROR_CODE;
 
-	mapping = obj->obj.filp->f_path.dentry->d_inode->i_mapping;
+	mapping = obj->obj.filp->f_mapping;
 	mapping_set_gfp_mask(mapping, GFP_HIGHUSER | __GFP_RECLAIMABLE);
 
 	DRM_DEBUG_DRIVER("alloc obj %p size %zu\n", obj, size);
@@ -273,18 +277,16 @@ int armada_gem_dumb_map_offset(struct drm_file *file, struct drm_device *dev,
 	struct armada_gem_object *obj;
 	int ret = 0;
 
-	mutex_lock(&dev->struct_mutex);
-	obj = armada_gem_object_lookup(dev, file, handle);
+	obj = armada_gem_object_lookup(file, handle);
 	if (!obj) {
 		DRM_ERROR("failed to lookup gem object\n");
-		ret = -EINVAL;
-		goto err_unlock;
+		return -EINVAL;
 	}
 
 	/* Don't allow imported objects to be mapped */
 	if (obj->obj.import_attach) {
 		ret = -EINVAL;
-		goto err_unlock;
+		goto err_unref;
 	}
 
 	ret = drm_gem_create_mmap_offset(&obj->obj);
@@ -293,9 +295,8 @@ int armada_gem_dumb_map_offset(struct drm_file *file, struct drm_device *dev,
 		DRM_DEBUG_DRIVER("handle %#x offset %llx\n", handle, *offset);
 	}
 
-	drm_gem_object_unreference(&obj->obj);
- err_unlock:
-	mutex_unlock(&dev->struct_mutex);
+ err_unref:
+	drm_gem_object_unreference_unlocked(&obj->obj);
 
 	return ret;
 }
@@ -346,18 +347,18 @@ int armada_gem_mmap_ioctl(struct drm_device *dev, void *data,
 	struct armada_gem_object *dobj;
 	unsigned long addr;
 
-	dobj = armada_gem_object_lookup(dev, file, args->handle);
+	dobj = armada_gem_object_lookup(file, args->handle);
 	if (dobj == NULL)
 		return -ENOENT;
 
 	if (!dobj->obj.filp) {
-		drm_gem_object_unreference(&dobj->obj);
+		drm_gem_object_unreference_unlocked(&dobj->obj);
 		return -EINVAL;
 	}
 
 	addr = vm_mmap(dobj->obj.filp, 0, args->size, PROT_READ | PROT_WRITE,
 		       MAP_SHARED, args->offset);
-	drm_gem_object_unreference(&dobj->obj);
+	drm_gem_object_unreference_unlocked(&dobj->obj);
 	if (IS_ERR_VALUE(addr))
 		return addr;
 
@@ -385,11 +386,11 @@ int armada_gem_pwrite_ioctl(struct drm_device *dev, void *data,
 	if (!access_ok(VERIFY_READ, ptr, args->size))
 		return -EFAULT;
 
-	ret = fault_in_multipages_readable(ptr, args->size);
+	ret = fault_in_pages_readable(ptr, args->size);
 	if (ret)
 		return ret;
 
-	dobj = armada_gem_object_lookup(dev, file, args->handle);
+	dobj = armada_gem_object_lookup(file, args->handle);
 	if (dobj == NULL)
 		return -ENOENT;
 
@@ -417,7 +418,7 @@ int armada_gem_pwrite_ioctl(struct drm_device *dev, void *data,
 }
 
 /* Prime support */
-struct sg_table *
+static struct sg_table *
 armada_gem_prime_map_dma_buf(struct dma_buf_attachment *attach,
 	enum dma_data_direction dir)
 {
@@ -433,20 +434,18 @@ armada_gem_prime_map_dma_buf(struct dma_buf_attachment *attach,
 
 	if (dobj->obj.filp) {
 		struct address_space *mapping;
-		gfp_t gfp;
 		int count;
 
 		count = dobj->obj.size / PAGE_SIZE;
 		if (sg_alloc_table(sgt, count, GFP_KERNEL))
 			goto free_sgt;
 
-		mapping = file_inode(dobj->obj.filp)->i_mapping;
-		gfp = mapping_gfp_mask(mapping);
+		mapping = dobj->obj.filp->f_mapping;
 
 		for_each_sg(sgt->sgl, sg, count, i) {
 			struct page *page;
 
-			page = shmem_read_mapping_page_gfp(mapping, i, gfp);
+			page = shmem_read_mapping_page(mapping, i);
 			if (IS_ERR(page)) {
 				num = i;
 				goto release;
@@ -481,7 +480,7 @@ armada_gem_prime_map_dma_buf(struct dma_buf_attachment *attach,
 
  release:
 	for_each_sg(sgt->sgl, sg, num, i)
-		page_cache_release(sg_page(sg));
+		put_page(sg_page(sg));
  free_table:
 	sg_free_table(sgt);
  free_sgt:
@@ -502,7 +501,7 @@ static void armada_gem_prime_unmap_dma_buf(struct dma_buf_attachment *attach,
 	if (dobj->obj.filp) {
 		struct scatterlist *sg;
 		for_each_sg(sgt->sgl, sg, sgt->nents, i)
-			page_cache_release(sg_page(sg));
+			put_page(sg_page(sg));
 	}
 
 	sg_free_table(sgt);
@@ -540,8 +539,14 @@ struct dma_buf *
 armada_gem_prime_export(struct drm_device *dev, struct drm_gem_object *obj,
 	int flags)
 {
-	return dma_buf_export(obj, &armada_gem_prime_dmabuf_ops, obj->size,
-			      O_RDWR);
+	DEFINE_DMA_BUF_EXPORT_INFO(exp_info);
+
+	exp_info.ops = &armada_gem_prime_dmabuf_ops;
+	exp_info.size = obj->size;
+	exp_info.flags = O_RDWR;
+	exp_info.priv = obj;
+
+	return drm_gem_dmabuf_export(dev, &exp_info);
 }
 
 struct drm_gem_object *
@@ -588,11 +593,7 @@ int armada_gem_map_import(struct armada_gem_object *dobj)
 	int ret;
 
 	dobj->sgt = dma_buf_map_attachment(dobj->obj.import_attach,
-					  DMA_TO_DEVICE);
-	if (!dobj->sgt) {
-		DRM_ERROR("dma_buf_map_attachment() returned NULL\n");
-		return -EINVAL;
-	}
+					   DMA_TO_DEVICE);
 	if (IS_ERR(dobj->sgt)) {
 		ret = PTR_ERR(dobj->sgt);
 		dobj->sgt = NULL;

@@ -24,13 +24,7 @@
 
 
 
-static struct genl_family irda_nl_family = {
-	.id = GENL_ID_GENERATE,
-	.name = IRDA_NL_NAME,
-	.hdrsize = 0,
-	.version = IRDA_NL_VERSION,
-	.maxattr = IRDA_NL_CMD_MAX,
-};
+static struct genl_family irda_nl_family;
 
 static struct net_device * ifname_to_netdev(struct net *net, struct genl_info *info)
 {
@@ -41,7 +35,7 @@ static struct net_device * ifname_to_netdev(struct net *net, struct genl_info *i
 
 	ifname = nla_data(info->attrs[IRDA_NL_ATTR_IFNAME]);
 
-	IRDA_DEBUG(5, "%s(): Looking for %s\n", __func__, ifname);
+	pr_debug("%s(): Looking for %s\n", __func__, ifname);
 
 	return dev_get_by_name(net, ifname);
 }
@@ -57,7 +51,7 @@ static int irda_nl_set_mode(struct sk_buff *skb, struct genl_info *info)
 
 	mode = nla_get_u32(info->attrs[IRDA_NL_ATTR_MODE]);
 
-	IRDA_DEBUG(5, "%s(): Switching to mode: %d\n", __func__, mode);
+	pr_debug("%s(): Switching to mode: %d\n", __func__, mode);
 
 	dev = ifname_to_netdev(&init_net, info);
 	if (!dev)
@@ -147,9 +141,19 @@ static const struct genl_ops irda_nl_ops[] = {
 
 };
 
-int irda_nl_register(void)
+static struct genl_family irda_nl_family __ro_after_init = {
+	.name = IRDA_NL_NAME,
+	.hdrsize = 0,
+	.version = IRDA_NL_VERSION,
+	.maxattr = IRDA_NL_CMD_MAX,
+	.module = THIS_MODULE,
+	.ops = irda_nl_ops,
+	.n_ops = ARRAY_SIZE(irda_nl_ops),
+};
+
+int __init irda_nl_register(void)
 {
-	return genl_register_family_with_ops(&irda_nl_family, irda_nl_ops);
+	return genl_register_family(&irda_nl_family);
 }
 
 void irda_nl_unregister(void)
