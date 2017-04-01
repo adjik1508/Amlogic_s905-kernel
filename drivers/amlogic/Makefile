@@ -26,7 +26,6 @@ obj-$(CONFIG_AMLOGIC_REBOOT)		+= reboot/
 obj-$(CONFIG_AMLOGIC_INTERNAL_PHY)	+= ethernet/phy/
 obj-$(CONFIG_AMLOGIC_PWM)	+= pwm/
 obj-$(CONFIG_AMLOGIC_MEDIA_ENABLE)	+=	media/
-
-#obj-$(CONFIG_AMLOGIC_MMC)             += mmc/
-#obj-$(CONFIG_AMLOGIC_CPU_HOTPLUG)	+= cpu_hotplug/
-#obj-$(CONFIG_AMLOGIC_USB)		+= usb/
+obj-$(CONFIG_AMLOGIC_MMC)             += mmc/
+obj-$(CONFIG_AMLOGIC_CPU_HOTPLUG)	+= cpu_hotplug/
+obj-$(CONFIG_AMLOGIC_USB)		+= usb/
