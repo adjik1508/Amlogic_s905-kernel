@@ -8,17 +8,3 @@ export PATH=/opt/gcc-linaro-4.9-2016.02-x86_64_aarch64-linux-gnu/bin/:$PATH
 
 make gxl_p212_1g.dtb gxl_p212_2g.dtb
 make gxm_q200_2g.dtb gxm_skt.dtb
-make meson-gxbb-nexbox-a95x.dtb
-make meson-gxbb-odroidc2.dtb
-make meson-gxbb-p200.dtb
-make meson-gxbb-p201.dtb
-make meson-gxbb-vega-s95-pro.dtb
-make meson-gxbb-vega-s95-meta.dtb
-make meson-gxbb-vega-s95-telos.dtb
-make meson-gxl-s905x-p212.dtb
-make meson-gxl-s905d-p230.dtb
-make meson-gxl-s905d-p231.dtb
-make meson-gxl-nexbox-a95x.dtb
-make meson-gxm-s912-q200.dtb
-make meson-gxm-s912-q201.dtb
-make meson-gxm-nexbox-a1.dtb
