@@ -11,6 +11,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/sched/signal.h>
 #include <linux/netdevice.h>
 #include <linux/ethtool.h>
 #include <linux/etherdevice.h>
@@ -577,6 +578,10 @@ static const struct usb_device_id products[] = {
 	},
 	{	/* HUAWEI_INTERFACE_NDIS_CONTROL_QUALCOMM */
 		USB_VENDOR_AND_INTERFACE_INFO(HUAWEI_VENDOR_ID, USB_CLASS_VENDOR_SPEC, 0x01, 0x69),
+		.driver_info        = (unsigned long)&qmi_wwan_info,
+	},
+	{	/* Motorola Mapphone devices with MDM6600 */
+		USB_VENDOR_AND_INTERFACE_INFO(0x22b8, USB_CLASS_VENDOR_SPEC, 0xfb, 0xff),
 		.driver_info        = (unsigned long)&qmi_wwan_info,
 	},
 

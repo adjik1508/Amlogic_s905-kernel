@@ -173,7 +173,7 @@ fi
 if [ -e $KBUILD_IMAGE ]; then
 	cp $KBUILD_IMAGE "$tmpdir/$installed_image_path"
 else
-	cp arch/$ARCH/boot/$KBUILD_IMAGE "$tmpdir/$installed_image_path"
+	cp arch/$ARCH/boot/Image "$tmpdir/$installed_image_path"
 fi
 
 if grep -q "^CONFIG_OF=y" $KCONFIG_CONFIG ; then
@@ -211,9 +211,9 @@ if grep -q '^CONFIG_MODULES=y' $KCONFIG_CONFIG ; then
 	fi
 fi
 
-if grep -q '^CONFIG_OF=y' $KCONFIG_CONFIG ; then
-	#mkdir -p "$tmpdir/boot/dtb"
-	INSTALL_DTBS_PATH="$dtb_dir/boot/dtb-$version" $MAKE KBUILD_SRC= dtbs_install
+if grep -q '^CONFIG_ARCH_MESON=y' $KCONFIG_CONFIG ; then
+	mkdir -p "$tmpdir/boot/dtb-""$version"
+	cp $objtree/arch/$SRCARCH/boot/dts/amlogic/*.dtb $dtb_dir/boot/dtb-$version
 fi
 
 if [ "$ARCH" != "um" ]; then
@@ -228,7 +228,7 @@ fi
 # so do we; recent versions of dracut and initramfs-tools will obey this.
 debhookdir=${KDEB_HOOKDIR:-/etc/kernel}
 if grep -q '^CONFIG_BLK_DEV_INITRD=y' $KCONFIG_CONFIG; then
-	want_initrd=Yes 
+	want_initrd=Yes
 else
 	want_initrd=No
 fi
@@ -240,11 +240,9 @@ for script in postinst postrm preinst prerm ; do
 set -e
 
 # Pass maintainer script parameters to hook scripts
-
 export DEB_MAINT_PARAMS="\$*"
 
 # Tell initramfs builder whether it's wanted
-
 export INITRD=$want_initrd
 
 test -d $debhookdir/$script.d && run-parts --arg="$version" --arg="/$installed_image_path" $debhookdir/$script.d
@@ -259,48 +257,9 @@ done
 sed -e "s/set -e//g" -i $tmpdir/DEBIAN/postinst
 sed -e "s/exit 0//g" -i $tmpdir/DEBIAN/postinst
 cat >> $tmpdir/DEBIAN/postinst <<EOT 
-if [ "\$(grep nand /proc/partitions)" != "" ] && [ "\$(grep mmc /proc/partitions)" = "" ]; then
-mkimage -A arm -O linux -T kernel -C none -a "0x40008000" -e "0x40008000" -n "Linux kernel" -d /$installed_image_path /boot/uImage  > /dev/null 2>&1
-cp /boot/uImage /tmp/uImage
-sync
-mountpoint -q /boot || mount /boot
-cp /tmp/uImage /boot/uImage
-rm -f /$installed_image_path
-else
 ln -sf $(basename $installed_image_path) /boot/zImage > /dev/null 2>&1 || mv /$installed_image_path /boot/zImage
-fi
-touch /boot/.next
 exit 0
 EOT
-##
-## FAT install workaround
-##
-sed -e "s/set -e//g" -i $tmpdir/DEBIAN/preinst
-sed -e "s/exit 0//g" -i $tmpdir/DEBIAN/preinst
-cat >> $tmpdir/DEBIAN/preinst <<EOT 
-# exit if we are running chroot
-if [ "\$(stat -c %d:%i /)" != "\$(stat -c %d:%i /proc/1/root/.)" ]; then exit 0; fi
-
-check_and_unmount (){
-boot_device=\$(mountpoint -d /boot)
-
-for file in /dev/* ; do
-	CURRENT_DEVICE=\$(printf "%d:%d" \$(stat --printf="0x%t 0x%T" \$file))
-	if [[ "\$CURRENT_DEVICE" = "\$boot_device" ]]; then
-		boot_partition=\$file
-		break;
-	fi
-done
-
-bootfstype=\$(blkid -s TYPE -o value \$boot_partition)
-if [ "\$bootfstype" = "vfat" ]; then 
-umount /boot; 
-rm -f /boot/System.map* /boot/config* /boot/vmlinuz* /boot/zImage /boot/uImage
-fi
-}
-mountpoint -q /boot && check_and_unmount
-EOT
-echo "exit 0" >> $tmpdir/DEBIAN/preinst 
 
 # Try to determine maintainer and email values
 if [ -n "$DEBEMAIL" ]; then
@@ -483,7 +442,7 @@ EOF
 
 if [ "$ARCH" != "um" ]; then
 	create_package "$kernel_headers_packagename" "$kernel_headers_dir"
-#	create_package "$libc_headers_packagename" "$libc_headers_dir"
+	create_package "$libc_headers_packagename" "$libc_headers_dir"
 fi
 
 create_package "$packagename" "$tmpdir"

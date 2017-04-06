@@ -683,6 +683,15 @@ config MMC_DW_ROCKCHIP
 	  Synopsys DesignWare Memory Card Interface driver. Select this option
 	  for platforms based on RK3066, RK3188 and RK3288 SoC's.
 
+config MMC_DW_ZX
+	tristate "ZTE specific extensions for Synopsys DW Memory Card Interface"
+	depends on MMC_DW && ARCH_ZX
+	select MMC_DW_PLTFM
+	help
+	  This selects support for ZTE SoC specific extensions to the
+	  Synopsys DesignWare Memory Card Interface driver. Select this option
+	  for platforms based on ZX296718 SoC's.
+
 config MMC_SH_MMCIF
 	tristate "SuperH Internal MMCIF support"
 	depends on HAS_DMA
@@ -789,6 +798,20 @@ config MMC_TOSHIBA_PCI
 	tristate "Toshiba Type A SD/MMC Card Interface Driver"
 	depends on PCI
 	help
+
+config MMC_BCM2835
+	tristate "Broadcom BCM2835 SDHOST MMC Controller support"
+	depends on ARCH_BCM2835 || COMPILE_TEST
+	depends on HAS_DMA
+	help
+	  This selects the BCM2835 SDHOST MMC controller. If you have
+	  a BCM2835 platform with SD or MMC devices, say Y or M here.
+
+	  Note that the BCM2835 has two SD controllers: The Arasan
+	  sdhci controller (supported by MMC_SDHCI_IPROC) and a custom
+	  sdhost controller (supported by this driver).
+
+	  If unsure, say N.
 
 config MMC_MTK
 	tristate "MediaTek SD/MMC Card Interface support"

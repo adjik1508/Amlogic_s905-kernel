@@ -122,7 +122,7 @@ static inline void l2_inv_pa_range(unsigned long start, unsigned long end)
 	l2_put_va(va_start);
 }
 
-static void l2_inv_all(void)
+static inline void l2_inv_all(void)
 {
 	__asm__("mcr p15, 1, %0, c15, c11, 0" : : "r" (0));
 }
