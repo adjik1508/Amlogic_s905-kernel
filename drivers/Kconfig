@@ -1,6 +1,6 @@
 menu "Device Drivers"
 
-source "drivers/amlogic/Kconfig"
+#source "drivers/amlogic/Kconfig"
 
 source "drivers/amba/Kconfig"
 
