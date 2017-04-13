@@ -81,7 +81,7 @@
 #define AML_UART_BAUD_XTAL		BIT(24)
 
 #define AML_UART_PORT_NUM		6
-#define AML_UART_DEV_NAME		"ttyAML"
+#define AML_UART_DEV_NAME		"ttyS"
 
 
 static struct uart_driver meson_uart_driver;
