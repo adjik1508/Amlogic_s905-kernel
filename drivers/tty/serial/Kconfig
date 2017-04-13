@@ -218,7 +218,7 @@ config SERIAL_MESON_CONSOLE
 	  Say Y here if you wish to use a Amlogic MesonX UART as the
 	  system console (the system console is the device which
 	  receives all kernel messages and warnings and which allows
-	  logins in single user mode) as /dev/ttySx.
+	  logins in single user mode) as /dev/ttyAMLx.
 
 config SERIAL_CLPS711X
 	tristate "CLPS711X serial port support"
