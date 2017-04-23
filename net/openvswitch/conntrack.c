@@ -643,8 +643,8 @@ static bool skb_nfct_cached(struct net *net,
 		 */
 		if (nf_ct_is_confirmed(ct))
 			nf_ct_delete(ct, 0, 0);
-		else
-			nf_conntrack_put(&ct->ct_general);
+
+		nf_conntrack_put(&ct->ct_general);
 		nf_ct_set(skb, NULL, 0);
 		return false;
 	}
@@ -794,11 +794,6 @@ static int ovs_ct_nat(struct net *net, struct sw_flow_key *key,
 {
 	enum nf_nat_manip_type maniptype;
 	int err;
-
-	if (nf_ct_is_untracked(ct)) {
-		/* A NAT action may only be performed on tracked packets. */
-		return NF_ACCEPT;
-	}
 
 	/* Add NAT extension if not confirmed yet. */
 	if (!nf_ct_is_confirmed(ct) && !nf_ct_nat_ext_add(ct))

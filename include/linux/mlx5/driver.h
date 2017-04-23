@@ -728,6 +728,7 @@ struct mlx5e_resources {
 	u32                        pdn;
 	struct mlx5_td             td;
 	struct mlx5_core_mkey      mkey;
+	struct mlx5_sq_bfreg       bfreg;
 };
 
 struct mlx5_core_dev {
@@ -890,12 +891,7 @@ static inline u16 cmdif_rev(struct mlx5_core_dev *dev)
 
 static inline void *mlx5_vzalloc(unsigned long size)
 {
-	void *rtn;
-
-	rtn = kzalloc(size, GFP_KERNEL | __GFP_NOWARN);
-	if (!rtn)
-		rtn = vzalloc(size);
-	return rtn;
+	return kvzalloc(size, GFP_KERNEL);
 }
 
 static inline u32 mlx5_base_mkey(const u32 key)

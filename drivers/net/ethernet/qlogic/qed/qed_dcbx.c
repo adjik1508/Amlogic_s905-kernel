@@ -183,7 +183,7 @@ qed_dcbx_dp_protocol(struct qed_hwfn *p_hwfn, struct qed_dcbx_results *p_data)
 			   "%s info: update %d, enable %d, prio %d, tc %d, num_tc %d\n",
 			   qed_dcbx_app_update[i].name, p_data->arr[id].update,
 			   p_data->arr[id].enable, p_data->arr[id].priority,
-			   p_data->arr[id].tc, p_hwfn->hw_info.num_tc);
+			   p_data->arr[id].tc, p_hwfn->hw_info.num_active_tc);
 	}
 }
 
@@ -204,12 +204,8 @@ qed_dcbx_set_params(struct qed_dcbx_results *p_data,
 	p_data->arr[type].tc = tc;
 
 	/* QM reconf data */
-	if (p_info->personality == personality) {
-		if (personality == QED_PCI_ETH)
-			p_info->non_offload_tc = tc;
-		else
-			p_info->offload_tc = tc;
-	}
+	if (p_info->personality == personality)
+		p_info->offload_tc = tc;
 }
 
 /* Update app protocol data and hw_info fields with the TLV info */
@@ -376,7 +372,9 @@ static int qed_dcbx_process_mib_info(struct qed_hwfn *p_hwfn)
 	if (rc)
 		return rc;
 
-	p_info->num_tc = QED_MFW_GET_FIELD(p_ets->flags, DCBX_ETS_MAX_TCS);
+	p_info->num_active_tc = QED_MFW_GET_FIELD(p_ets->flags,
+						  DCBX_ETS_MAX_TCS);
+	p_hwfn->qm_info.ooo_tc = QED_MFW_GET_FIELD(p_ets->flags, DCBX_OOO_TC);
 	data.pf_id = p_hwfn->rel_pf_id;
 	data.dcbx_enabled = !!dcbx_version;
 
@@ -582,6 +580,13 @@ qed_dcbx_get_ets_data(struct qed_hwfn *p_hwfn,
 		   p_params->ets_willing,
 		   p_params->ets_cbs,
 		   p_ets->pri_tc_tbl[0], p_params->max_ets_tc);
+
+	if (p_params->ets_enabled && !p_params->max_ets_tc) {
+		p_params->max_ets_tc = QED_MAX_PFC_PRIORITIES;
+		DP_VERBOSE(p_hwfn, QED_MSG_DCB,
+			   "ETS params: max_ets_tc is forced to %d\n",
+		p_params->max_ets_tc);
+	}
 
 	/* 8 bit tsa and bw data corresponding to each of the 8 TC's are
 	 * encoded in a type u32 array of size 2.
@@ -1001,6 +1006,8 @@ qed_dcbx_set_pfc_data(struct qed_hwfn *p_hwfn,
 	u8 pfc_map = 0;
 	int i;
 
+	*pfc &= ~DCBX_PFC_ERROR_MASK;
+
 	if (p_params->pfc.willing)
 		*pfc |= DCBX_PFC_WILLING_MASK;
 	else
@@ -1255,7 +1262,7 @@ static struct qed_dcbx_get *qed_dcbnl_get_dcbx(struct qed_hwfn *hwfn,
 {
 	struct qed_dcbx_get *dcbx_info;
 
-	dcbx_info = kzalloc(sizeof(*dcbx_info), GFP_KERNEL);
+	dcbx_info = kmalloc(sizeof(*dcbx_info), GFP_ATOMIC);
 	if (!dcbx_info)
 		return NULL;
 
@@ -2072,6 +2079,8 @@ static int qed_dcbnl_ieee_setpfc(struct qed_dev *cdev, struct ieee_pfc *pfc)
 	dcbx_set.override_flags |= QED_DCBX_OVERRIDE_PFC_CFG;
 	for (i = 0; i < QED_MAX_PFC_PRIORITIES; i++)
 		dcbx_set.config.params.pfc.prio[i] = !!(pfc->pfc_en & BIT(i));
+
+	dcbx_set.config.params.pfc.max_tc = pfc->pfc_cap;
 
 	ptt = qed_ptt_acquire(hwfn);
 	if (!ptt)

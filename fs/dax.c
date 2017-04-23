@@ -373,6 +373,22 @@ restart:
 		}
 		spin_lock_irq(&mapping->tree_lock);
 
+		if (!entry) {
+			/*
+			 * We needed to drop the page_tree lock while calling
+			 * radix_tree_preload() and we didn't have an entry to
+			 * lock.  See if another thread inserted an entry at
+			 * our index during this time.
+			 */
+			entry = __radix_tree_lookup(&mapping->page_tree, index,
+					NULL, &slot);
+			if (entry) {
+				radix_tree_preload_end();
+				spin_unlock_irq(&mapping->tree_lock);
+				goto restart;
+			}
+		}
+
 		if (pmd_downgrade) {
 			radix_tree_delete(&mapping->page_tree, index);
 			mapping->nrexceptional--;
@@ -388,19 +404,12 @@ restart:
 		if (err) {
 			spin_unlock_irq(&mapping->tree_lock);
 			/*
-			 * Someone already created the entry?  This is a
-			 * normal failure when inserting PMDs in a range
-			 * that already contains PTEs.  In that case we want
-			 * to return -EEXIST immediately.
-			 */
-			if (err == -EEXIST && !(size_flag & RADIX_DAX_PMD))
-				goto restart;
-			/*
-			 * Our insertion of a DAX PMD entry failed, most
-			 * likely because it collided with a PTE sized entry
-			 * at a different index in the PMD range.  We haven't
-			 * inserted anything into the radix tree and have no
-			 * waiters to wake.
+			 * Our insertion of a DAX entry failed, most likely
+			 * because we were inserting a PMD entry and it
+			 * collided with a PTE sized entry at a different
+			 * index in the PMD range.  We haven't inserted
+			 * anything into the radix tree and have no waiters to
+			 * wake.
 			 */
 			return ERR_PTR(err);
 		}
@@ -546,21 +555,25 @@ int dax_invalidate_mapping_entry_sync(struct address_space *mapping,
 static int dax_load_hole(struct address_space *mapping, void **entry,
 			 struct vm_fault *vmf)
 {
+	struct inode *inode = mapping->host;
 	struct page *page;
 	int ret;
 
 	/* Hole page already exists? Return it...  */
 	if (!radix_tree_exceptional_entry(*entry)) {
 		page = *entry;
-		goto out;
+		goto finish_fault;
 	}
 
 	/* This will replace locked radix tree entry with a hole page */
 	page = find_or_create_page(mapping, vmf->pgoff,
 				   vmf->gfp_mask | __GFP_ZERO);
-	if (!page)
-		return VM_FAULT_OOM;
- out:
+	if (!page) {
+		ret = VM_FAULT_OOM;
+		goto out;
+	}
+
+finish_fault:
 	vmf->page = page;
 	ret = finish_fault(vmf);
 	vmf->page = NULL;
@@ -568,8 +581,10 @@ static int dax_load_hole(struct address_space *mapping, void **entry,
 	if (!ret) {
 		/* Grab reference for PTE that is now referencing the page */
 		get_page(page);
-		return VM_FAULT_NOPAGE;
+		ret = VM_FAULT_NOPAGE;
 	}
+out:
+	trace_dax_load_hole(inode, vmf, ret);
 	return ret;
 }
 
@@ -838,6 +853,7 @@ static int dax_writeback_one(struct block_device *bdev,
 	spin_lock_irq(&mapping->tree_lock);
 	radix_tree_tag_clear(page_tree, index, PAGECACHE_TAG_DIRTY);
 	spin_unlock_irq(&mapping->tree_lock);
+	trace_dax_writeback_one(mapping->host, index, dax.size >> PAGE_SHIFT);
  unmap:
 	dax_unmap_atomic(bdev, &dax);
 	put_locked_mapping_entry(mapping, index, entry);
@@ -873,6 +889,8 @@ int dax_writeback_mapping_range(struct address_space *mapping,
 	start_index = wbc->range_start >> PAGE_SHIFT;
 	end_index = wbc->range_end >> PAGE_SHIFT;
 
+	trace_dax_writeback_range(inode, start_index, end_index);
+
 	tag_pages_for_writeback(mapping, start_index, end_index);
 
 	pagevec_init(&pvec, 0);
@@ -893,10 +911,12 @@ int dax_writeback_mapping_range(struct address_space *mapping,
 			ret = dax_writeback_one(bdev, mapping, indices[i],
 					pvec.pages[i]);
 			if (ret < 0)
-				return ret;
+				goto out;
 		}
 	}
-	return 0;
+out:
+	trace_dax_writeback_range_done(inode, start_index, end_index);
+	return (ret < 0 ? ret : 0);
 }
 EXPORT_SYMBOL_GPL(dax_writeback_mapping_range);
 
@@ -921,6 +941,7 @@ static int dax_insert_mapping(struct address_space *mapping,
 		return PTR_ERR(ret);
 	*entryp = ret;
 
+	trace_dax_insert_mapping(mapping->host, vmf, ret);
 	return vm_insert_mixed(vma, vaddr, dax.pfn);
 }
 
@@ -932,6 +953,7 @@ int dax_pfn_mkwrite(struct vm_fault *vmf)
 {
 	struct file *file = vmf->vma->vm_file;
 	struct address_space *mapping = file->f_mapping;
+	struct inode *inode = mapping->host;
 	void *entry, **slot;
 	pgoff_t index = vmf->pgoff;
 
@@ -941,6 +963,7 @@ int dax_pfn_mkwrite(struct vm_fault *vmf)
 		if (entry)
 			put_unlocked_mapping_entry(mapping, index, entry);
 		spin_unlock_irq(&mapping->tree_lock);
+		trace_dax_pfn_mkwrite_no_entry(inode, vmf, VM_FAULT_NOPAGE);
 		return VM_FAULT_NOPAGE;
 	}
 	radix_tree_tag_set(&mapping->page_tree, index, PAGECACHE_TAG_DIRTY);
@@ -953,6 +976,7 @@ int dax_pfn_mkwrite(struct vm_fault *vmf)
 	 */
 	finish_mkwrite_fault(vmf);
 	put_locked_mapping_entry(mapping, index, entry);
+	trace_dax_pfn_mkwrite(inode, vmf, VM_FAULT_NOPAGE);
 	return VM_FAULT_NOPAGE;
 }
 EXPORT_SYMBOL_GPL(dax_pfn_mkwrite);
@@ -982,7 +1006,7 @@ int __dax_zero_page_range(struct block_device *bdev, sector_t sector,
 		sector_t start_sector = dax.sector + (offset >> 9);
 
 		return blkdev_issue_zeroout(bdev, start_sector,
-				length >> 9, GFP_NOFS, true);
+				length >> 9, GFP_NOFS, 0);
 	} else {
 		if (dax_map_atomic(bdev, &dax) < 0)
 			return PTR_ERR(dax.addr);
@@ -993,14 +1017,14 @@ int __dax_zero_page_range(struct block_device *bdev, sector_t sector,
 }
 EXPORT_SYMBOL_GPL(__dax_zero_page_range);
 
-static sector_t dax_iomap_sector(struct iomap *iomap, loff_t pos)
+static sector_t dax_iomap_sector(const struct iomap *iomap, loff_t pos)
 {
 	return iomap->blkno + (((pos & PAGE_MASK) - iomap->offset) >> 9);
 }
 
 static loff_t
 dax_iomap_actor(struct inode *inode, loff_t pos, loff_t length, void *data,
-		struct iomap *iomap)
+		const struct iomap *iomap)
 {
 	struct iov_iter *iter = data;
 	loff_t end = pos + length, done = 0;
@@ -1133,13 +1157,16 @@ static int dax_iomap_pte_fault(struct vm_fault *vmf,
 	int vmf_ret = 0;
 	void *entry;
 
+	trace_dax_pte_fault(inode, vmf, vmf_ret);
 	/*
 	 * Check whether offset isn't beyond end of file now. Caller is supposed
 	 * to hold locks serializing us with truncate / punch hole so this is
 	 * a reliable test.
 	 */
-	if (pos >= i_size_read(inode))
-		return VM_FAULT_SIGBUS;
+	if (pos >= i_size_read(inode)) {
+		vmf_ret = VM_FAULT_SIGBUS;
+		goto out;
+	}
 
 	if ((vmf->flags & FAULT_FLAG_WRITE) && !vmf->cow_page)
 		flags |= IOMAP_WRITE;
@@ -1150,8 +1177,10 @@ static int dax_iomap_pte_fault(struct vm_fault *vmf,
 	 * that we never have to deal with more than a single extent here.
 	 */
 	error = ops->iomap_begin(inode, pos, PAGE_SIZE, flags, &iomap);
-	if (error)
-		return dax_fault_return(error);
+	if (error) {
+		vmf_ret = dax_fault_return(error);
+		goto out;
+	}
 	if (WARN_ON_ONCE(iomap.offset + iomap.length < pos + PAGE_SIZE)) {
 		vmf_ret = dax_fault_return(-EIO);	/* fs corruption? */
 		goto finish_iomap;
@@ -1235,6 +1264,8 @@ static int dax_iomap_pte_fault(struct vm_fault *vmf,
 		 */
 		ops->iomap_end(inode, pos, PAGE_SIZE, copied, flags, &iomap);
 	}
+out:
+	trace_dax_pte_fault_done(inode, vmf, vmf_ret);
 	return vmf_ret;
 }
 

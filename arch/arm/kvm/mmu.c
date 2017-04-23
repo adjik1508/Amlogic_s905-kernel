@@ -292,11 +292,18 @@ static void unmap_stage2_range(struct kvm *kvm, phys_addr_t start, u64 size)
 	phys_addr_t addr = start, end = start + size;
 	phys_addr_t next;
 
+	assert_spin_locked(&kvm->mmu_lock);
 	pgd = kvm->arch.pgd + stage2_pgd_index(addr);
 	do {
 		next = stage2_pgd_addr_end(addr, end);
 		if (!stage2_pgd_none(*pgd))
 			unmap_stage2_puds(kvm, pgd, addr, next);
+		/*
+		 * If the range is too large, release the kvm->mmu_lock
+		 * to prevent starvation and lockup detector warnings.
+		 */
+		if (next != end)
+			cond_resched_lock(&kvm->mmu_lock);
 	} while (pgd++, addr = next, addr != end);
 }
 
@@ -803,6 +810,7 @@ void stage2_unmap_vm(struct kvm *kvm)
 	int idx;
 
 	idx = srcu_read_lock(&kvm->srcu);
+	down_read(&current->mm->mmap_sem);
 	spin_lock(&kvm->mmu_lock);
 
 	slots = kvm_memslots(kvm);
@@ -810,6 +818,7 @@ void stage2_unmap_vm(struct kvm *kvm)
 		stage2_unmap_memslot(kvm, memslot);
 
 	spin_unlock(&kvm->mmu_lock);
+	up_read(&current->mm->mmap_sem);
 	srcu_read_unlock(&kvm->srcu, idx);
 }
 
@@ -829,7 +838,10 @@ void kvm_free_stage2_pgd(struct kvm *kvm)
 	if (kvm->arch.pgd == NULL)
 		return;
 
+	spin_lock(&kvm->mmu_lock);
 	unmap_stage2_range(kvm, 0, KVM_PHYS_SIZE);
+	spin_unlock(&kvm->mmu_lock);
+
 	/* Free the HW pgd, one page at a time */
 	free_pages_exact(kvm->arch.pgd, S2_PGD_SIZE);
 	kvm->arch.pgd = NULL;
@@ -1512,7 +1524,8 @@ static int handle_hva_to_gpa(struct kvm *kvm,
 			     unsigned long start,
 			     unsigned long end,
 			     int (*handler)(struct kvm *kvm,
-					    gpa_t gpa, void *data),
+					    gpa_t gpa, u64 size,
+					    void *data),
 			     void *data)
 {
 	struct kvm_memslots *slots;
@@ -1524,7 +1537,7 @@ static int handle_hva_to_gpa(struct kvm *kvm,
 	/* we only care about the pages that the guest sees */
 	kvm_for_each_memslot(memslot, slots) {
 		unsigned long hva_start, hva_end;
-		gfn_t gfn, gfn_end;
+		gfn_t gpa;
 
 		hva_start = max(start, memslot->userspace_addr);
 		hva_end = min(end, memslot->userspace_addr +
@@ -1532,25 +1545,16 @@ static int handle_hva_to_gpa(struct kvm *kvm,
 		if (hva_start >= hva_end)
 			continue;
 
-		/*
-		 * {gfn(page) | page intersects with [hva_start, hva_end)} =
-		 * {gfn_start, gfn_start+1, ..., gfn_end-1}.
-		 */
-		gfn = hva_to_gfn_memslot(hva_start, memslot);
-		gfn_end = hva_to_gfn_memslot(hva_end + PAGE_SIZE - 1, memslot);
-
-		for (; gfn < gfn_end; ++gfn) {
-			gpa_t gpa = gfn << PAGE_SHIFT;
-			ret |= handler(kvm, gpa, data);
-		}
+		gpa = hva_to_gfn_memslot(hva_start, memslot) << PAGE_SHIFT;
+		ret |= handler(kvm, gpa, (u64)(hva_end - hva_start), data);
 	}
 
 	return ret;
 }
 
-static int kvm_unmap_hva_handler(struct kvm *kvm, gpa_t gpa, void *data)
+static int kvm_unmap_hva_handler(struct kvm *kvm, gpa_t gpa, u64 size, void *data)
 {
-	unmap_stage2_range(kvm, gpa, PAGE_SIZE);
+	unmap_stage2_range(kvm, gpa, size);
 	return 0;
 }
 
@@ -1577,10 +1581,11 @@ int kvm_unmap_hva_range(struct kvm *kvm,
 	return 0;
 }
 
-static int kvm_set_spte_handler(struct kvm *kvm, gpa_t gpa, void *data)
+static int kvm_set_spte_handler(struct kvm *kvm, gpa_t gpa, u64 size, void *data)
 {
 	pte_t *pte = (pte_t *)data;
 
+	WARN_ON(size != PAGE_SIZE);
 	/*
 	 * We can always call stage2_set_pte with KVM_S2PTE_FLAG_LOGGING_ACTIVE
 	 * flag clear because MMU notifiers will have unmapped a huge PMD before
@@ -1606,11 +1611,12 @@ void kvm_set_spte_hva(struct kvm *kvm, unsigned long hva, pte_t pte)
 	handle_hva_to_gpa(kvm, hva, end, &kvm_set_spte_handler, &stage2_pte);
 }
 
-static int kvm_age_hva_handler(struct kvm *kvm, gpa_t gpa, void *data)
+static int kvm_age_hva_handler(struct kvm *kvm, gpa_t gpa, u64 size, void *data)
 {
 	pmd_t *pmd;
 	pte_t *pte;
 
+	WARN_ON(size != PAGE_SIZE && size != PMD_SIZE);
 	pmd = stage2_get_pmd(kvm, NULL, gpa);
 	if (!pmd || pmd_none(*pmd))	/* Nothing there */
 		return 0;
@@ -1625,11 +1631,12 @@ static int kvm_age_hva_handler(struct kvm *kvm, gpa_t gpa, void *data)
 	return stage2_ptep_test_and_clear_young(pte);
 }
 
-static int kvm_test_age_hva_handler(struct kvm *kvm, gpa_t gpa, void *data)
+static int kvm_test_age_hva_handler(struct kvm *kvm, gpa_t gpa, u64 size, void *data)
 {
 	pmd_t *pmd;
 	pte_t *pte;
 
+	WARN_ON(size != PAGE_SIZE && size != PMD_SIZE);
 	pmd = stage2_get_pmd(kvm, NULL, gpa);
 	if (!pmd || pmd_none(*pmd))	/* Nothing there */
 		return 0;
@@ -1672,11 +1679,6 @@ phys_addr_t kvm_mmu_get_httbr(void)
 phys_addr_t kvm_get_idmap_vector(void)
 {
 	return hyp_idmap_vector;
-}
-
-phys_addr_t kvm_get_idmap_start(void)
-{
-	return hyp_idmap_start;
 }
 
 static int kvm_map_idmap_text(pgd_t *pgd)
@@ -1801,6 +1803,7 @@ int kvm_arch_prepare_memory_region(struct kvm *kvm,
 	    (KVM_PHYS_SIZE >> PAGE_SHIFT))
 		return -EFAULT;
 
+	down_read(&current->mm->mmap_sem);
 	/*
 	 * A memory region could potentially cover multiple VMAs, and any holes
 	 * between them, so iterate over all of them to find out if we can map
@@ -1844,8 +1847,10 @@ int kvm_arch_prepare_memory_region(struct kvm *kvm,
 			pa += vm_start - vma->vm_start;
 
 			/* IO region dirty page logging not allowed */
-			if (memslot->flags & KVM_MEM_LOG_DIRTY_PAGES)
-				return -EINVAL;
+			if (memslot->flags & KVM_MEM_LOG_DIRTY_PAGES) {
+				ret = -EINVAL;
+				goto out;
+			}
 
 			ret = kvm_phys_addr_ioremap(kvm, gpa, pa,
 						    vm_end - vm_start,
@@ -1857,7 +1862,7 @@ int kvm_arch_prepare_memory_region(struct kvm *kvm,
 	} while (hva < reg_end);
 
 	if (change == KVM_MR_FLAGS_ONLY)
-		return ret;
+		goto out;
 
 	spin_lock(&kvm->mmu_lock);
 	if (ret)
@@ -1865,6 +1870,8 @@ int kvm_arch_prepare_memory_region(struct kvm *kvm,
 	else
 		stage2_flush_memslot(kvm, memslot);
 	spin_unlock(&kvm->mmu_lock);
+out:
+	up_read(&current->mm->mmap_sem);
 	return ret;
 }
 

@@ -81,11 +81,18 @@ static inline bool irq_is_pending(struct vgic_irq *irq)
 		return irq->pending_latch || irq->line_level;
 }
 
+/*
+ * This struct provides an intermediate representation of the fields contained
+ * in the GICH_VMCR and ICH_VMCR registers, such that code exporting the GIC
+ * state to userspace can generate either GICv2 or GICv3 CPU interface
+ * registers regardless of the hardware backed GIC used.
+ */
 struct vgic_vmcr {
 	u32	ctlr;
 	u32	abpr;
 	u32	bpr;
-	u32	pmr;
+	u32	pmr;  /* Priority mask field in the GICC_PMR and
+		       * ICC_PMR_EL1 priority field format */
 	/* Below member variable are valid only for GICv3 */
 	u32	grpen0;
 	u32	grpen1;
@@ -112,7 +119,6 @@ void vgic_kick_vcpus(struct kvm *kvm);
 int vgic_check_ioaddr(struct kvm *kvm, phys_addr_t *ioaddr,
 		      phys_addr_t addr, phys_addr_t alignment);
 
-void vgic_v2_process_maintenance(struct kvm_vcpu *vcpu);
 void vgic_v2_fold_lr_state(struct kvm_vcpu *vcpu);
 void vgic_v2_populate_lr(struct kvm_vcpu *vcpu, struct vgic_irq *irq, int lr);
 void vgic_v2_clear_lr(struct kvm_vcpu *vcpu, int lr);
@@ -130,6 +136,10 @@ int vgic_v2_map_resources(struct kvm *kvm);
 int vgic_register_dist_iodev(struct kvm *kvm, gpa_t dist_base_address,
 			     enum vgic_type);
 
+void vgic_v2_init_lrs(void);
+void vgic_v2_load(struct kvm_vcpu *vcpu);
+void vgic_v2_put(struct kvm_vcpu *vcpu);
+
 static inline void vgic_get_irq_kref(struct vgic_irq *irq)
 {
 	if (irq->intid < VGIC_MIN_LPI)
@@ -138,7 +148,6 @@ static inline void vgic_get_irq_kref(struct vgic_irq *irq)
 	kref_get(&irq->refcount);
 }
 
-void vgic_v3_process_maintenance(struct kvm_vcpu *vcpu);
 void vgic_v3_fold_lr_state(struct kvm_vcpu *vcpu);
 void vgic_v3_populate_lr(struct kvm_vcpu *vcpu, struct vgic_irq *irq, int lr);
 void vgic_v3_clear_lr(struct kvm_vcpu *vcpu, int lr);
@@ -149,6 +158,9 @@ void vgic_v3_enable(struct kvm_vcpu *vcpu);
 int vgic_v3_probe(const struct gic_kvm_info *info);
 int vgic_v3_map_resources(struct kvm *kvm);
 int vgic_register_redist_iodevs(struct kvm *kvm, gpa_t dist_base_address);
+
+void vgic_v3_load(struct kvm_vcpu *vcpu);
+void vgic_v3_put(struct kvm_vcpu *vcpu);
 
 int vgic_register_its_iodevs(struct kvm *kvm);
 bool vgic_has_its(struct kvm *kvm);

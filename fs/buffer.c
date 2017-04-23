@@ -1938,7 +1938,7 @@ EXPORT_SYMBOL(page_zero_new_buffers);
 
 static void
 iomap_to_bh(struct inode *inode, sector_t block, struct buffer_head *bh,
-		struct iomap *iomap)
+		const struct iomap *iomap)
 {
 	loff_t offset = block << inode->i_blkbits;
 
@@ -1991,7 +1991,7 @@ iomap_to_bh(struct inode *inode, sector_t block, struct buffer_head *bh,
 }
 
 int __block_write_begin_int(struct page *page, loff_t pos, unsigned len,
-		get_block_t *get_block, struct iomap *iomap)
+		get_block_t *get_block, const struct iomap *iomap)
 {
 	unsigned from = pos & (PAGE_SIZE - 1);
 	unsigned to = from + len;
@@ -2379,8 +2379,7 @@ int generic_cont_expand_simple(struct inode *inode, loff_t size)
 		goto out;
 
 	err = pagecache_write_begin(NULL, mapping, size, 0,
-				AOP_FLAG_UNINTERRUPTIBLE|AOP_FLAG_CONT_EXPAND,
-				&page, &fsdata);
+				    AOP_FLAG_CONT_EXPAND, &page, &fsdata);
 	if (err)
 		goto out;
 
@@ -2415,9 +2414,8 @@ static int cont_expand_zero(struct file *file, struct address_space *mapping,
 		}
 		len = PAGE_SIZE - zerofrom;
 
-		err = pagecache_write_begin(file, mapping, curpos, len,
-						AOP_FLAG_UNINTERRUPTIBLE,
-						&page, &fsdata);
+		err = pagecache_write_begin(file, mapping, curpos, len, 0,
+					    &page, &fsdata);
 		if (err)
 			goto out;
 		zero_user(page, zerofrom, len);
@@ -2449,9 +2447,8 @@ static int cont_expand_zero(struct file *file, struct address_space *mapping,
 		}
 		len = offset - zerofrom;
 
-		err = pagecache_write_begin(file, mapping, curpos, len,
-						AOP_FLAG_UNINTERRUPTIBLE,
-						&page, &fsdata);
+		err = pagecache_write_begin(file, mapping, curpos, len, 0,
+					    &page, &fsdata);
 		if (err)
 			goto out;
 		zero_user(page, zerofrom, len);

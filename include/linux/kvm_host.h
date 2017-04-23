@@ -375,8 +375,6 @@ struct kvm {
 	struct mutex slots_lock;
 	struct mm_struct *mm; /* userspace tied to this vm */
 	struct kvm_memslots *memslots[KVM_ADDRESS_SPACE_NUM];
-	struct srcu_struct srcu;
-	struct srcu_struct irq_srcu;
 	struct kvm_vcpu *vcpus[KVM_MAX_VCPUS];
 
 	/*
@@ -403,7 +401,7 @@ struct kvm {
 	struct kvm_vm_stat stat;
 	struct kvm_arch arch;
 	refcount_t users_count;
-#ifdef KVM_COALESCED_MMIO_PAGE_OFFSET
+#ifdef CONFIG_KVM_MMIO
 	struct kvm_coalesced_mmio_ring *coalesced_mmio_ring;
 	spinlock_t ring_lock;
 	struct list_head coalesced_zones;
@@ -429,6 +427,8 @@ struct kvm {
 	struct list_head devices;
 	struct dentry *debugfs_dentry;
 	struct kvm_stat_data **debugfs_stat_data;
+	struct srcu_struct srcu;
+	struct srcu_struct irq_srcu;
 };
 
 #define kvm_err(fmt, ...) \
@@ -767,8 +767,6 @@ void kvm_arch_check_processor_compat(void *rtn);
 int kvm_arch_vcpu_runnable(struct kvm_vcpu *vcpu);
 int kvm_arch_vcpu_should_kick(struct kvm_vcpu *vcpu);
 
-void *kvm_kvzalloc(unsigned long size);
-
 #ifndef __KVM_HAVE_ARCH_VM_ALLOC
 static inline struct kvm *kvm_arch_alloc_vm(void)
 {
@@ -876,22 +874,6 @@ void kvm_unregister_irq_ack_notifier(struct kvm *kvm,
 				   struct kvm_irq_ack_notifier *kian);
 int kvm_request_irq_source_id(struct kvm *kvm);
 void kvm_free_irq_source_id(struct kvm *kvm, int irq_source_id);
-
-#ifdef CONFIG_KVM_DEVICE_ASSIGNMENT
-int kvm_iommu_map_pages(struct kvm *kvm, struct kvm_memory_slot *slot);
-void kvm_iommu_unmap_pages(struct kvm *kvm, struct kvm_memory_slot *slot);
-#else
-static inline int kvm_iommu_map_pages(struct kvm *kvm,
-				      struct kvm_memory_slot *slot)
-{
-	return 0;
-}
-
-static inline void kvm_iommu_unmap_pages(struct kvm *kvm,
-					 struct kvm_memory_slot *slot)
-{
-}
-#endif
 
 /*
  * search_memslots() and __gfn_to_memslot() are here because they are

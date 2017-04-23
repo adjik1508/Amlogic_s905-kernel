@@ -271,16 +271,17 @@ void blkdev_show(struct seq_file *seqf, off_t offset)
 /**
  * register_blkdev - register a new block device
  *
- * @major: the requested major device number [1..255]. If @major=0, try to
+ * @major: the requested major device number [1..255]. If @major = 0, try to
  *         allocate any unused major number.
  * @name: the name of the new block device as a zero terminated string
  *
  * The @name must be unique within the system.
  *
- * The return value depends on the @major input parameter.
+ * The return value depends on the @major input parameter:
+ *
  *  - if a major device number was requested in range [1..255] then the
  *    function returns zero on success, or a negative error code
- *  - if any unused major number was requested with @major=0 parameter
+ *  - if any unused major number was requested with @major = 0 parameter
  *    then the return value is the allocated major number in range
  *    [1..255] or a negative error code otherwise
  */
@@ -889,7 +890,7 @@ static int show_partition(struct seq_file *seqf, void *v)
 	char buf[BDEVNAME_SIZE];
 
 	/* Don't show non-partitionable removeable devices or empty devices */
-	if (!get_capacity(sgp) || (!disk_max_parts(sgp) &&
+	if (!get_capacity(sgp) || (!(disk_max_parts(sgp) > 1) &&
 				   (sgp->flags & GENHD_FL_REMOVABLE)))
 		return 0;
 	if (sgp->flags & GENHD_FL_SUPPRESS_PARTITION_INFO)
@@ -1352,7 +1353,7 @@ struct kobject *get_disk(struct gendisk *disk)
 	owner = disk->fops->owner;
 	if (owner && !try_module_get(owner))
 		return NULL;
-	kobj = kobject_get(&disk_to_dev(disk)->kobj);
+	kobj = kobject_get_unless_zero(&disk_to_dev(disk)->kobj);
 	if (kobj == NULL) {
 		module_put(owner);
 		return NULL;

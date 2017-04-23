@@ -49,6 +49,8 @@
 #define   CLK_SRC_PLL 1    /* FCLK_DIV2 */
 #define   CLK_SRC_PLL_RATE 1000000000
 #define   CLK_CORE_PHASE_MASK GENMASK(9, 8)
+#define   CLK_TX_PHASE_MASK GENMASK(11, 10)
+#define   CLK_RX_PHASE_MASK GENMASK(13, 12)
 #define   CLK_PHASE_0 0
 #define   CLK_PHASE_90 1
 #define   CLK_PHASE_180 2
@@ -109,7 +111,25 @@
 #define SD_EMMC_CMD_TIMEOUT 1024 /* in ms */
 #define SD_EMMC_CMD_TIMEOUT_DATA 4096 /* in ms */
 #define SD_EMMC_CFG_CMD_GAP 16 /* in clock cycles */
+#define SD_EMMC_DESC_BUF_LEN PAGE_SIZE
+
+#define SD_EMMC_PRE_REQ_DONE BIT(0)
+#define SD_EMMC_DESC_CHAIN_MODE BIT(1)
+
 #define MUX_CLK_NUM_PARENTS 2
+
+struct meson_tuning_params {
+	u8 core_phase;
+	u8 tx_phase;
+	u8 rx_phase;
+};
+
+struct sd_emmc_desc {
+	u32 cmd_cfg;
+	u32 cmd_arg;
+	u32 cmd_data;
+	u32 cmd_resp;
+};
 
 struct meson_host {
 	struct	device		*dev;
@@ -129,15 +149,11 @@ struct meson_host {
 	unsigned int bounce_buf_size;
 	void *bounce_buf;
 	dma_addr_t bounce_dma_addr;
+	struct sd_emmc_desc *descs;
+	dma_addr_t descs_dma_addr;
 
+	struct meson_tuning_params tp;
 	bool vqmmc_enabled;
-};
-
-struct sd_emmc_desc {
-	u32 cmd_cfg;
-	u32 cmd_arg;
-	u32 cmd_data;
-	u32 cmd_resp;
 };
 
 #define CMD_CFG_LENGTH_MASK GENMASK(8, 0)
@@ -184,6 +200,66 @@ static struct mmc_command *meson_mmc_get_next_command(struct mmc_command *cmd)
 		return cmd->mrq->stop;
 	else
 		return NULL;
+}
+
+static void meson_mmc_get_transfer_mode(struct mmc_host *mmc,
+					struct mmc_request *mrq)
+{
+	struct mmc_data *data = mrq->data;
+	struct scatterlist *sg;
+	int i;
+	bool use_desc_chain_mode = true;
+
+	for_each_sg(data->sg, sg, data->sg_len, i)
+		/* check for 8 byte alignment */
+		if (sg->offset & 7) {
+			WARN_ONCE(1, "unaligned scatterlist buffer\n");
+			use_desc_chain_mode = false;
+			break;
+		}
+
+	if (use_desc_chain_mode)
+		data->host_cookie |= SD_EMMC_DESC_CHAIN_MODE;
+}
+
+static inline bool meson_mmc_desc_chain_mode(const struct mmc_data *data)
+{
+	return data->host_cookie & SD_EMMC_DESC_CHAIN_MODE;
+}
+
+static inline bool meson_mmc_bounce_buf_read(const struct mmc_data *data)
+{
+	return data && data->flags & MMC_DATA_READ &&
+	       !meson_mmc_desc_chain_mode(data);
+}
+
+static void meson_mmc_pre_req(struct mmc_host *mmc, struct mmc_request *mrq)
+{
+	struct mmc_data *data = mrq->data;
+
+	if (!data)
+		return;
+
+	meson_mmc_get_transfer_mode(mmc, mrq);
+	data->host_cookie |= SD_EMMC_PRE_REQ_DONE;
+
+	if (!meson_mmc_desc_chain_mode(data))
+		return;
+
+	data->sg_count = dma_map_sg(mmc_dev(mmc), data->sg, data->sg_len,
+                                   mmc_get_dma_dir(data));
+	if (!data->sg_count)
+		dev_err(mmc_dev(mmc), "dma_map_sg failed");
+}
+
+static void meson_mmc_post_req(struct mmc_host *mmc, struct mmc_request *mrq,
+			       int err)
+{
+	struct mmc_data *data = mrq->data;
+
+	if (data && meson_mmc_desc_chain_mode(data) && data->sg_count)
+		dma_unmap_sg(mmc_dev(mmc), data->sg, data->sg_len,
+			     mmc_get_dma_dir(data));
 }
 
 static int meson_mmc_clk_set(struct meson_host *host, unsigned long clk_rate)
@@ -312,7 +388,9 @@ static int meson_mmc_clk_init(struct meson_host *host)
 
 	/* init SD_EMMC_CLOCK to sane defaults w/min clock rate */
 	clk_reg = 0;
-	clk_reg |= FIELD_PREP(CLK_CORE_PHASE_MASK, CLK_PHASE_180);
+	clk_reg |= FIELD_PREP(CLK_CORE_PHASE_MASK, host->tp.core_phase);
+	clk_reg |= FIELD_PREP(CLK_TX_PHASE_MASK, host->tp.tx_phase);
+	clk_reg |= FIELD_PREP(CLK_RX_PHASE_MASK, host->tp.rx_phase);
 	clk_reg |= FIELD_PREP(CLK_SRC_MASK, CLK_SRC_XTAL);
 	clk_reg |= FIELD_PREP(CLK_DIV_MASK, CLK_DIV_MAX);
 	clk_reg &= ~CLK_ALWAYS_ON;
@@ -336,6 +414,31 @@ static int meson_mmc_clk_init(struct meson_host *host)
 		clk_disable_unprepare(host->cfg_div_clk);
 
 	return ret;
+}
+
+static void meson_mmc_set_tuning_params(struct mmc_host *mmc)
+{
+	struct meson_host *host = mmc_priv(mmc);
+	u32 regval;
+
+	/* stop clock */
+	regval = readl(host->regs + SD_EMMC_CFG);
+	regval |= CFG_STOP_CLOCK;
+	writel(regval, host->regs + SD_EMMC_CFG);
+
+	regval = readl(host->regs + SD_EMMC_CLOCK);
+	regval &= ~CLK_CORE_PHASE_MASK;
+	regval |= FIELD_PREP(CLK_CORE_PHASE_MASK, host->tp.core_phase);
+	regval &= ~CLK_TX_PHASE_MASK;
+	regval |= FIELD_PREP(CLK_TX_PHASE_MASK, host->tp.tx_phase);
+	regval &= ~CLK_RX_PHASE_MASK;
+	regval |= FIELD_PREP(CLK_RX_PHASE_MASK, host->tp.rx_phase);
+	writel(regval, host->regs + SD_EMMC_CLOCK);
+
+	/* start clock */
+	regval = readl(host->regs + SD_EMMC_CFG);
+	regval &= ~CFG_STOP_CLOCK;
+	writel(regval, host->regs + SD_EMMC_CFG);
 }
 
 static void meson_mmc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
@@ -473,6 +576,44 @@ static void meson_mmc_set_response_bits(struct mmc_command *cmd, u32 *cmd_cfg)
 	}
 }
 
+static void meson_mmc_desc_chain_transfer(struct mmc_host *mmc, u32 cmd_cfg)
+{
+	struct meson_host *host = mmc_priv(mmc);
+	struct sd_emmc_desc *desc = host->descs;
+	struct mmc_data *data = host->cmd->data;
+	struct scatterlist *sg;
+	u32 start;
+	int i;
+
+	if (data->flags & MMC_DATA_WRITE)
+		cmd_cfg |= CMD_CFG_DATA_WR;
+
+	if (data->blocks > 1) {
+		cmd_cfg |= CMD_CFG_BLOCK_MODE;
+		meson_mmc_set_blksz(mmc, data->blksz);
+	}
+
+	for_each_sg(data->sg, sg, data->sg_count, i) {
+		unsigned int len = sg_dma_len(sg);
+
+		if (data->blocks > 1)
+			len /= data->blksz;
+
+		desc[i].cmd_cfg = cmd_cfg;
+		desc[i].cmd_cfg |= FIELD_PREP(CMD_CFG_LENGTH_MASK, len);
+		if (i > 0)
+			desc[i].cmd_cfg |= CMD_CFG_NO_CMD;
+		desc[i].cmd_arg = host->cmd->arg;
+		desc[i].cmd_resp = 0;
+		desc[i].cmd_data = sg_dma_address(sg);
+	}
+	desc[data->sg_count - 1].cmd_cfg |= CMD_CFG_END_OF_CHAIN;
+
+	dma_wmb(); /* ensure descriptor is written before kicked */
+	start = host->descs_dma_addr | START_DESC_BUSY;
+	writel(start, host->regs + SD_EMMC_START);
+}
+
 static void meson_mmc_start_cmd(struct mmc_host *mmc, struct mmc_command *cmd)
 {
 	struct meson_host *host = mmc_priv(mmc);
@@ -483,6 +624,8 @@ static void meson_mmc_start_cmd(struct mmc_host *mmc, struct mmc_command *cmd)
 	/* Setup descriptors */
 	dma_rmb();
 
+	host->cmd = cmd;
+
 	cmd_cfg |= FIELD_PREP(CMD_CFG_CMD_INDEX_MASK, cmd->opcode);
 	cmd_cfg |= CMD_CFG_OWNER;  /* owned by CPU */
 
@@ -490,9 +633,15 @@ static void meson_mmc_start_cmd(struct mmc_host *mmc, struct mmc_command *cmd)
 
 	/* data? */
 	if (data) {
+		data->bytes_xfered = 0;
 		cmd_cfg |= CMD_CFG_DATA_IO;
 		cmd_cfg |= FIELD_PREP(CMD_CFG_TIMEOUT_MASK,
 				      ilog2(meson_mmc_get_timeout_msecs(data)));
+
+		if (meson_mmc_desc_chain_mode(data)) {
+			meson_mmc_desc_chain_transfer(mmc, cmd_cfg);
+			return;
+		}
 
 		if (data->blocks > 1) {
 			cmd_cfg |= CMD_CFG_BLOCK_MODE;
@@ -503,7 +652,6 @@ static void meson_mmc_start_cmd(struct mmc_host *mmc, struct mmc_command *cmd)
 			cmd_cfg |= FIELD_PREP(CMD_CFG_LENGTH_MASK, data->blksz);
 		}
 
-		data->bytes_xfered = 0;
 		xfer_bytes = data->blksz * data->blocks;
 		if (data->flags & MMC_DATA_WRITE) {
 			cmd_cfg |= CMD_CFG_DATA_WR;
@@ -519,8 +667,6 @@ static void meson_mmc_start_cmd(struct mmc_host *mmc, struct mmc_command *cmd)
 				      ilog2(SD_EMMC_CMD_TIMEOUT));
 	}
 
-	host->cmd = cmd;
-
 	/* Last descriptor */
 	cmd_cfg |= CMD_CFG_END_OF_CHAIN;
 	writel(cmd_cfg, host->regs + SD_EMMC_CMD_CFG);
@@ -533,14 +679,25 @@ static void meson_mmc_start_cmd(struct mmc_host *mmc, struct mmc_command *cmd)
 static void meson_mmc_request(struct mmc_host *mmc, struct mmc_request *mrq)
 {
 	struct meson_host *host = mmc_priv(mmc);
+	bool needs_pre_post_req = mrq->data &&
+			!(mrq->data->host_cookie & SD_EMMC_PRE_REQ_DONE);
+
+	if (needs_pre_post_req) {
+		meson_mmc_get_transfer_mode(mmc, mrq);
+		if (!meson_mmc_desc_chain_mode(mrq->data))
+			needs_pre_post_req = false;
+	}
+
+	if (needs_pre_post_req)
+		meson_mmc_pre_req(mmc, mrq);
 
 	/* Stop execution */
 	writel(0, host->regs + SD_EMMC_START);
 
-	if (mrq->sbc)
-		meson_mmc_start_cmd(mmc, mrq->sbc);
-	else
-		meson_mmc_start_cmd(mmc, mrq->cmd);
+	meson_mmc_start_cmd(mmc, mrq->sbc ?: mrq->cmd);
+
+	if (needs_pre_post_req)
+		meson_mmc_post_req(mmc, mrq, 0);
 }
 
 static void meson_mmc_read_resp(struct mmc_host *mmc, struct mmc_command *cmd)
@@ -618,7 +775,9 @@ static irqreturn_t meson_mmc_irq(int irq, void *dev_id)
 	if (status & (IRQ_END_OF_CHAIN | IRQ_RESP_STATUS)) {
 		if (data && !cmd->error)
 			data->bytes_xfered = data->blksz * data->blocks;
-		ret = IRQ_WAKE_THREAD;
+		if (meson_mmc_bounce_buf_read(data) ||
+		    meson_mmc_get_next_command(cmd))
+			ret = IRQ_WAKE_THREAD;
 	} else {
 		dev_warn(host->dev, "Unknown IRQ! status=0x%04x: MMC CMD%u arg=0x%08x flags=0x%08x stop=%d\n",
 			 status, cmd->opcode, cmd->arg,
@@ -655,7 +814,7 @@ static irqreturn_t meson_mmc_irq_thread(int irq, void *dev_id)
 		return IRQ_NONE;
 
 	data = cmd->data;
-	if (data && data->flags & MMC_DATA_READ) {
+	if (meson_mmc_bounce_buf_read(data)) {
 		xfer_bytes = data->blksz * data->blocks;
 		WARN_ON(xfer_bytes > host->bounce_buf_size);
 		sg_copy_from_buffer(data->sg, data->sg_len,
@@ -669,6 +828,29 @@ static irqreturn_t meson_mmc_irq_thread(int irq, void *dev_id)
 		meson_mmc_request_done(host->mmc, cmd->mrq);
 
 	return IRQ_HANDLED;
+}
+
+static int meson_mmc_execute_tuning(struct mmc_host *mmc, u32 opcode)
+{
+	struct meson_host *host = mmc_priv(mmc);
+	struct meson_tuning_params tp_old = host->tp;
+	int ret = -EINVAL, i, cmd_error;
+
+	dev_info(mmc_dev(mmc), "(re)tuning...\n");
+
+	for (i = CLK_PHASE_0; i <= CLK_PHASE_270; i++) {
+		host->tp.rx_phase = i;
+		/* exclude the active parameter set if retuning */
+		if (!memcmp(&tp_old, &host->tp, sizeof(tp_old)) &&
+		    mmc->doing_retune)
+			continue;
+		meson_mmc_set_tuning_params(mmc);
+		ret = mmc_send_tuning(mmc, opcode, &cmd_error);
+		if (!ret)
+			break;
+	}
+
+	return ret;
 }
 
 /*
@@ -701,6 +883,9 @@ static const struct mmc_host_ops meson_mmc_ops = {
 	.request	= meson_mmc_request,
 	.set_ios	= meson_mmc_set_ios,
 	.get_cd         = meson_mmc_get_cd,
+	.pre_req	= meson_mmc_pre_req,
+	.post_req	= meson_mmc_post_req,
+	.execute_tuning = meson_mmc_execute_tuning,
 };
 
 static int meson_mmc_probe(struct platform_device *pdev)
@@ -757,6 +942,10 @@ static int meson_mmc_probe(struct platform_device *pdev)
 	if (ret)
 		goto free_host;
 
+	host->tp.core_phase = CLK_PHASE_180;
+	host->tp.tx_phase = CLK_PHASE_0;
+	host->tp.rx_phase = CLK_PHASE_0;
+
 	ret = meson_mmc_clk_init(host);
 	if (ret)
 		goto err_core_clk;
@@ -781,6 +970,8 @@ static int meson_mmc_probe(struct platform_device *pdev)
 	mmc->caps |= MMC_CAP_CMD23;
 	mmc->max_blk_count = CMD_CFG_LENGTH_MASK;
 	mmc->max_req_size = mmc->max_blk_count * mmc->max_blk_size;
+	mmc->max_segs = SD_EMMC_DESC_BUF_LEN / sizeof(struct sd_emmc_desc);
+	mmc->max_seg_size = mmc->max_req_size;
 
 	/* data bounce buffer */
 	host->bounce_buf_size = mmc->max_req_size;
@@ -793,11 +984,22 @@ static int meson_mmc_probe(struct platform_device *pdev)
 		goto err_div_clk;
 	}
 
+	host->descs = dma_alloc_coherent(host->dev, SD_EMMC_DESC_BUF_LEN,
+		      &host->descs_dma_addr, GFP_KERNEL);
+	if (!host->descs) {
+		dev_err(host->dev, "Allocating descriptor DMA buffer failed\n");
+		ret = -ENOMEM;
+		goto err_bounce_buf;
+	}
+
 	mmc->ops = &meson_mmc_ops;
 	mmc_add_host(mmc);
 
 	return 0;
 
+err_bounce_buf:
+	dma_free_coherent(host->dev, host->bounce_buf_size,
+			  host->bounce_buf, host->bounce_dma_addr);
 err_div_clk:
 	clk_disable_unprepare(host->cfg_div_clk);
 err_core_clk:
@@ -816,6 +1018,8 @@ static int meson_mmc_remove(struct platform_device *pdev)
 	/* disable interrupts */
 	writel(0, host->regs + SD_EMMC_IRQ_EN);
 
+	dma_free_coherent(host->dev, SD_EMMC_DESC_BUF_LEN,
+			  host->descs, host->descs_dma_addr);
 	dma_free_coherent(host->dev, host->bounce_buf_size,
 			  host->bounce_buf, host->bounce_dma_addr);
 

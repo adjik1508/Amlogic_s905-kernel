@@ -33,6 +33,7 @@
 #include <linux/platform_device.h>
 #include <linux/acpi.h>
 #include <linux/etherdevice.h>
+#include <linux/of.h>
 #include <rdma/ib_umem.h>
 #include "hns_roce_common.h"
 #include "hns_roce_device.h"
@@ -1725,7 +1726,7 @@ int hns_roce_v1_write_mtpt(void *mb_buf, struct hns_roce_mr *mr,
 	roce_set_field(mpt_entry->mpt_byte_64, MPT_BYTE_64_L_KEY_IDX_H_M,
 		       MPT_BYTE_64_L_KEY_IDX_H_S, mtpt_idx >> MTPT_IDX_SHIFT);
 
-	/* DMA momery regsiter */
+	/* DMA memory register */
 	if (mr->type == MR_TYPE_DMA)
 		return 0;
 

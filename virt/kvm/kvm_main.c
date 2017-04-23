@@ -504,7 +504,7 @@ static struct kvm_memslots *kvm_alloc_memslots(void)
 	int i;
 	struct kvm_memslots *slots;
 
-	slots = kvm_kvzalloc(sizeof(struct kvm_memslots));
+	slots = kvzalloc(sizeof(struct kvm_memslots), GFP_KERNEL);
 	if (!slots)
 		return NULL;
 
@@ -689,18 +689,6 @@ out_err_no_disable:
 	return ERR_PTR(r);
 }
 
-/*
- * Avoid using vmalloc for a small buffer.
- * Should not be used when the size is statically known.
- */
-void *kvm_kvzalloc(unsigned long size)
-{
-	if (size > PAGE_SIZE)
-		return vzalloc(size);
-	else
-		return kzalloc(size, GFP_KERNEL);
-}
-
 static void kvm_destroy_devices(struct kvm *kvm)
 {
 	struct kvm_device *dev, *tmp;
@@ -782,7 +770,7 @@ static int kvm_create_dirty_bitmap(struct kvm_memory_slot *memslot)
 {
 	unsigned long dirty_bytes = 2 * kvm_dirty_bitmap_bytes(memslot);
 
-	memslot->dirty_bitmap = kvm_kvzalloc(dirty_bytes);
+	memslot->dirty_bitmap = kvzalloc(dirty_bytes, GFP_KERNEL);
 	if (!memslot->dirty_bitmap)
 		return -ENOMEM;
 
@@ -1008,7 +996,7 @@ int __kvm_set_memory_region(struct kvm *kvm,
 			goto out_free;
 	}
 
-	slots = kvm_kvzalloc(sizeof(struct kvm_memslots));
+	slots = kvzalloc(sizeof(struct kvm_memslots), GFP_KERNEL);
 	if (!slots)
 		goto out_free;
 	memcpy(slots, __kvm_memslots(kvm, as_id), sizeof(struct kvm_memslots));
@@ -1019,8 +1007,6 @@ int __kvm_set_memory_region(struct kvm *kvm,
 
 		old_memslots = install_new_memslots(kvm, as_id, slots);
 
-		/* slot was deleted or moved, clear iommu mapping */
-		kvm_iommu_unmap_pages(kvm, &old);
 		/* From this point no new shadow pages pointing to a deleted,
 		 * or moved, memslot will be created.
 		 *
@@ -1055,21 +1041,6 @@ int __kvm_set_memory_region(struct kvm *kvm,
 
 	kvm_free_memslot(kvm, &old, &new);
 	kvfree(old_memslots);
-
-	/*
-	 * IOMMU mapping:  New slots need to be mapped.  Old slots need to be
-	 * un-mapped and re-mapped if their base changes.  Since base change
-	 * unmapping is handled above with slot deletion, mapping alone is
-	 * needed here.  Anything else the iommu might care about for existing
-	 * slots (size changes, userspace addr changes and read-only flag
-	 * changes) is disallowed above, so any other attribute changes getting
-	 * here can be skipped.
-	 */
-	if (as_id == 0 && (change == KVM_MR_CREATE || change == KVM_MR_MOVE)) {
-		r = kvm_iommu_map_pages(kvm, &new);
-		return r;
-	}
-
 	return 0;
 
 out_slots:
@@ -2366,7 +2337,7 @@ static int kvm_vcpu_fault(struct vm_fault *vmf)
 	else if (vmf->pgoff == KVM_PIO_PAGE_OFFSET)
 		page = virt_to_page(vcpu->arch.pio_data);
 #endif
-#ifdef KVM_COALESCED_MMIO_PAGE_OFFSET
+#ifdef CONFIG_KVM_MMIO
 	else if (vmf->pgoff == KVM_COALESCED_MMIO_PAGE_OFFSET)
 		page = virt_to_page(vcpu->kvm->coalesced_mmio_ring);
 #endif
@@ -2935,6 +2906,10 @@ static long kvm_vm_ioctl_check_extension_generic(struct kvm *kvm, long arg)
 	case KVM_CAP_IOEVENTFD_ANY_LENGTH:
 	case KVM_CAP_CHECK_EXTENSION_VM:
 		return 1;
+#ifdef CONFIG_KVM_MMIO
+	case KVM_CAP_COALESCED_MMIO:
+		return KVM_COALESCED_MMIO_PAGE_OFFSET;
+#endif
 #ifdef CONFIG_HAVE_KVM_IRQ_ROUTING
 	case KVM_CAP_IRQ_ROUTING:
 		return KVM_MAX_IRQ_ROUTES;
@@ -2984,7 +2959,7 @@ static long kvm_vm_ioctl(struct file *filp,
 		r = kvm_vm_ioctl_get_dirty_log(kvm, &log);
 		break;
 	}
-#ifdef KVM_COALESCED_MMIO_PAGE_OFFSET
+#ifdef CONFIG_KVM_MMIO
 	case KVM_REGISTER_COALESCED_MMIO: {
 		struct kvm_coalesced_mmio_zone zone;
 
@@ -3176,7 +3151,7 @@ static int kvm_dev_ioctl_create_vm(unsigned long type)
 	kvm = kvm_create_vm(type);
 	if (IS_ERR(kvm))
 		return PTR_ERR(kvm);
-#ifdef KVM_COALESCED_MMIO_PAGE_OFFSET
+#ifdef CONFIG_KVM_MMIO
 	r = kvm_coalesced_mmio_init(kvm);
 	if (r < 0) {
 		kvm_put_kvm(kvm);
@@ -3229,7 +3204,7 @@ static long kvm_dev_ioctl(struct file *filp,
 #ifdef CONFIG_X86
 		r += PAGE_SIZE;    /* pio data page */
 #endif
-#ifdef KVM_COALESCED_MMIO_PAGE_OFFSET
+#ifdef CONFIG_KVM_MMIO
 		r += PAGE_SIZE;    /* coalesced mmio ring page */
 #endif
 		break;
