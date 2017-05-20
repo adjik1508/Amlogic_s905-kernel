@@ -34,7 +34,7 @@
  *			If get_dynamic_power() is NULL, then the
  *			dynamic power is calculated as
  *			@dyn_power_coeff * frequency * voltage^2
- * @get_real_power:	When this it is set, the framework uses it to ask the
+ * @get_real_power:	When this is set, the framework uses it to ask the
  *			device driver for the actual power.
  *			Some devices have more sophisticated methods
  *			(like power counters) to approximate the actual power
@@ -49,6 +49,8 @@
  *			or equal than the maximum power value
  *			for the current	state
  *			(which can be found in power_table[state]).
+ *			When this interface is used, the power_table holds
+ *			max total (static + dynamic) power value for each OPP.
  */
 struct devfreq_cooling_power {
 	unsigned long (*get_static_power)(struct devfreq *devfreq,

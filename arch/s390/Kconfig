@@ -67,7 +67,7 @@ config S390
 	select ARCH_HAS_DEVMEM_IS_ALLOWED
 	select ARCH_HAS_ELF_RANDOMIZE
 	select ARCH_HAS_GCOV_PROFILE_ALL
-	select ARCH_HAS_GIGANTIC_PAGE
+	select ARCH_HAS_GIGANTIC_PAGE if (MEMORY_ISOLATION && COMPACTION) || CMA
 	select ARCH_HAS_KCOV
 	select ARCH_HAS_SET_MEMORY
 	select ARCH_HAS_SG_CHAIN
@@ -184,7 +184,7 @@ config SCHED_OMIT_FRAME_POINTER
 
 config PGTABLE_LEVELS
 	int
-	default 4
+	default 5
 
 source "init/Kconfig"
 
@@ -505,6 +505,21 @@ config SCHED_TOPOLOGY
 source kernel/Kconfig.preempt
 
 source kernel/Kconfig.hz
+
+config ARCH_RANDOM
+	def_bool y
+	prompt "s390 architectural random number generation API"
+	help
+	  Enable the s390 architectural random number generation API
+	  to provide random data for all consumers within the Linux
+	  kernel.
+
+	  When enabled the arch_random_* functions declared in linux/random.h
+	  are implemented. The implementation is based on the s390 CPACF
+	  instruction subfunction TRNG which provides a real true random
+	  number generator.
+
+	  If unsure, say Y.
 
 endmenu
 

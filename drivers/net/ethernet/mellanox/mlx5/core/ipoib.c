@@ -30,6 +30,7 @@
  * SOFTWARE.
  */
 
+#include <rdma/ib_verbs.h>
 #include <linux/mlx5/fs.h>
 #include "en.h"
 #include "ipoib.h"
@@ -64,6 +65,10 @@ static void mlx5i_init(struct mlx5_core_dev *mdev,
 	priv->ppriv       = ppriv;
 
 	mlx5e_build_nic_params(mdev, &priv->channels.params, profile->max_nch(mdev));
+
+	/* Override RQ params as IPoIB supports only LINKED LIST RQ for now */
+	mlx5e_set_rq_type_params(mdev, &priv->channels.params, MLX5_WQ_TYPE_LINKED_LIST);
+	priv->channels.params.lro_en = false;
 
 	mutex_init(&priv->state_lock);
 
@@ -155,6 +160,8 @@ out:
 
 static void mlx5i_destroy_underlay_qp(struct mlx5_core_dev *mdev, struct mlx5_core_qp *qp)
 {
+	mlx5_fs_remove_rx_underlay_qpn(mdev, qp->qpn);
+
 	mlx5_core_destroy_qp(mdev, qp);
 }
 
@@ -169,6 +176,8 @@ static int mlx5i_init_tx(struct mlx5e_priv *priv)
 		return err;
 	}
 
+	mlx5_fs_add_rx_underlay_qpn(priv->mdev, ipriv->qp.qpn);
+
 	err = mlx5e_create_tis(priv->mdev, 0 /* tc */, ipriv->qp.qpn, &priv->tisn[0]);
 	if (err) {
 		mlx5_core_warn(priv->mdev, "create tis failed, %d\n", err);
@@ -178,7 +187,7 @@ static int mlx5i_init_tx(struct mlx5e_priv *priv)
 	return 0;
 }
 
-void mlx5i_cleanup_tx(struct mlx5e_priv *priv)
+static void mlx5i_cleanup_tx(struct mlx5e_priv *priv)
 {
 	struct mlx5i_priv *ipriv = priv->ppriv;
 
@@ -188,7 +197,6 @@ void mlx5i_cleanup_tx(struct mlx5e_priv *priv)
 
 static int mlx5i_create_flow_steering(struct mlx5e_priv *priv)
 {
-	struct mlx5i_priv *ipriv = priv->ppriv;
 	int err;
 
 	priv->fs.ns = mlx5_get_flow_namespace(priv->mdev,
@@ -204,7 +212,7 @@ static int mlx5i_create_flow_steering(struct mlx5e_priv *priv)
 		priv->netdev->hw_features &= ~NETIF_F_NTUPLE;
 	}
 
-	err = mlx5e_create_ttc_table(priv, ipriv->qp.qpn);
+	err = mlx5e_create_ttc_table(priv);
 	if (err) {
 		netdev_err(priv->netdev, "Failed to create ttc table, err=%d\n",
 			   err);
@@ -360,8 +368,9 @@ unlock:
 }
 
 /* IPoIB RDMA netdev callbacks */
-int mlx5i_attach_mcast(struct net_device *netdev, struct ib_device *hca,
-		       union ib_gid *gid, u16 lid, int set_qkey)
+static int mlx5i_attach_mcast(struct net_device *netdev, struct ib_device *hca,
+			      union ib_gid *gid, u16 lid, int set_qkey,
+			      u32 qkey)
 {
 	struct mlx5e_priv    *epriv = mlx5i_epriv(netdev);
 	struct mlx5_core_dev *mdev  = epriv->mdev;
@@ -374,11 +383,17 @@ int mlx5i_attach_mcast(struct net_device *netdev, struct ib_device *hca,
 		mlx5_core_warn(mdev, "failed attaching QPN 0x%x, MGID %pI6\n",
 			       ipriv->qp.qpn, gid->raw);
 
+	if (set_qkey) {
+		mlx5_core_dbg(mdev, "%s setting qkey 0x%x\n",
+			      netdev->name, qkey);
+		ipriv->qkey = qkey;
+	}
+
 	return err;
 }
 
-int mlx5i_detach_mcast(struct net_device *netdev, struct ib_device *hca,
-		       union ib_gid *gid, u16 lid)
+static int mlx5i_detach_mcast(struct net_device *netdev, struct ib_device *hca,
+			      union ib_gid *gid, u16 lid)
 {
 	struct mlx5e_priv    *epriv = mlx5i_epriv(netdev);
 	struct mlx5_core_dev *mdev  = epriv->mdev;
@@ -395,14 +410,15 @@ int mlx5i_detach_mcast(struct net_device *netdev, struct ib_device *hca,
 	return err;
 }
 
-int mlx5i_xmit(struct net_device *dev, struct sk_buff *skb,
-	       struct ib_ah *address, u32 dqpn, u32 dqkey)
+static int mlx5i_xmit(struct net_device *dev, struct sk_buff *skb,
+		      struct ib_ah *address, u32 dqpn)
 {
 	struct mlx5e_priv *epriv = mlx5i_epriv(dev);
 	struct mlx5e_txqsq *sq   = epriv->txq2sq[skb_get_queue_mapping(skb)];
 	struct mlx5_ib_ah *mah   = to_mah(address);
+	struct mlx5i_priv *ipriv = epriv->ppriv;
 
-	return mlx5i_sq_xmit(sq, skb, &mah->av, dqpn, dqkey);
+	return mlx5i_sq_xmit(sq, skb, &mah->av, dqpn, ipriv->qkey);
 }
 
 static int mlx5i_check_required_hca_cap(struct mlx5_core_dev *mdev)
@@ -412,7 +428,7 @@ static int mlx5i_check_required_hca_cap(struct mlx5_core_dev *mdev)
 
 	if (!MLX5_CAP_GEN(mdev, ipoib_enhanced_offloads)) {
 		mlx5_core_warn(mdev, "IPoIB enhanced offloads are not supported\n");
-		return -ENOTSUPP;
+		return -EOPNOTSUPP;
 	}
 
 	return 0;
@@ -428,6 +444,7 @@ struct net_device *mlx5_rdma_netdev_alloc(struct mlx5_core_dev *mdev,
 	struct net_device *netdev;
 	struct mlx5i_priv *ipriv;
 	struct mlx5e_priv *epriv;
+	struct rdma_netdev *rn;
 	int err;
 
 	if (mlx5i_check_required_hca_cap(mdev)) {
@@ -462,13 +479,13 @@ struct net_device *mlx5_rdma_netdev_alloc(struct mlx5_core_dev *mdev,
 	mlx5e_attach_netdev(epriv);
 	netif_carrier_off(netdev);
 
-	/* TODO: set rdma_netdev func pointers
-	 * rn = &ipriv->rn;
-	 * rn->hca  = ibdev;
-	 * rn->send = mlx5i_xmit;
-	 * rn->attach_mcast = mlx5i_attach_mcast;
-	 * rn->detach_mcast = mlx5i_detach_mcast;
-	 */
+	/* set rdma_netdev func pointers */
+	rn = &ipriv->rn;
+	rn->hca  = ibdev;
+	rn->send = mlx5i_xmit;
+	rn->attach_mcast = mlx5i_attach_mcast;
+	rn->detach_mcast = mlx5i_detach_mcast;
+
 	return netdev;
 
 err_free_netdev:

@@ -1282,17 +1282,16 @@ static void raid10_write_one_disk(struct mddev *mddev, struct r10bio *r10_bio,
 		plug = container_of(cb, struct raid10_plug_cb, cb);
 	else
 		plug = NULL;
-	spin_lock_irqsave(&conf->device_lock, flags);
 	if (plug) {
 		bio_list_add(&plug->pending, mbio);
 		plug->pending_cnt++;
 	} else {
+		spin_lock_irqsave(&conf->device_lock, flags);
 		bio_list_add(&conf->pending_bio_list, mbio);
 		conf->pending_count++;
-	}
-	spin_unlock_irqrestore(&conf->device_lock, flags);
-	if (!plug)
+		spin_unlock_irqrestore(&conf->device_lock, flags);
 		md_wakeup_thread(mddev->thread);
+	}
 }
 
 static void raid10_write_request(struct mddev *mddev, struct bio *bio,
@@ -1874,13 +1873,9 @@ static int raid10_remove_disk(struct mddev *mddev, struct md_rdev *rdev)
 			   * but will never see neither -- if they are careful.
 			   */
 		p->replacement = NULL;
-		clear_bit(WantReplacement, &rdev->flags);
-	} else
-		/* We might have just remove the Replacement as faulty
-		 * Clear the flag just in case
-		 */
-		clear_bit(WantReplacement, &rdev->flags);
+	}
 
+	clear_bit(WantReplacement, &rdev->flags);
 	err = md_integrity_register(mddev);
 
 abort:
@@ -3645,7 +3640,6 @@ static int raid10_run(struct mddev *mddev)
 
 	rdev_for_each(rdev, mddev) {
 		long long diff;
-		struct request_queue *q;
 
 		disk_idx = rdev->raid_disk;
 		if (disk_idx < 0)
@@ -3664,7 +3658,6 @@ static int raid10_run(struct mddev *mddev)
 				goto out_free_conf;
 			disk->rdev = rdev;
 		}
-		q = bdev_get_queue(rdev->bdev);
 		diff = (rdev->new_data_offset - rdev->data_offset);
 		if (!mddev->reshape_backwards)
 			diff = -diff;
@@ -4086,8 +4079,8 @@ static int raid10_start_reshape(struct mddev *mddev)
 				diff = 0;
 			if (first || diff < min_offset_diff)
 				min_offset_diff = diff;
+			first = 0;
 		}
-		first = 0;
 	}
 
 	if (max(before_length, after_length) > min_offset_diff)

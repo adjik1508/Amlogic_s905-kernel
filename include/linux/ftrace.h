@@ -326,14 +326,6 @@ static inline void stack_tracer_disable(void) { }
 static inline void stack_tracer_enable(void) { }
 #endif
 
-struct ftrace_func_command {
-	struct list_head	list;
-	char			*name;
-	int			(*func)(struct ftrace_hash *hash,
-					char *func, char *cmd,
-					char *params, int enable);
-};
-
 #ifdef CONFIG_DYNAMIC_FTRACE
 
 int ftrace_arch_code_modify_prepare(void);
@@ -359,30 +351,6 @@ extern const void *ftrace_expected;
 void ftrace_bug(int err, struct dyn_ftrace *rec);
 
 struct seq_file;
-
-struct ftrace_probe_ops {
-	void			(*func)(unsigned long ip,
-					unsigned long parent_ip,
-					void **data);
-	int			(*init)(struct ftrace_probe_ops *ops,
-					unsigned long ip, void **data);
-	void			(*free)(struct ftrace_probe_ops *ops,
-					unsigned long ip, void **data);
-	int			(*print)(struct seq_file *m,
-					 unsigned long ip,
-					 struct ftrace_probe_ops *ops,
-					 void *data);
-};
-
-extern int
-register_ftrace_function_probe(char *glob, struct ftrace_probe_ops *ops,
-			      void *data);
-extern void
-unregister_ftrace_function_probe(char *glob, struct ftrace_probe_ops *ops,
-				void *data);
-extern void
-unregister_ftrace_function_probe_func(char *glob, struct ftrace_probe_ops *ops);
-extern void unregister_ftrace_function_probe_all(char *glob);
 
 extern int ftrace_text_reserved(const void *start, const void *end);
 
@@ -445,9 +413,6 @@ void ftrace_set_global_notrace(unsigned char *buf, int len, int reset);
 void ftrace_free_filter(struct ftrace_ops *ops);
 void ftrace_ops_set_global_filter(struct ftrace_ops *ops);
 
-int register_ftrace_command(struct ftrace_func_command *cmd);
-int unregister_ftrace_command(struct ftrace_func_command *cmd);
-
 enum {
 	FTRACE_UPDATE_CALLS		= (1 << 0),
 	FTRACE_DISABLE_CALLS		= (1 << 1),
@@ -478,8 +443,8 @@ enum {
 	FTRACE_ITER_FILTER	= (1 << 0),
 	FTRACE_ITER_NOTRACE	= (1 << 1),
 	FTRACE_ITER_PRINTALL	= (1 << 2),
-	FTRACE_ITER_DO_HASH	= (1 << 3),
-	FTRACE_ITER_HASH	= (1 << 4),
+	FTRACE_ITER_DO_PROBES	= (1 << 3),
+	FTRACE_ITER_PROBE	= (1 << 4),
 	FTRACE_ITER_ENABLED	= (1 << 5),
 };
 
@@ -663,14 +628,6 @@ static inline void ftrace_enable_daemon(void) { }
 static inline void ftrace_module_init(struct module *mod) { }
 static inline void ftrace_module_enable(struct module *mod) { }
 static inline void ftrace_release_mod(struct module *mod) { }
-static inline __init int register_ftrace_command(struct ftrace_func_command *cmd)
-{
-	return -EINVAL;
-}
-static inline __init int unregister_ftrace_command(char *cmd_name)
-{
-	return -EINVAL;
-}
 static inline int ftrace_text_reserved(const void *start, const void *end)
 {
 	return 0;

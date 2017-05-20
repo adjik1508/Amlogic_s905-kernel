@@ -36,6 +36,8 @@ vfio-fixes	git	git://github.com/awilliam/linux-vfio.git#for-linus
 kselftest-fixes	git	git://git.kernel.org/pub/scm/linux/kernel/git/shuah/linux-kselftest.git#fixes
 backlight-fixes	git	git://git.kernel.org/pub/scm/linux/kernel/git/lee/backlight.git#for-backlight-fixes
 ftrace-fixes	git	git://git.kernel.org/pub/scm/linux/kernel/git/rostedt/linux-trace.git#for-next-urgent
+nand-fixes	git	git://git.infradead.org/linux-mtd.git#nand/fixes
+spi-nor-fixes	git	git://git.infradead.org/linux-mtd.git#spi-nor/fixes
 mfd-fixes	git	git://git.kernel.org/pub/scm/linux/kernel/git/lee/mfd.git#for-mfd-fixes
 v4l-dvb-fixes	git	git://linuxtv.org/mchehab/media-next.git#fixes
 drm-intel-fixes	git	git://anongit.freedesktop.org/drm-intel#for-linux-next-fixes
@@ -147,8 +149,8 @@ rdma		git	git://git.kernel.org/pub/scm/linux/kernel/git/dledford/rdma.git#for-ne
 gfs2		git	git://git.kernel.org/pub/scm/linux/kernel/git/gfs2/linux-gfs2.git#for-next
 mtd		git	git://git.infradead.org/mtd-2.6.git#master
 l2-mtd		git	git://git.infradead.org/l2-mtd.git#master
-nand		git	git://github.com/linux-nand/linux.git#nand/next
-spi-nor		git	git://github.com/spi-nor/linux.git#next
+nand		git	git://git.infradead.org/l2-mtd.git#nand/next
+spi-nor		git	git://git.infradead.org/l2-mtd.git#spi-nor/next
 crypto		git	git://git.kernel.org/pub/scm/linux/kernel/git/herbert/cryptodev-2.6.git#master
 drm		git	git://people.freedesktop.org/~airlied/linux.git#drm-next
 drm-panel	git	git://anongit.freedesktop.org/tegra/linux.git#drm/panel/for-next

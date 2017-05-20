@@ -400,7 +400,7 @@ int btrfs_save_ino_cache(struct btrfs_root *root,
 	struct btrfs_path *path;
 	struct inode *inode;
 	struct btrfs_block_rsv *rsv;
-	struct extent_changeset data_reserved;
+	struct extent_changeset *data_reserved = NULL;
 	u64 num_bytes;
 	u64 alloc_hint = 0;
 	int ret;
@@ -419,8 +419,6 @@ int btrfs_save_ino_cache(struct btrfs_root *root,
 
 	if (!btrfs_test_opt(fs_info, INODE_MAP_CACHE))
 		return 0;
-
-	extent_changeset_init(&data_reserved);
 
 	path = btrfs_alloc_path();
 	if (!path)
@@ -519,7 +517,7 @@ out:
 	trans->bytes_reserved = num_bytes;
 
 	btrfs_free_path(path);
-	extent_changeset_release(&data_reserved);
+	extent_changeset_free(data_reserved);
 	return ret;
 }
 

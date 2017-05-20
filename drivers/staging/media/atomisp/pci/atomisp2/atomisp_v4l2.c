@@ -310,7 +310,6 @@ static int __maybe_unused atomisp_restore_iunit_reg(struct atomisp_device *isp)
 	return 0;
 }
 
-#ifdef CONFIG_PM
 static int atomisp_mrfld_pre_power_down(struct atomisp_device *isp)
 {
 	struct pci_dev *dev = isp->pdev;
@@ -550,7 +549,7 @@ int atomisp_runtime_resume(struct device *dev)
 	return 0;
 }
 
-static int atomisp_suspend(struct device *dev)
+static int __maybe_unused atomisp_suspend(struct device *dev)
 {
 	struct atomisp_device *isp = (struct atomisp_device *)
 		dev_get_drvdata(dev);
@@ -588,7 +587,7 @@ static int atomisp_suspend(struct device *dev)
 	return atomisp_mrfld_power_down(isp);
 }
 
-static int atomisp_resume(struct device *dev)
+static int __maybe_unused atomisp_resume(struct device *dev)
 {
 	struct atomisp_device *isp = (struct atomisp_device *)
 		dev_get_drvdata(dev);
@@ -614,7 +613,6 @@ static int atomisp_resume(struct device *dev)
 	atomisp_freq_scaling(isp, ATOMISP_DFS_MODE_LOW, true);
 	return 0;
 }
-#endif
 
 int atomisp_csi_lane_config(struct atomisp_device *isp)
 {
@@ -1454,7 +1452,7 @@ static int atomisp_pci_probe(struct pci_dev *dev,
 	}
 
 	/* Init ISP memory management */
-	hrt_isp_css_mm_init();
+	hmm_init();
 
 	err = devm_request_threaded_irq(&dev->dev, dev->irq,
 					atomisp_isr, atomisp_isr_thread,
@@ -1486,7 +1484,7 @@ static int atomisp_pci_probe(struct pci_dev *dev,
 css_init_fail:
 	devm_free_irq(&dev->dev, dev->irq, isp);
 request_irq_fail:
-	hrt_isp_css_mm_clear();
+	hmm_cleanup();
 	hmm_pool_unregister(HMM_POOL_TYPE_RESERVED);
 hmm_pool_fail:
 	destroy_workqueue(isp->wdt_work_queue);
@@ -1538,7 +1536,7 @@ static void atomisp_pci_remove(struct pci_dev *dev)
 	atomisp_acc_cleanup(isp);
 
 	atomisp_css_unload_firmware(isp);
-	hrt_isp_css_mm_clear();
+	hmm_cleanup();
 
 	pm_runtime_forbid(&dev->dev);
 	pm_runtime_get_noresume(&dev->dev);
@@ -1576,7 +1574,6 @@ static const struct pci_device_id atomisp_pci_tbl[] = {
 
 MODULE_DEVICE_TABLE(pci, atomisp_pci_tbl);
 
-#ifdef CONFIG_PM
 static const struct dev_pm_ops atomisp_pm_ops = {
 	.runtime_suspend = atomisp_runtime_suspend,
 	.runtime_resume = atomisp_runtime_resume,
@@ -1584,14 +1581,9 @@ static const struct dev_pm_ops atomisp_pm_ops = {
 	.resume = atomisp_resume,
 };
 
-#define DEV_PM_OPS (&atomisp_pm_ops)
-#else
-#define DEV_PM_OPS NULL
-#endif
-
 static struct pci_driver atomisp_pci_driver = {
 	.driver = {
-		.pm = DEV_PM_OPS,
+		.pm = &atomisp_pm_ops,
 	},
 	.name = "atomisp-isp2",
 	.id_table = atomisp_pci_tbl,

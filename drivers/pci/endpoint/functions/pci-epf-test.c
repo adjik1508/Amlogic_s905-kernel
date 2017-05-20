@@ -441,7 +441,7 @@ static int pci_epf_test_probe(struct pci_epf *epf)
 	struct device *dev = &epf->dev;
 
 	epf_test = devm_kzalloc(dev, sizeof(*epf_test), GFP_KERNEL);
-	if (!epf)
+	if (!epf_test)
 		return -ENOMEM;
 
 	epf->header = &test_header;

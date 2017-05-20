@@ -531,7 +531,6 @@
 			[ACPI] acpi_pm
 			[ARM] imx_timer1,OSTS,netx_timer,mpu_timer2,
 				pxa_timer,timer3,32k_counter,timer0_1
-			[AVR32] avr32
 			[X86-32] pit,hpet,tsc;
 				scx200_hrt on Geode; cyclone on IBM x440
 			[MIPS] MIPS
@@ -973,7 +972,7 @@
 			A valid base address must be provided, and the serial
 			port must already be setup and configured.
 
-		armada3700_uart,<addr>
+		ar3700_uart,<addr>
 			Start an early, polled-mode console on the
 			Armada 3700 serial port at the specified
 			address. The serial port must already be setup
@@ -1579,6 +1578,15 @@
 			extended tables themselves, and also PASID support. With
 			this option set, extended tables will not be used even
 			on hardware which claims to support them.
+		tboot_noforce [Default Off]
+			Do not force the Intel IOMMU enabled under tboot.
+			By default, tboot will force Intel IOMMU on, which
+			could harm performance of some high-throughput
+			devices like 40GBit network cards, even if identity
+			mapping is enabled.
+			Note that using this option lowers the security
+			provided by tboot because it makes the system
+			vulnerable to DMA attacks.
 
 	intel_idle.max_cstate=	[KNL,HW,ACPI,X86]
 			0	disables intel_idle and fall back on acpi_idle.
@@ -2426,7 +2434,7 @@
 			and gids from such clients.  This is intended to ease
 			migration from NFSv2/v3.
 
-	nmi_debug=	[KNL,AVR32,SH] Specify one or more actions to take
+	nmi_debug=	[KNL,SH] Specify one or more actions to take
 			when a NMI is triggered.
 			Format: [state][,regs][,debounce][,die]
 
@@ -3221,21 +3229,17 @@
 
 	rcutree.gp_cleanup_delay=	[KNL]
 			Set the number of jiffies to delay each step of
-			RCU grace-period cleanup.  This only has effect
-			when CONFIG_RCU_TORTURE_TEST_SLOW_CLEANUP is set.
+			RCU grace-period cleanup.
 
 	rcutree.gp_init_delay=	[KNL]
 			Set the number of jiffies to delay each step of
-			RCU grace-period initialization.  This only has
-			effect when CONFIG_RCU_TORTURE_TEST_SLOW_INIT
-			is set.
+			RCU grace-period initialization.
 
 	rcutree.gp_preinit_delay=	[KNL]
 			Set the number of jiffies to delay each step of
 			RCU grace-period pre-initialization, that is,
 			the propagation of recent CPU-hotplug changes up
-			the rcu_node combining tree.  This only has effect
-			when CONFIG_RCU_TORTURE_TEST_SLOW_PREINIT is set.
+			the rcu_node combining tree.
 
 	rcutree.rcu_fanout_exact= [KNL]
 			Disable autobalancing of the rcu_node combining
@@ -3349,16 +3353,21 @@
 	rcuperf.perf_runnable= [BOOT]
 			Start rcuperf running at boot time.
 
+	rcuperf.perf_type= [KNL]
+			Specify the RCU implementation to test.
+
 	rcuperf.shutdown= [KNL]
 			Shut the system down after performance tests
 			complete.  This is useful for hands-off automated
 			testing.
 
-	rcuperf.perf_type= [KNL]
-			Specify the RCU implementation to test.
-
 	rcuperf.verbose= [KNL]
 			Enable additional printk() statements.
+
+	rcuperf.writer_holdoff= [KNL]
+			Write-side holdoff between grace periods,
+			in microseconds.  The default of zero says
+			no holdoff.
 
 	rcutorture.cbflood_inter_holdoff= [KNL]
 			Set holdoff time (jiffies) between successive
@@ -3796,6 +3805,23 @@
 	spia_fio_base=
 	spia_pedr=
 	spia_peddr=
+
+	srcutree.counter_wrap_check [KNL]
+			Specifies how frequently to check for
+			grace-period sequence counter wrap for the
+			srcu_data structure's ->srcu_gp_seq_needed field.
+			The greater the number of bits set in this kernel
+			parameter, the less frequently counter wrap will
+			be checked for.  Note that the bottom two bits
+			are ignored.
+
+	srcutree.exp_holdoff [KNL]
+			Specifies how many nanoseconds must elapse
+			since the end of the last SRCU grace period for
+			a given srcu_struct until the next normal SRCU
+			grace period will be considered for automatic
+			expediting.  Set to zero to disable automatic
+			expediting.
 
 	stacktrace	[FTRACE]
 			Enabled the stack tracer on boot up.

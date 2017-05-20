@@ -1397,12 +1397,11 @@ static void nbd_dbg_close(void)
 
 #endif
 
-static int nbd_init_request(void *data, struct request *rq,
-			    unsigned int hctx_idx, unsigned int request_idx,
-			    unsigned int numa_node)
+static int nbd_init_request(struct blk_mq_tag_set *set, struct request *rq,
+			    unsigned int hctx_idx, unsigned int numa_node)
 {
 	struct nbd_cmd *cmd = blk_mq_rq_to_pdu(rq);
-	cmd->nbd = data;
+	cmd->nbd = set->driver_data;
 	return 0;
 }
 
@@ -1663,7 +1662,7 @@ again:
 				goto out;
 			}
 			ret = nla_parse_nested(socks, NBD_SOCK_MAX, attr,
-					       nbd_sock_policy, NULL);
+					       nbd_sock_policy, info->extack);
 			if (ret != 0) {
 				printk(KERN_ERR "nbd: error processing sock list\n");
 				ret = -EINVAL;
@@ -1819,7 +1818,7 @@ static int nbd_genl_reconfigure(struct sk_buff *skb, struct genl_info *info)
 				goto out;
 			}
 			ret = nla_parse_nested(socks, NBD_SOCK_MAX, attr,
-					       nbd_sock_policy, NULL);
+					       nbd_sock_policy, info->extack);
 			if (ret != 0) {
 				printk(KERN_ERR "nbd: error processing sock list\n");
 				ret = -EINVAL;
@@ -2091,7 +2090,6 @@ static int nbd_exit_cb(int id, void *ptr, void *data)
 	struct list_head *list = (struct list_head *)data;
 	struct nbd_device *nbd = ptr;
 
-	refcount_inc(&nbd->refs);
 	list_add_tail(&nbd->list, list);
 	return 0;
 }
@@ -2107,10 +2105,11 @@ static void __exit nbd_cleanup(void)
 	idr_for_each(&nbd_index_idr, &nbd_exit_cb, &del_list);
 	mutex_unlock(&nbd_index_mutex);
 
-	list_for_each_entry(nbd, &del_list, list) {
-		if (refcount_read(&nbd->refs) != 2)
+	while (!list_empty(&del_list)) {
+		nbd = list_first_entry(&del_list, struct nbd_device, list);
+		list_del_init(&nbd->list);
+		if (refcount_read(&nbd->refs) != 1)
 			printk(KERN_ERR "nbd: possibly leaking a device\n");
-		nbd_put(nbd);
 		nbd_put(nbd);
 	}
 

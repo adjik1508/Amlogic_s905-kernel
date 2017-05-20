@@ -37,6 +37,7 @@
 #include <linux/ctype.h>
 #include <linux/log2.h>
 #include <linux/crc16.h>
+#include <linux/dax.h>
 #include <linux/cleancache.h>
 #include <linux/uaccess.h>
 
@@ -49,6 +50,7 @@
 #include "xattr.h"
 #include "acl.h"
 #include "mballoc.h"
+#include "fsmap.h"
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/ext4.h>
@@ -1230,7 +1232,7 @@ static const struct fscrypt_operations ext4_cryptops = {
 #endif
 
 #ifdef CONFIG_QUOTA
-static char *quotatypes[] = INITQFNAMES;
+static const char * const quotatypes[] = INITQFNAMES;
 #define QTYPE2NAME(t) (quotatypes[t])
 
 static int ext4_write_dquot(struct dquot *dquot);
@@ -1443,7 +1445,8 @@ static ext4_fsblk_t get_sb_block(void **data)
 }
 
 #define DEFAULT_JOURNAL_IOPRIO (IOPRIO_PRIO_VALUE(IOPRIO_CLASS_BE, 3))
-static char deprecated_msg[] = "Mount option \"%s\" will be removed by %s\n"
+static const char deprecated_msg[] =
+	"Mount option \"%s\" will be removed by %s\n"
 	"Contact linux-ext4@vger.kernel.org if you think we should keep it.\n";
 
 #ifdef CONFIG_QUOTA
@@ -3898,6 +3901,12 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
 
 	bgl_lock_init(sbi->s_blockgroup_lock);
 
+	/* Pre-read the descriptors into the buffer cache */
+	for (i = 0; i < db_count; i++) {
+		block = descriptor_loc(sb, logical_sb_block, i);
+		sb_breadahead(sb, block);
+	}
+
 	for (i = 0; i < db_count; i++) {
 		block = descriptor_loc(sb, logical_sb_block, i);
 		sbi->s_group_desc[i] = sb_bread_unmovable(sb, block);
@@ -4650,7 +4659,7 @@ static int ext4_commit_super(struct super_block *sb, int sync)
 	if (sync) {
 		unlock_buffer(sbh);
 		error = __sync_dirty_buffer(sbh,
-			test_opt(sb, BARRIER) ? REQ_FUA : REQ_SYNC);
+			REQ_SYNC | (test_opt(sb, BARRIER) ? REQ_FUA : 0));
 		if (error)
 			return error;
 
@@ -5375,6 +5384,11 @@ static int ext4_quota_on(struct super_block *sb, int type, int format_id,
 		struct inode *inode = d_inode(path->dentry);
 		handle_t *handle;
 
+		/*
+		 * Set inode flags to prevent userspace from messing with quota
+		 * files. If this fails, we return success anyway since quotas
+		 * are already enabled and this is not a hard failure.
+		 */
 		inode_lock(inode);
 		handle = ext4_journal_start(inode, EXT4_HT_QUOTA, 1);
 		if (IS_ERR(handle))
@@ -5475,8 +5489,11 @@ static int ext4_quota_off(struct super_block *sb, int type)
 		goto out_put;
 
 	inode_lock(inode);
-	/* Update modification times of quota files when userspace can
-	 * start looking at them */
+	/*
+	 * Update modification times of quota files when userspace can
+	 * start looking at them. If we fail, we return success anyway since
+	 * this is not a hard failure and quotas are already disabled.
+	 */
 	handle = ext4_journal_start(inode, EXT4_HT_QUOTA, 1);
 	if (IS_ERR(handle))
 		goto out_unlock;

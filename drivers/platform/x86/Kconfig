@@ -182,8 +182,8 @@ config FUJITSU_LAPTOP
 	depends on INPUT
 	depends on BACKLIGHT_CLASS_DEVICE
 	depends on ACPI_VIDEO || ACPI_VIDEO = n
-	depends on LEDS_CLASS || LEDS_CLASS=n
 	select INPUT_SPARSEKMAP
+	select LEDS_CLASS
 	---help---
 	  This is a driver for laptops built by Fujitsu:
 
@@ -669,6 +669,13 @@ config MSI_WMI
 	 To compile this driver as a module, choose M here: the module will
 	 be called msi-wmi.
 
+config PEAQ_WMI
+	tristate "PEAQ 2-in-1 WMI hotkey driver"
+	depends on ACPI_WMI
+	depends on INPUT
+	help
+	 Say Y here if you want to support WMI-based hotkeys on PEAQ 2-in-1s.
+
 config TOPSTAR_LAPTOP
 	tristate "Topstar Laptop Extras"
 	depends on ACPI
@@ -783,7 +790,7 @@ config ACPI_CMPC
 
 config INTEL_CHT_INT33FE
 	tristate "Intel Cherry Trail ACPI INT33FE Driver"
-	depends on X86 && ACPI
+	depends on X86 && ACPI && I2C
 	---help---
 	  This driver add support for the INT33FE ACPI device found on
 	  some Intel Cherry Trail devices.
@@ -1033,7 +1040,7 @@ config INTEL_PMC_IPC
 config INTEL_BXTWC_PMIC_TMU
 	tristate "Intel BXT Whiskey Cove TMU Driver"
 	depends on REGMAP
-	depends on INTEL_SOC_PMIC && INTEL_PMC_IPC
+	depends on INTEL_SOC_PMIC_BXTWC && INTEL_PMC_IPC
 	---help---
 	  Select this driver to use Intel BXT Whiskey Cove PMIC TMU feature.
 	  This driver enables the alarm wakeup functionality in the TMU unit
@@ -1101,7 +1108,7 @@ config INTEL_TURBO_MAX_3
 
 config SILEAD_DMI
 	bool "Tablets with Silead touchscreens"
-	depends on ACPI && DMI && I2C=y && INPUT
+	depends on ACPI && DMI && I2C=y && TOUCHSCREEN_SILEAD
 	---help---
 	  Certain ACPI based tablets with Silead touchscreens do not have
 	  enough data in ACPI tables for the touchscreen driver to handle

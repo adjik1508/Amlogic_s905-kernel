@@ -1,5 +1,5 @@
 /*
- * Copyright(c) 2015, 2016 Intel Corporation.
+ * Copyright(c) 2015 - 2017 Intel Corporation.
  *
  * This file is provided under a dual BSD/GPLv2 license.  When using or
  * redistributing this file, you may do so under either license.
@@ -61,6 +61,7 @@
 #include "qp.h"
 #include "verbs_txreq.h"
 #include "debugfs.h"
+#include "vnic.h"
 
 static unsigned int hfi1_lkey_table_size = 16;
 module_param_named(lkey_table_size, hfi1_lkey_table_size, uint,
@@ -571,7 +572,7 @@ void hfi1_ib_rcv(struct hfi1_packet *packet)
 	u16 lid;
 
 	/* Check for GRH */
-	lnh = be16_to_cpu(hdr->lrh[0]) & 3;
+	lnh = ib_get_lnh(hdr);
 	if (lnh == HFI1_LRH_BTH) {
 		packet->ohdr = &hdr->u.oth;
 	} else if (lnh == HFI1_LRH_GRH) {
@@ -590,12 +591,12 @@ void hfi1_ib_rcv(struct hfi1_packet *packet)
 
 	trace_input_ibhdr(rcd->dd, hdr);
 
-	opcode = (be32_to_cpu(packet->ohdr->bth[0]) >> 24);
+	opcode = ib_bth_get_opcode(packet->ohdr);
 	inc_opstats(tlen, &rcd->opstats->stats[opcode]);
 
 	/* Get the destination QP number. */
 	qp_num = be32_to_cpu(packet->ohdr->bth[1]) & RVT_QPN_MASK;
-	lid = be16_to_cpu(hdr->lrh[1]);
+	lid = ib_get_dlid(hdr);
 	if (unlikely((lid >= be16_to_cpu(IB_MULTICAST_LID_BASE)) &&
 		     (lid != be16_to_cpu(IB_LID_PERMISSIVE)))) {
 		struct rvt_mcast *mcast;
@@ -603,7 +604,7 @@ void hfi1_ib_rcv(struct hfi1_packet *packet)
 
 		if (lnh != HFI1_LRH_GRH)
 			goto drop;
-		mcast = rvt_mcast_find(&ibp->rvp, &hdr->u.l.grh.dgid);
+		mcast = rvt_mcast_find(&ibp->rvp, &hdr->u.l.grh.dgid, lid);
 		if (!mcast)
 			goto drop;
 		list_for_each_entry_rcu(p, &mcast->qp_list, list) {
@@ -1230,7 +1231,7 @@ int hfi1_verbs_send(struct rvt_qp *qp, struct hfi1_pkt_state *ps)
 
 	hdr = &ps->s_txreq->phdr.hdr;
 	/* locate the pkey within the headers */
-	lnh = be16_to_cpu(hdr->lrh[0]) & 3;
+	lnh = ib_get_lnh(hdr);
 	if (lnh == HFI1_LRH_GRH)
 		ohdr = &hdr->u.l.oth;
 	else
@@ -1289,7 +1290,8 @@ static void hfi1_fill_device_attr(struct hfi1_devdata *dd)
 			IB_DEVICE_BAD_QKEY_CNTR | IB_DEVICE_SHUTDOWN_PORT |
 			IB_DEVICE_SYS_IMAGE_GUID | IB_DEVICE_RC_RNR_NAK_GEN |
 			IB_DEVICE_PORT_ACTIVE_EVENT | IB_DEVICE_SRQ_RESIZE |
-			IB_DEVICE_MEM_MGT_EXTENSIONS;
+			IB_DEVICE_MEM_MGT_EXTENSIONS |
+			IB_DEVICE_RDMA_NETDEV_OPA_VNIC;
 	rdi->dparms.props.page_size_cap = PAGE_SIZE;
 	rdi->dparms.props.vendor_id = dd->oui1 << 16 | dd->oui2 << 8 | dd->oui3;
 	rdi->dparms.props.vendor_part_id = dd->pcidev->device;
@@ -1457,14 +1459,14 @@ static int hfi1_get_guid_be(struct rvt_dev_info *rdi, struct rvt_ibport *rvp,
 /*
  * convert ah port,sl to sc
  */
-u8 ah_to_sc(struct ib_device *ibdev, struct ib_ah_attr *ah)
+u8 ah_to_sc(struct ib_device *ibdev, struct rdma_ah_attr *ah)
 {
-	struct hfi1_ibport *ibp = to_iport(ibdev, ah->port_num);
+	struct hfi1_ibport *ibp = to_iport(ibdev, rdma_ah_get_port_num(ah));
 
-	return ibp->sl_to_sc[ah->sl];
+	return ibp->sl_to_sc[rdma_ah_get_sl(ah)];
 }
 
-static int hfi1_check_ah(struct ib_device *ibdev, struct ib_ah_attr *ah_attr)
+static int hfi1_check_ah(struct ib_device *ibdev, struct rdma_ah_attr *ah_attr)
 {
 	struct hfi1_ibport *ibp;
 	struct hfi1_pportdata *ppd;
@@ -1472,9 +1474,9 @@ static int hfi1_check_ah(struct ib_device *ibdev, struct ib_ah_attr *ah_attr)
 	u8 sc5;
 
 	/* test the mapping for validity */
-	ibp = to_iport(ibdev, ah_attr->port_num);
+	ibp = to_iport(ibdev, rdma_ah_get_port_num(ah_attr));
 	ppd = ppd_from_ibp(ibp);
-	sc5 = ibp->sl_to_sc[ah_attr->sl];
+	sc5 = ibp->sl_to_sc[rdma_ah_get_sl(ah_attr)];
 	dd = dd_from_ppd(ppd);
 	if (sc_to_vlt(dd, sc5) > num_vls && sc_to_vlt(dd, sc5) != 0xf)
 		return -EINVAL;
@@ -1482,7 +1484,7 @@ static int hfi1_check_ah(struct ib_device *ibdev, struct ib_ah_attr *ah_attr)
 }
 
 static void hfi1_notify_new_ah(struct ib_device *ibdev,
-			       struct ib_ah_attr *ah_attr,
+			       struct rdma_ah_attr *ah_attr,
 			       struct rvt_ah *ah)
 {
 	struct hfi1_ibport *ibp;
@@ -1495,9 +1497,9 @@ static void hfi1_notify_new_ah(struct ib_device *ibdev,
 	 * done being setup. We can however modify things which we need to set.
 	 */
 
-	ibp = to_iport(ibdev, ah_attr->port_num);
+	ibp = to_iport(ibdev, rdma_ah_get_port_num(ah_attr));
 	ppd = ppd_from_ibp(ibp);
-	sc5 = ibp->sl_to_sc[ah->attr.sl];
+	sc5 = ibp->sl_to_sc[rdma_ah_get_sl(&ah->attr)];
 	dd = dd_from_ppd(ppd);
 	ah->vl = sc_to_vlt(dd, sc5);
 	if (ah->vl < num_vls || ah->vl == 15)
@@ -1506,17 +1508,21 @@ static void hfi1_notify_new_ah(struct ib_device *ibdev,
 
 struct ib_ah *hfi1_create_qp0_ah(struct hfi1_ibport *ibp, u16 dlid)
 {
-	struct ib_ah_attr attr;
+	struct rdma_ah_attr attr;
 	struct ib_ah *ah = ERR_PTR(-EINVAL);
 	struct rvt_qp *qp0;
+	struct hfi1_pportdata *ppd = ppd_from_ibp(ibp);
+	struct hfi1_devdata *dd = dd_from_ppd(ppd);
+	u8 port_num = ppd->port;
 
 	memset(&attr, 0, sizeof(attr));
-	attr.dlid = dlid;
-	attr.port_num = ppd_from_ibp(ibp)->port;
+	attr.type = rdma_ah_find_type(&dd->verbs_dev.rdi.ibdev, port_num);
+	rdma_ah_set_dlid(&attr, dlid);
+	rdma_ah_set_port_num(&attr, ppd_from_ibp(ibp)->port);
 	rcu_read_lock();
 	qp0 = rcu_dereference(ibp->rvp.qp[0]);
 	if (qp0)
-		ah = ib_create_ah(qp0->ibqp.pd, &attr);
+		ah = rdma_create_ah(qp0->ibqp.pd, &attr);
 	rcu_read_unlock();
 	return ah;
 }
@@ -1772,6 +1778,8 @@ int hfi1_register_ib_device(struct hfi1_devdata *dd)
 	ibdev->modify_device = modify_device;
 	ibdev->alloc_hw_stats = alloc_hw_stats;
 	ibdev->get_hw_stats = get_hw_stats;
+	ibdev->alloc_rdma_netdev = hfi1_vnic_alloc_rn;
+	ibdev->free_rdma_netdev = hfi1_vnic_free_rn;
 
 	/* keep process mad in the driver */
 	ibdev->process_mad = hfi1_process_mad;
@@ -1816,7 +1824,7 @@ int hfi1_register_ib_device(struct hfi1_devdata *dd)
 	dd->verbs_dev.rdi.driver_f.qp_priv_free = qp_priv_free;
 	dd->verbs_dev.rdi.driver_f.free_all_qps = free_all_qps;
 	dd->verbs_dev.rdi.driver_f.notify_qp_reset = notify_qp_reset;
-	dd->verbs_dev.rdi.driver_f.do_send = hfi1_do_send;
+	dd->verbs_dev.rdi.driver_f.do_send = hfi1_do_send_from_rvt;
 	dd->verbs_dev.rdi.driver_f.schedule_send = hfi1_schedule_send;
 	dd->verbs_dev.rdi.driver_f.schedule_send_no_lock = _hfi1_schedule_send;
 	dd->verbs_dev.rdi.driver_f.get_pmtu_from_attr = get_pmtu_from_attr;
@@ -1909,12 +1917,12 @@ void hfi1_cnp_rcv(struct hfi1_packet *packet)
 
 	switch (packet->qp->ibqp.qp_type) {
 	case IB_QPT_UC:
-		rlid = qp->remote_ah_attr.dlid;
+		rlid = rdma_ah_get_dlid(&qp->remote_ah_attr);
 		rqpn = qp->remote_qpn;
 		svc_type = IB_CC_SVCTYPE_UC;
 		break;
 	case IB_QPT_RC:
-		rlid = qp->remote_ah_attr.dlid;
+		rlid = rdma_ah_get_dlid(&qp->remote_ah_attr);
 		rqpn = qp->remote_qpn;
 		svc_type = IB_CC_SVCTYPE_RC;
 		break;
@@ -1928,7 +1936,7 @@ void hfi1_cnp_rcv(struct hfi1_packet *packet)
 		return;
 	}
 
-	sc5 = hdr2sc(hdr, packet->rhf);
+	sc5 = hfi1_9B_get_sc5(hdr, packet->rhf);
 	sl = ibp->sc_to_sl[sc5];
 	lqpn = qp->ibqp.qp_num;
 

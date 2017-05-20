@@ -34,6 +34,131 @@
 
 #define MALIDP_CONF_VALID_TIMEOUT	250
 
+static void malidp_write_gamma_table(struct malidp_hw_device *hwdev,
+				     u32 data[MALIDP_COEFFTAB_NUM_COEFFS])
+{
+	int i;
+	/* Update all channels with a single gamma curve. */
+	const u32 gamma_write_mask = GENMASK(18, 16);
+	/*
+	 * Always write an entire table, so the address field in
+	 * DE_COEFFTAB_ADDR is 0 and we can use the gamma_write_mask bitmask
+	 * directly.
+	 */
+	malidp_hw_write(hwdev, gamma_write_mask,
+			hwdev->map.coeffs_base + MALIDP_COEF_TABLE_ADDR);
+	for (i = 0; i < MALIDP_COEFFTAB_NUM_COEFFS; ++i)
+		malidp_hw_write(hwdev, data[i],
+				hwdev->map.coeffs_base +
+				MALIDP_COEF_TABLE_DATA);
+}
+
+static void malidp_atomic_commit_update_gamma(struct drm_crtc *crtc,
+					      struct drm_crtc_state *old_state)
+{
+	struct malidp_drm *malidp = crtc_to_malidp_device(crtc);
+	struct malidp_hw_device *hwdev = malidp->dev;
+
+	if (!crtc->state->color_mgmt_changed)
+		return;
+
+	if (!crtc->state->gamma_lut) {
+		malidp_hw_clearbits(hwdev,
+				    MALIDP_DISP_FUNC_GAMMA,
+				    MALIDP_DE_DISPLAY_FUNC);
+	} else {
+		struct malidp_crtc_state *mc =
+			to_malidp_crtc_state(crtc->state);
+
+		if (!old_state->gamma_lut || (crtc->state->gamma_lut->base.id !=
+					      old_state->gamma_lut->base.id))
+			malidp_write_gamma_table(hwdev, mc->gamma_coeffs);
+
+		malidp_hw_setbits(hwdev, MALIDP_DISP_FUNC_GAMMA,
+				  MALIDP_DE_DISPLAY_FUNC);
+	}
+}
+
+static
+void malidp_atomic_commit_update_coloradj(struct drm_crtc *crtc,
+					  struct drm_crtc_state *old_state)
+{
+	struct malidp_drm *malidp = crtc_to_malidp_device(crtc);
+	struct malidp_hw_device *hwdev = malidp->dev;
+	int i;
+
+	if (!crtc->state->color_mgmt_changed)
+		return;
+
+	if (!crtc->state->ctm) {
+		malidp_hw_clearbits(hwdev, MALIDP_DISP_FUNC_CADJ,
+				    MALIDP_DE_DISPLAY_FUNC);
+	} else {
+		struct malidp_crtc_state *mc =
+			to_malidp_crtc_state(crtc->state);
+
+		if (!old_state->ctm || (crtc->state->ctm->base.id !=
+					old_state->ctm->base.id))
+			for (i = 0; i < MALIDP_COLORADJ_NUM_COEFFS; ++i)
+				malidp_hw_write(hwdev,
+						mc->coloradj_coeffs[i],
+						hwdev->map.coeffs_base +
+						MALIDP_COLOR_ADJ_COEF + 4 * i);
+
+		malidp_hw_setbits(hwdev, MALIDP_DISP_FUNC_CADJ,
+				  MALIDP_DE_DISPLAY_FUNC);
+	}
+}
+
+static void malidp_atomic_commit_se_config(struct drm_crtc *crtc,
+					   struct drm_crtc_state *old_state)
+{
+	struct malidp_crtc_state *cs = to_malidp_crtc_state(crtc->state);
+	struct malidp_crtc_state *old_cs = to_malidp_crtc_state(old_state);
+	struct malidp_drm *malidp = crtc_to_malidp_device(crtc);
+	struct malidp_hw_device *hwdev = malidp->dev;
+	struct malidp_se_config *s = &cs->scaler_config;
+	struct malidp_se_config *old_s = &old_cs->scaler_config;
+	u32 se_control = hwdev->map.se_base +
+			 ((hwdev->map.features & MALIDP_REGMAP_HAS_CLEARIRQ) ?
+			 0x10 : 0xC);
+	u32 layer_control = se_control + MALIDP_SE_LAYER_CONTROL;
+	u32 scr = se_control + MALIDP_SE_SCALING_CONTROL;
+	u32 val;
+
+	/* Set SE_CONTROL */
+	if (!s->scale_enable) {
+		val = malidp_hw_read(hwdev, se_control);
+		val &= ~MALIDP_SE_SCALING_EN;
+		malidp_hw_write(hwdev, val, se_control);
+		return;
+	}
+
+	hwdev->se_set_scaling_coeffs(hwdev, s, old_s);
+	val = malidp_hw_read(hwdev, se_control);
+	val |= MALIDP_SE_SCALING_EN | MALIDP_SE_ALPHA_EN;
+
+	val &= ~MALIDP_SE_ENH(MALIDP_SE_ENH_MASK);
+	val |= s->enhancer_enable ? MALIDP_SE_ENH(3) : 0;
+
+	val |= MALIDP_SE_RGBO_IF_EN;
+	malidp_hw_write(hwdev, val, se_control);
+
+	/* Set IN_SIZE & OUT_SIZE. */
+	val = MALIDP_SE_SET_V_SIZE(s->input_h) |
+	      MALIDP_SE_SET_H_SIZE(s->input_w);
+	malidp_hw_write(hwdev, val, layer_control + MALIDP_SE_L0_IN_SIZE);
+	val = MALIDP_SE_SET_V_SIZE(s->output_h) |
+	      MALIDP_SE_SET_H_SIZE(s->output_w);
+	malidp_hw_write(hwdev, val, layer_control + MALIDP_SE_L0_OUT_SIZE);
+
+	/* Set phase regs. */
+	malidp_hw_write(hwdev, s->h_init_phase, scr + MALIDP_SE_H_INIT_PH);
+	malidp_hw_write(hwdev, s->h_delta_phase, scr + MALIDP_SE_H_DELTA_PH);
+	malidp_hw_write(hwdev, s->v_init_phase, scr + MALIDP_SE_V_INIT_PH);
+	malidp_hw_write(hwdev, s->v_delta_phase, scr + MALIDP_SE_V_DELTA_PH);
+}
+
 /*
  * set the "config valid" bit and wait until the hardware acts on it
  */
@@ -92,10 +217,19 @@ static void malidp_atomic_commit_hw_done(struct drm_atomic_state *state)
 static void malidp_atomic_commit_tail(struct drm_atomic_state *state)
 {
 	struct drm_device *drm = state->dev;
+	struct drm_crtc *crtc;
+	struct drm_crtc_state *old_crtc_state;
+	int i;
 
 	pm_runtime_get_sync(drm->dev);
 
 	drm_atomic_helper_commit_modeset_disables(drm, state);
+
+	for_each_crtc_in_state(state, crtc, old_crtc_state, i) {
+		malidp_atomic_commit_update_gamma(crtc, old_crtc_state);
+		malidp_atomic_commit_update_coloradj(crtc, old_crtc_state);
+		malidp_atomic_commit_se_config(crtc, old_crtc_state);
+	}
 
 	drm_atomic_helper_commit_planes(drm, state, 0);
 
@@ -287,6 +421,32 @@ static bool malidp_has_sufficient_address_space(const struct resource *res,
 	return true;
 }
 
+static ssize_t core_id_show(struct device *dev, struct device_attribute *attr,
+			    char *buf)
+{
+	struct drm_device *drm = dev_get_drvdata(dev);
+	struct malidp_drm *malidp = drm->dev_private;
+
+	return snprintf(buf, PAGE_SIZE, "%08x\n", malidp->core_id);
+}
+
+DEVICE_ATTR_RO(core_id);
+
+static int malidp_init_sysfs(struct device *dev)
+{
+	int ret = device_create_file(dev, &dev_attr_core_id);
+
+	if (ret)
+		DRM_ERROR("failed to create device file for core_id\n");
+
+	return ret;
+}
+
+static void malidp_fini_sysfs(struct device *dev)
+{
+	device_remove_file(dev, &dev_attr_core_id);
+}
+
 #define MAX_OUTPUT_CHANNELS	3
 
 static int malidp_runtime_pm_suspend(struct device *dev)
@@ -419,6 +579,8 @@ static int malidp_bind(struct device *dev)
 	DRM_INFO("found ARM Mali-DP%3x version r%dp%d\n", version >> 16,
 		 (version >> 12) & 0xf, (version >> 8) & 0xf);
 
+	malidp->core_id = version;
+
 	/* set the number of lines used for output of RGB data */
 	ret = of_property_read_u8_array(dev->of_node,
 					"arm,malidp-output-port-lines",
@@ -436,6 +598,10 @@ static int malidp_bind(struct device *dev)
 	ret = malidp_init(drm);
 	if (ret < 0)
 		goto query_hw_fail;
+
+	ret = malidp_init_sysfs(dev);
+	if (ret)
+		goto init_fail;
 
 	/* Set the CRTC's port so that the encoder component can find it */
 	malidp->crtc.port = of_graph_get_port_by_id(dev->of_node, 0);
@@ -496,6 +662,8 @@ irq_init_fail:
 bind_fail:
 	of_node_put(malidp->crtc.port);
 	malidp->crtc.port = NULL;
+init_fail:
+	malidp_fini_sysfs(dev);
 	malidp_fini(drm);
 query_hw_fail:
 	pm_runtime_put(dev);
@@ -530,6 +698,7 @@ static void malidp_unbind(struct device *dev)
 	component_unbind_all(dev, drm);
 	of_node_put(malidp->crtc.port);
 	malidp->crtc.port = NULL;
+	malidp_fini_sysfs(dev);
 	malidp_fini(drm);
 	pm_runtime_put(dev);
 	if (pm_runtime_enabled(dev))

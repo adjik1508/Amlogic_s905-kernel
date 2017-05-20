@@ -14,7 +14,7 @@
 #include <linux/etherdevice.h>
 #include <linux/list.h>
 #include <linux/slab.h>
-#include <net/dsa.h>
+
 #include "dsa_priv.h"
 
 /* To define the outgoing port and to discover the incoming port a regular
@@ -78,11 +78,6 @@ static struct sk_buff *lan9303_rcv(struct sk_buff *skb, struct net_device *dev,
 	struct dsa_switch_tree *dst = dev->dsa_ptr;
 	struct dsa_switch *ds;
 	unsigned int source_port;
-
-	if (unlikely(!dst)) {
-		dev_warn_ratelimited(&dev->dev, "Dropping packet, due to missing switch tree device\n");
-		return NULL;
-	}
 
 	ds = dst->ds[0];
 

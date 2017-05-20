@@ -20,7 +20,6 @@
  */
 #include "spk_priv.h"
 #include "speakup.h"
-#include "serialio.h"
 
 #define DRV_VERSION "2.11"
 #define SYNTH_CLEAR 0x18
@@ -102,16 +101,16 @@ static struct spk_synth synth_spkout = {
 	.startup = SYNTH_START,
 	.checkval = SYNTH_CHECK,
 	.vars = vars,
-	.io_ops = &spk_serial_io_ops,
-	.probe = spk_serial_synth_probe,
-	.release = spk_serial_release,
-	.synth_immediate = spk_serial_synth_immediate,
+	.io_ops = &spk_ttyio_ops,
+	.probe = spk_ttyio_synth_probe,
+	.release = spk_ttyio_release,
+	.synth_immediate = spk_ttyio_synth_immediate,
 	.catch_up = spk_do_catch_up,
 	.flush = synth_flush,
 	.is_alive = spk_synth_is_alive_restart,
 	.synth_adjust = NULL,
 	.read_buff_add = NULL,
-	.get_index = spk_serial_in_nowait,
+	.get_index = spk_synth_get_index,
 	.indexing = {
 		.command = "\x05[%c",
 		.lowindex = 1,
@@ -126,14 +125,8 @@ static struct spk_synth synth_spkout = {
 
 static void synth_flush(struct spk_synth *synth)
 {
-	int timeout = SPK_XMITR_TIMEOUT;
-
-	while (spk_serial_tx_busy()) {
-		if (!--timeout)
-			break;
-		udelay(1);
-	}
-	outb(SYNTH_CLEAR, speakup_info.port_tts);
+	synth->io_ops->flush_buffer();
+	synth->io_ops->send_xchar(SYNTH_CLEAR);
 }
 
 module_param_named(ser, synth_spkout.ser, int, 0444);

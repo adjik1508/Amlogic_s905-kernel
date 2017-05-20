@@ -94,10 +94,10 @@ __setup("noexec32=", nonx32_setup);
  */
 void sync_global_pgds(unsigned long start, unsigned long end)
 {
-	unsigned long address;
+	unsigned long addr;
 
-	for (address = start; address <= end; address += PGDIR_SIZE) {
-		pgd_t *pgd_ref = pgd_offset_k(address);
+	for (addr = start; addr <= end; addr = ALIGN(addr + 1, PGDIR_SIZE)) {
+		pgd_t *pgd_ref = pgd_offset_k(addr);
 		const p4d_t *p4d_ref;
 		struct page *page;
 
@@ -106,7 +106,7 @@ void sync_global_pgds(unsigned long start, unsigned long end)
 		 * handle synchonization on p4d level.
 		 */
 		BUILD_BUG_ON(pgd_none(*pgd_ref));
-		p4d_ref = p4d_offset(pgd_ref, address);
+		p4d_ref = p4d_offset(pgd_ref, addr);
 
 		if (p4d_none(*p4d_ref))
 			continue;
@@ -117,8 +117,8 @@ void sync_global_pgds(unsigned long start, unsigned long end)
 			p4d_t *p4d;
 			spinlock_t *pgt_lock;
 
-			pgd = (pgd_t *)page_address(page) + pgd_index(address);
-			p4d = p4d_offset(pgd, address);
+			pgd = (pgd_t *)page_address(page) + pgd_index(addr);
+			p4d = p4d_offset(pgd, addr);
 			/* the pgt_lock only for Xen */
 			pgt_lock = &pgd_page_get_mm(page)->page_table_lock;
 			spin_lock(pgt_lock);
@@ -682,22 +682,15 @@ static void  update_end_of_memory_vars(u64 start, u64 size)
 	}
 }
 
-/*
- * Memory is added always to NORMAL zone. This means you will never get
- * additional DMA/DMA32 memory.
- */
-int arch_add_memory(int nid, u64 start, u64 size, bool for_device)
+int arch_add_memory(int nid, u64 start, u64 size, bool want_memblock)
 {
-	struct pglist_data *pgdat = NODE_DATA(nid);
-	struct zone *zone = pgdat->node_zones +
-		zone_for_memory(nid, start, size, ZONE_NORMAL, for_device);
 	unsigned long start_pfn = start >> PAGE_SHIFT;
 	unsigned long nr_pages = size >> PAGE_SHIFT;
 	int ret;
 
 	init_memory_mapping(start, start + size);
 
-	ret = __add_pages(nid, zone, start_pfn, nr_pages);
+	ret = __add_pages(nid, start_pfn, nr_pages, want_memblock);
 	WARN_ON_ONCE(ret);
 
 	/* update max_pfn, max_low_pfn and high_memory */
@@ -962,7 +955,7 @@ remove_pud_table(pud_t *pud_start, unsigned long addr, unsigned long end,
 			continue;
 		}
 
-		pmd_base = (pmd_t *)pud_page_vaddr(*pud);
+		pmd_base = pmd_offset(pud, 0);
 		remove_pmd_table(pmd_base, addr, next, direct);
 		free_pmd_table(pmd_base, pud);
 	}
@@ -988,7 +981,7 @@ remove_p4d_table(p4d_t *p4d_start, unsigned long addr, unsigned long end,
 
 		BUILD_BUG_ON(p4d_large(*p4d));
 
-		pud_base = (pud_t *)p4d_page_vaddr(*p4d);
+		pud_base = pud_offset(p4d, 0);
 		remove_pud_table(pud_base, addr, next, direct);
 		free_pud_table(pud_base, p4d);
 	}
@@ -1013,7 +1006,7 @@ remove_pagetable(unsigned long start, unsigned long end, bool direct)
 		if (!pgd_present(*pgd))
 			continue;
 
-		p4d = (p4d_t *)pgd_page_vaddr(*pgd);
+		p4d = p4d_offset(pgd, 0);
 		remove_p4d_table(p4d, addr, next, direct);
 	}
 

@@ -1913,6 +1913,7 @@ int snd_soc_runtime_set_dai_fmt(struct snd_soc_pcm_runtime *rtd,
 EXPORT_SYMBOL_GPL(snd_soc_runtime_set_dai_fmt);
 
 
+#ifdef CONFIG_DMI
 /* Trim special characters, and replace '-' with '_' since '-' is used to
  * separate different DMI fields in the card long name. Only number and
  * alphabet characters and a few separator characters are kept.
@@ -2044,6 +2045,7 @@ int snd_soc_set_dmi_name(struct snd_soc_card *card, const char *flavour)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(snd_soc_set_dmi_name);
+#endif /* CONFIG_DMI */
 
 static int snd_soc_instantiate_card(struct snd_soc_card *card)
 {
@@ -2184,6 +2186,9 @@ static int snd_soc_instantiate_card(struct snd_soc_card *card)
 	if (card->of_dapm_routes)
 		snd_soc_dapm_add_routes(&card->dapm, card->of_dapm_routes,
 					card->num_of_dapm_routes);
+
+	/* try to set some sane longname if DMI is available */
+	snd_soc_set_dmi_name(card, NULL);
 
 	snprintf(card->snd_card->shortname, sizeof(card->snd_card->shortname),
 		 "%s", card->name);
@@ -3955,11 +3960,15 @@ unsigned int snd_soc_of_parse_daifmt(struct device_node *np,
 		prefix = "";
 
 	/*
-	 * check "[prefix]format = xxx"
+	 * check "dai-format = xxx"
+	 * or    "[prefix]format = xxx"
 	 * SND_SOC_DAIFMT_FORMAT_MASK area
 	 */
-	snprintf(prop, sizeof(prop), "%sformat", prefix);
-	ret = of_property_read_string(np, prop, &str);
+	ret = of_property_read_string(np, "dai-format", &str);
+	if (ret < 0) {
+		snprintf(prop, sizeof(prop), "%sformat", prefix);
+		ret = of_property_read_string(np, prop, &str);
+	}
 	if (ret == 0) {
 		for (i = 0; i < ARRAY_SIZE(of_fmt_table); i++) {
 			if (strcmp(str, of_fmt_table[i].name) == 0) {

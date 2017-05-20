@@ -1895,7 +1895,7 @@ static struct iommu_table_ops pnv_ioda1_iommu_ops = {
 #define PHB3_TCE_KILL_INVAL_PE		PPC_BIT(1)
 #define PHB3_TCE_KILL_INVAL_ONE		PPC_BIT(2)
 
-void pnv_pci_phb3_tce_invalidate_entire(struct pnv_phb *phb, bool rm)
+static void pnv_pci_phb3_tce_invalidate_entire(struct pnv_phb *phb, bool rm)
 {
 	__be64 __iomem *invalidate = pnv_ioda_get_inval_reg(phb, rm);
 	const unsigned long val = PHB3_TCE_KILL_INVAL_ALL;
@@ -1989,6 +1989,14 @@ static void pnv_pci_ioda2_tce_invalidate(struct iommu_table *tbl,
 					  pe->pe_number, 1u << shift,
 					  index << shift, npages);
 	}
+}
+
+void pnv_pci_ioda2_tce_invalidate_entire(struct pnv_phb *phb, bool rm)
+{
+	if (phb->model == PNV_PHB_MODEL_NPU || phb->model == PNV_PHB_MODEL_PHB3)
+		pnv_pci_phb3_tce_invalidate_entire(phb, rm);
+	else
+		opal_pci_tce_kill(phb->opal_id, OPAL_PCI_TCE_KILL, 0, 0, 0, 0);
 }
 
 static int pnv_ioda2_tce_build(struct iommu_table *tbl, long index,
@@ -2151,6 +2159,9 @@ static void pnv_pci_ioda1_setup_dma_pe(struct pnv_phb *phb,
 
 found:
 	tbl = pnv_pci_table_alloc(phb->hose->node);
+	if (WARN_ON(!tbl))
+		return;
+
 	iommu_register_group(&pe->table_group, phb->hose->global_number,
 			pe->pe_number);
 	pnv_pci_link_table_and_group(phb->hose->node, 0, tbl, &pe->table_group);
@@ -2437,7 +2448,8 @@ static unsigned long pnv_pci_ioda2_get_table_size(__u32 page_shift,
 
 		tce_table_size /= direct_table_size;
 		tce_table_size <<= 3;
-		tce_table_size = _ALIGN_UP(tce_table_size, direct_table_size);
+		tce_table_size = max_t(unsigned long,
+				tce_table_size, direct_table_size);
 	}
 
 	return bytes;

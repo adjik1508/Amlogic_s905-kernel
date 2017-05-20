@@ -40,6 +40,13 @@ const struct cred *ovl_override_creds(struct super_block *sb)
 	return override_creds(ofs->creator_cred);
 }
 
+struct super_block *ovl_same_sb(struct super_block *sb)
+{
+	struct ovl_fs *ofs = sb->s_fs_info;
+
+	return ofs->same_sb;
+}
+
 struct ovl_entry *ovl_alloc_entry(unsigned int numlower)
 {
 	size_t size = offsetof(struct ovl_entry, lowerstack[numlower]);
@@ -75,11 +82,13 @@ enum ovl_path_type ovl_path_type(struct dentry *dentry)
 		type = __OVL_PATH_UPPER;
 
 		/*
-		 * Non-dir dentry can hold lower dentry from previous
-		 * location.
+		 * Non-dir dentry can hold lower dentry of its copy up origin.
 		 */
-		if (oe->numlower && d_is_dir(dentry))
-			type |= __OVL_PATH_MERGE;
+		if (oe->numlower) {
+			type |= __OVL_PATH_ORIGIN;
+			if (d_is_dir(dentry))
+				type |= __OVL_PATH_MERGE;
+		}
 	} else {
 		if (oe->numlower > 1)
 			type |= __OVL_PATH_MERGE;
@@ -166,6 +175,13 @@ bool ovl_dentry_is_opaque(struct dentry *dentry)
 	return oe->opaque;
 }
 
+bool ovl_dentry_is_impure(struct dentry *dentry)
+{
+	struct ovl_entry *oe = dentry->d_fsdata;
+
+	return oe->impure;
+}
+
 bool ovl_dentry_is_whiteout(struct dentry *dentry)
 {
 	return !dentry->d_inode && ovl_dentry_is_opaque(dentry);
@@ -178,18 +194,18 @@ void ovl_dentry_set_opaque(struct dentry *dentry)
 	oe->opaque = true;
 }
 
+void ovl_dentry_set_impure(struct dentry *dentry)
+{
+	struct ovl_entry *oe = dentry->d_fsdata;
+
+	oe->impure = true;
+}
+
 bool ovl_redirect_dir(struct super_block *sb)
 {
 	struct ovl_fs *ofs = sb->s_fs_info;
 
-	return ofs->config.redirect_dir;
-}
-
-void ovl_clear_redirect_dir(struct super_block *sb)
-{
-	struct ovl_fs *ofs = sb->s_fs_info;
-
-	ofs->config.redirect_dir = false;
+	return ofs->config.redirect_dir && !ofs->noxattr;
 }
 
 const char *ovl_dentry_get_redirect(struct dentry *dentry)
@@ -293,4 +309,25 @@ void ovl_copy_up_end(struct dentry *dentry)
 	oe->copying = false;
 	wake_up_locked(&ofs->copyup_wq);
 	spin_unlock(&ofs->copyup_wq.lock);
+}
+
+int ovl_check_setxattr(struct dentry *dentry, struct dentry *upperdentry,
+		       const char *name, const void *value, size_t size,
+		       int xerr)
+{
+	int err;
+	struct ovl_fs *ofs = dentry->d_sb->s_fs_info;
+
+	if (ofs->noxattr)
+		return xerr;
+
+	err = ovl_do_setxattr(upperdentry, name, value, size, 0);
+
+	if (err == -EOPNOTSUPP) {
+		pr_warn("overlayfs: cannot set %s xattr on upper\n", name);
+		ofs->noxattr = true;
+		return xerr;
+	}
+
+	return err;
 }

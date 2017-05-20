@@ -273,8 +273,12 @@ static void kvm_s390_cpu_feat_init(void)
 			      kvm_s390_available_subfunc.pcc);
 	}
 	if (test_facility(57)) /* MSA5 */
-		__cpacf_query(CPACF_PPNO, (cpacf_mask_t *)
+		__cpacf_query(CPACF_PRNO, (cpacf_mask_t *)
 			      kvm_s390_available_subfunc.ppno);
+
+	if (test_facility(146)) /* MSA8 */
+		__cpacf_query(CPACF_KMA, (cpacf_mask_t *)
+			      kvm_s390_available_subfunc.kma);
 
 	if (MACHINE_HAS_ESOP)
 		allow_cpu_feat(KVM_S390_VM_CPU_FEAT_ESOP);
@@ -300,6 +304,8 @@ static void kvm_s390_cpu_feat_init(void)
 		allow_cpu_feat(KVM_S390_VM_CPU_FEAT_CEI);
 	if (sclp.has_ibs)
 		allow_cpu_feat(KVM_S390_VM_CPU_FEAT_IBS);
+	if (sclp.has_kss)
+		allow_cpu_feat(KVM_S390_VM_CPU_FEAT_KSS);
 	/*
 	 * KVM_S390_VM_CPU_FEAT_SKEY: Wrong shadow of PTE.I bits will make
 	 * all skey handling functions read/set the skey from the PGSTE
@@ -1542,9 +1548,9 @@ int kvm_arch_init_vm(struct kvm *kvm, unsigned long type)
 		kvm->arch.mem_limit = KVM_S390_NO_MEM_LIMIT;
 	} else {
 		if (sclp.hamax == U64_MAX)
-			kvm->arch.mem_limit = TASK_MAX_SIZE;
+			kvm->arch.mem_limit = TASK_SIZE_MAX;
 		else
-			kvm->arch.mem_limit = min_t(unsigned long, TASK_MAX_SIZE,
+			kvm->arch.mem_limit = min_t(unsigned long, TASK_SIZE_MAX,
 						    sclp.hamax + 1);
 		kvm->arch.gmap = gmap_create(current->mm, kvm->arch.mem_limit - 1);
 		if (!kvm->arch.gmap)
@@ -2028,7 +2034,11 @@ int kvm_arch_vcpu_setup(struct kvm_vcpu *vcpu)
 	vcpu->arch.sie_block->sdnxo = ((unsigned long) &vcpu->run->s.regs.sdnx)
 					| SDNXC;
 	vcpu->arch.sie_block->riccbd = (unsigned long) &vcpu->run->s.regs.riccb;
-	vcpu->arch.sie_block->ictl |= ICTL_ISKE | ICTL_SSKE | ICTL_RRBE;
+
+	if (sclp.has_kss)
+		atomic_or(CPUSTAT_KSS, &vcpu->arch.sie_block->cpuflags);
+	else
+		vcpu->arch.sie_block->ictl |= ICTL_ISKE | ICTL_SSKE | ICTL_RRBE;
 
 	if (vcpu->kvm->arch.use_cmma) {
 		rc = kvm_s390_vcpu_setup_cmma(vcpu);
@@ -2480,7 +2490,7 @@ retry:
 	}
 
 	/* nothing to do, just clear the request */
-	clear_bit(KVM_REQ_UNHALT, &vcpu->requests);
+	kvm_clear_request(KVM_REQ_UNHALT, vcpu);
 
 	return 0;
 }

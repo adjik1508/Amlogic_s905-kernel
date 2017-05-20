@@ -61,10 +61,10 @@
 #define KVM_REQ_PMI               19
 #define KVM_REQ_SMI               20
 #define KVM_REQ_MASTERCLOCK_UPDATE 21
-#define KVM_REQ_MCLOCK_INPROGRESS 22
-#define KVM_REQ_SCAN_IOAPIC       23
+#define KVM_REQ_MCLOCK_INPROGRESS (22 | KVM_REQUEST_WAIT | KVM_REQUEST_NO_WAKEUP)
+#define KVM_REQ_SCAN_IOAPIC       (23 | KVM_REQUEST_WAIT | KVM_REQUEST_NO_WAKEUP)
 #define KVM_REQ_GLOBAL_CLOCK_UPDATE 24
-#define KVM_REQ_APIC_PAGE_RELOAD  25
+#define KVM_REQ_APIC_PAGE_RELOAD  (25 | KVM_REQUEST_WAIT | KVM_REQUEST_NO_WAKEUP)
 #define KVM_REQ_HV_CRASH          26
 #define KVM_REQ_IOAPIC_EOI_EXIT   27
 #define KVM_REQ_HV_RESET          28
@@ -611,6 +611,8 @@ struct kvm_vcpu_arch {
 	unsigned long dr7;
 	unsigned long eff_db[KVM_NR_DB_REGS];
 	unsigned long guest_debug_dr7;
+	u64 msr_platform_info;
+	u64 msr_misc_features_enables;
 
 	u64 mcg_cap;
 	u64 mcg_status;
@@ -1018,6 +1020,8 @@ struct kvm_x86_ops {
 	void (*enable_log_dirty_pt_masked)(struct kvm *kvm,
 					   struct kvm_memory_slot *slot,
 					   gfn_t offset, unsigned long mask);
+	int (*write_log_dirty)(struct kvm_vcpu *vcpu);
+
 	/* pmu operations of sub-arch */
 	const struct kvm_pmu_ops *pmu_ops;
 

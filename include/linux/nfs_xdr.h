@@ -1383,6 +1383,7 @@ struct nfs42_copy_res {
 	struct nfs42_write_res		write_res;
 	bool				consecutive;
 	bool				synchronous;
+	struct nfs_commitres		commit_res;
 };
 
 struct nfs42_seek_args {
@@ -1551,6 +1552,7 @@ struct nfs_rpc_ops {
 	const struct inode_operations *dir_inode_ops;
 	const struct inode_operations *file_inode_ops;
 	const struct file_operations *file_ops;
+	const struct nlmclnt_operations *nlmclnt_ops;
 
 	int	(*getroot) (struct nfs_server *, struct nfs_fh *,
 			    struct nfs_fsinfo *);

@@ -269,8 +269,8 @@ struct rvt_qp {
 	struct ib_qp ibqp;
 	void *priv; /* Driver private data */
 	/* read mostly fields above and below */
-	struct ib_ah_attr remote_ah_attr;
-	struct ib_ah_attr alt_ah_attr;
+	struct rdma_ah_attr remote_ah_attr;
+	struct rdma_ah_attr alt_ah_attr;
 	struct rvt_qp __rcu *next;           /* link list for QPN hash table */
 	struct rvt_swqe *s_wq;  /* send work queue */
 	struct rvt_mmap_info *ip;
@@ -324,6 +324,7 @@ struct rvt_qp {
 	u8 r_state;             /* opcode of last packet received */
 	u8 r_flags;
 	u8 r_head_ack_queue;    /* index into s_ack_queue[] */
+	u8 r_adefered;          /* defered ack count */
 
 	struct list_head rspwait;       /* link for waiting to respond */
 
@@ -435,9 +436,14 @@ struct rvt_mcast_qp {
 	struct rvt_qp *qp;
 };
 
+struct rvt_mcast_addr {
+	union ib_gid mgid;
+	u16 lid;
+};
+
 struct rvt_mcast {
 	struct rb_node rb_node;
-	union ib_gid mgid;
+	struct rvt_mcast_addr mcast_addr;
 	struct list_head qp_list;
 	wait_queue_head_t wait;
 	atomic_t refcount;

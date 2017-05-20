@@ -26,6 +26,7 @@
 #include <linux/module.h>
 #include <linux/version.h>
 #include <linux/kernel.h>
+#include <linux/sched/task_stack.h>
 #include <linux/slab.h>
 #include <linux/completion.h>
 #include <linux/utsname.h>
@@ -1523,6 +1524,14 @@ int usb_hcd_map_urb_for_dma(struct usb_hcd *hcd, struct urb *urb,
 		if (hcd->self.uses_pio_for_control)
 			return ret;
 		if (IS_ENABLED(CONFIG_HAS_DMA) && hcd->self.uses_dma) {
+			if (is_vmalloc_addr(urb->setup_packet)) {
+				WARN_ONCE(1, "setup packet is not dma capable\n");
+				return -EAGAIN;
+			} else if (object_is_on_stack(urb->setup_packet)) {
+				WARN_ONCE(1, "setup packet is on stack\n");
+				return -EAGAIN;
+			}
+
 			urb->setup_dma = dma_map_single(
 					hcd->self.sysdev,
 					urb->setup_packet,
@@ -1586,6 +1595,9 @@ int usb_hcd_map_urb_for_dma(struct usb_hcd *hcd, struct urb *urb,
 					urb->transfer_flags |= URB_DMA_MAP_PAGE;
 			} else if (is_vmalloc_addr(urb->transfer_buffer)) {
 				WARN_ONCE(1, "transfer buffer not dma capable\n");
+				ret = -EAGAIN;
+			} else if (object_is_on_stack(urb->transfer_buffer)) {
+				WARN_ONCE(1, "transfer buffer is on stack\n");
 				ret = -EAGAIN;
 			} else {
 				urb->transfer_dma = dma_map_single(
@@ -1723,7 +1735,7 @@ int usb_hcd_unlink_urb (struct urb *urb, int status)
 		if (retval == 0)
 			retval = -EINPROGRESS;
 		else if (retval != -EIDRM && retval != -EBUSY)
-			dev_dbg(&udev->dev, "hcd_unlink_urb %p fail %d\n",
+			dev_dbg(&udev->dev, "hcd_unlink_urb %pK fail %d\n",
 					urb, retval);
 		usb_put_dev(udev);
 	}
@@ -1890,7 +1902,7 @@ rescan:
 		/* kick hcd */
 		unlink1(hcd, urb, -ESHUTDOWN);
 		dev_dbg (hcd->self.controller,
-			"shutdown urb %p ep%d%s%s\n",
+			"shutdown urb %pK ep%d%s%s\n",
 			urb, usb_endpoint_num(&ep->desc),
 			is_in ? "in" : "out",
 			({	char *s;
@@ -2520,6 +2532,7 @@ struct usb_hcd *__usb_create_hcd(const struct hc_driver *driver,
 		hcd->bandwidth_mutex = kmalloc(sizeof(*hcd->bandwidth_mutex),
 				GFP_KERNEL);
 		if (!hcd->bandwidth_mutex) {
+			kfree(hcd->address0_mutex);
 			kfree(hcd);
 			dev_dbg(dev, "hcd bandwidth mutex alloc failed\n");
 			return NULL;

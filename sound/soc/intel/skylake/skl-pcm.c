@@ -951,14 +951,12 @@ static struct snd_soc_dai_driver skl_platform_dai[] = {
 
 static int skl_platform_open(struct snd_pcm_substream *substream)
 {
-	struct snd_pcm_runtime *runtime;
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
 	struct snd_soc_dai_link *dai_link = rtd->dai_link;
 
 	dev_dbg(rtd->cpu_dai->dev, "In %s:%s\n", __func__,
 					dai_link->cpu_dai_name);
 
-	runtime = substream->runtime;
 	snd_soc_set_runtime_hwparams(substream, &azx_pcm_hw);
 
 	return 0;
@@ -1323,10 +1321,10 @@ int skl_platform_unregister(struct device *dev)
 {
 	struct hdac_ext_bus *ebus = dev_get_drvdata(dev);
 	struct skl *skl = ebus_to_skl(ebus);
-	struct skl_module_deferred_bind *modules;
+	struct skl_module_deferred_bind *modules, *tmp;
 
 	if (!list_empty(&skl->bind_list)) {
-		list_for_each_entry(modules, &skl->bind_list, node) {
+		list_for_each_entry_safe(modules, tmp, &skl->bind_list, node) {
 			list_del(&modules->node);
 			kfree(modules);
 		}

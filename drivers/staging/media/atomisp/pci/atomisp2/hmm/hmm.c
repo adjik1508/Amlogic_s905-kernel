@@ -226,6 +226,11 @@ ia_css_ptr hmm_alloc(size_t bytes, enum hmm_bo_type type,
 	struct hmm_buffer_object *bo;
 	int ret;
 
+	/* Check if we are initialized. In the ideal world we wouldn't need
+	   this but we can tackle it once the driver is a lot cleaner */
+
+	if (!dummy_ptr)
+		hmm_init();
 	/*Get page number from size*/
 	pgnr = size_to_pgnr_ceil(bytes);
 
@@ -267,6 +272,8 @@ void hmm_free(ia_css_ptr virt)
 {
 	struct hmm_buffer_object *bo;
 
+	WARN_ON(!virt);
+
 	bo = hmm_bo_device_search_start(&bo_device, (unsigned int)virt);
 
 	if (!bo) {
@@ -279,9 +286,7 @@ void hmm_free(ia_css_ptr virt)
 	hmm_mem_stat.tol_cnt -= bo->pgnr;
 
 	hmm_bo_unbind(bo);
-
 	hmm_bo_free_pages(bo);
-
 	hmm_bo_unref(bo);
 }
 
@@ -328,15 +333,7 @@ static int load_and_flush_by_kmap(ia_css_ptr virt, void *data, unsigned int byte
 		idx = (virt - bo->start) >> PAGE_SHIFT;
 		offset = (virt - bo->start) - (idx << PAGE_SHIFT);
 
-		src = (char *)kmap(bo->page_obj[idx].page);
-		if (!src) {
-			dev_err(atomisp_dev,
-				    "kmap buffer object page failed: "
-				    "pg_idx = %d\n", idx);
-			return -EINVAL;
-		}
-
-		src += offset;
+		src = (char *)kmap(bo->page_obj[idx].page) + offset;
 
 		if ((bytes + offset) >= PAGE_SIZE) {
 			len = PAGE_SIZE - offset;
@@ -533,14 +530,7 @@ int hmm_set(ia_css_ptr virt, int c, unsigned int bytes)
 		idx = (virt - bo->start) >> PAGE_SHIFT;
 		offset = (virt - bo->start) - (idx << PAGE_SHIFT);
 
-		des = (char *)kmap(bo->page_obj[idx].page);
-		if (!des) {
-			dev_err(atomisp_dev,
-				    "kmap buffer object page failed: "
-				    "pg_idx = %d\n", idx);
-			return -EINVAL;
-		}
-		des += offset;
+		des = (char *)kmap(bo->page_obj[idx].page) + offset;
 
 		if ((bytes + offset) >= PAGE_SIZE) {
 			len = PAGE_SIZE - offset;

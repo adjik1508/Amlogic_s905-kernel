@@ -419,6 +419,8 @@ static void dentry_lru_add(struct dentry *dentry)
 {
 	if (unlikely(!(dentry->d_flags & DCACHE_LRU_LIST)))
 		d_lru_add(dentry);
+	else if (unlikely(!(dentry->d_flags & DCACHE_REFERENCED)))
+		dentry->d_flags |= DCACHE_REFERENCED;
 }
 
 /**
@@ -779,8 +781,6 @@ repeat:
 			goto kill_it;
 	}
 
-	if (!(dentry->d_flags & DCACHE_REFERENCED))
-		dentry->d_flags |= DCACHE_REFERENCED;
 	dentry_lru_add(dentry);
 
 	dentry->d_lockref.count--;
@@ -3585,7 +3585,7 @@ static void __init dcache_init(void)
 					sizeof(struct hlist_bl_head),
 					dhash_entries,
 					13,
-					HASH_ZERO | HASH_ADAPT,
+					HASH_ZERO,
 					&d_hash_shift,
 					&d_hash_mask,
 					0,

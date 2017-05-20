@@ -22,6 +22,8 @@ void xen_timer_resume(void);
 void xen_arch_resume(void);
 void xen_arch_suspend(void);
 
+void xen_reboot(int reason);
+
 void xen_resume_notifier_register(struct notifier_block *nb);
 void xen_resume_notifier_unregister(struct notifier_block *nb);
 
@@ -134,6 +136,9 @@ efi_status_t xen_efi_update_capsule(efi_capsule_header_t **capsules,
 efi_status_t xen_efi_query_capsule_caps(efi_capsule_header_t **capsules,
 					unsigned long count, u64 *max_size,
 					int *reset_type);
+void xen_efi_reset_system(int reset_type, efi_status_t status,
+			  unsigned long data_size, efi_char16_t *data);
+
 
 #ifdef CONFIG_PREEMPT
 

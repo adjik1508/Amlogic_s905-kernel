@@ -7,6 +7,7 @@
 #include <asm/xen/hypercall.h>
 #include <asm/xen/hypervisor.h>
 #include <asm/cpu.h>
+#include <asm/e820/api.h> 
 
 #include "xen-ops.h"
 #include "smp.h"
@@ -55,6 +56,9 @@ struct start_info *xen_start_info;
 EXPORT_SYMBOL_GPL(xen_start_info);
 
 struct shared_info xen_dummy_shared_info;
+
+__read_mostly int xen_have_vector_callback;
+EXPORT_SYMBOL_GPL(xen_have_vector_callback);
 
 /*
  * Point at some empty memory to start with. We map the real shared_info

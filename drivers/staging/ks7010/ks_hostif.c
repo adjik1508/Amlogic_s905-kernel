@@ -99,7 +99,7 @@ int ks_wlan_do_power_save(struct ks_wlan_private *priv)
 {
 	DPRINTK(4, "psstatus.status=%d\n", atomic_read(&priv->psstatus.status));
 
-	if ((priv->connect_status & CONNECT_STATUS_MASK) == CONNECT_STATUS)
+	if (is_connect_status(priv->connect_status))
 		hostif_sme_enqueue(priv, SME_POW_MNGMT_REQUEST);
 	else
 		priv->dev_state = DEVICE_STATE_READY;
@@ -116,7 +116,7 @@ int get_current_ap(struct ks_wlan_private *priv, struct link_ap_info_t *ap_info)
 	DPRINTK(3, "\n");
 	ap = &priv->current_ap;
 
-	if ((priv->connect_status & CONNECT_STATUS_MASK) == DISCONNECT_STATUS) {
+	if (is_disconnect_status(priv->connect_status)) {
 		memset(ap, 0, sizeof(struct local_ap_t));
 		return -EPERM;
 	}
@@ -147,7 +147,7 @@ int get_current_ap(struct ks_wlan_private *priv, struct link_ap_info_t *ap_info)
 	/* noise */
 	ap->noise = ap_info->noise;
 	/* capability */
-	ap->capability = ap_info->capability;
+	ap->capability = le16_to_cpu(ap_info->capability);
 	/* rsn */
 	if ((ap_info->rsn_mode & RSN_MODE_WPA2) &&
 	    (priv->wpa.version == IW_AUTH_WPA_VERSION_WPA2)) {
@@ -183,7 +183,7 @@ int get_current_ap(struct ks_wlan_private *priv, struct link_ap_info_t *ap_info)
 	wrqu.data.length = 0;
 	wrqu.data.flags = 0;
 	wrqu.ap_addr.sa_family = ARPHRD_ETHER;
-	if ((priv->connect_status & CONNECT_STATUS_MASK) == CONNECT_STATUS) {
+	if (is_connect_status(priv->connect_status)) {
 		memcpy(wrqu.ap_addr.sa_data,
 		       priv->current_ap.bssid, ETH_ALEN);
 		DPRINTK(3,
@@ -191,9 +191,21 @@ int get_current_ap(struct ks_wlan_private *priv, struct link_ap_info_t *ap_info)
 		wireless_send_event(netdev, SIOCGIWAP, &wrqu, NULL);
 	}
 	DPRINTK(4, "\n    Link AP\n");
-	DPRINTK(4, "    bssid=%02X:%02X:%02X:%02X:%02X:%02X\n \
-   essid=%s\n    rate_set=%02X,%02X,%02X,%02X,%02X,%02X,%02X,%02X\n    channel=%d\n \
-   rssi=%d\n    sq=%d\n    capability=%04X\n", ap->bssid[0], ap->bssid[1], ap->bssid[2], ap->bssid[3], ap->bssid[4], ap->bssid[5], &(ap->ssid.body[0]), ap->rate_set.body[0], ap->rate_set.body[1], ap->rate_set.body[2], ap->rate_set.body[3], ap->rate_set.body[4], ap->rate_set.body[5], ap->rate_set.body[6], ap->rate_set.body[7], ap->channel, ap->rssi, ap->sq, ap->capability);
+	DPRINTK(4, "    bssid=%02X:%02X:%02X:%02X:%02X:%02X\n"
+		   "    essid=%s\n"
+		   "    rate_set=%02X,%02X,%02X,%02X,%02X,%02X,%02X,%02X\n"
+		   "    channel=%d\n"
+		   "    rssi=%d\n"
+		   "    sq=%d\n"
+		   "    capability=%04X\n",
+		ap->bssid[0], ap->bssid[1], ap->bssid[2],
+		ap->bssid[3], ap->bssid[4], ap->bssid[5],
+		&(ap->ssid.body[0]),
+		ap->rate_set.body[0], ap->rate_set.body[1],
+		ap->rate_set.body[2], ap->rate_set.body[3],
+		ap->rate_set.body[4], ap->rate_set.body[5],
+		ap->rate_set.body[6], ap->rate_set.body[7],
+		ap->channel, ap->rssi, ap->sq, ap->capability);
 	DPRINTK(4, "\n    Link AP\n    rsn.mode=%d\n    rsn.size=%d\n",
 		ap_info->rsn_mode, ap_info->rsn.size);
 	DPRINTK(4, "\n    ext_rate_set_size=%d\n    rate_set_size=%d\n",
@@ -221,12 +233,12 @@ int get_ap_information(struct ks_wlan_private *priv, struct ap_info_t *ap_info,
 	/* noise */
 	ap->noise = ap_info->noise;
 	/* capability */
-	ap->capability = ap_info->capability;
+	ap->capability = le16_to_cpu(ap_info->capability);
 	/* channel */
 	ap->channel = ap_info->ch_info;
 
 	bp = ap_info->body;
-	bsize = ap_info->body_size;
+	bsize = le16_to_cpu(ap_info->body_size);
 	offset = 0;
 
 	while (bsize > offset) {
@@ -326,10 +338,6 @@ int hostif_data_indication_wpa(struct ks_wlan_private *priv,
 	eth_hdr = (struct ether_hdr *)(priv->rxp);
 	eth_proto = ntohs(eth_hdr->h_proto);
 
-	/* source address check */
-	if (memcmp(&eth_hdr->h_source[0], &priv->eth_addr[0], ETH_ALEN) == 0)
-		return 0;
-
 	if (eth_hdr->h_dest_snap != eth_hdr->h_source_snap) {
 		DPRINTK(1, "invalid data format\n");
 		priv->nstats.rx_errors++;
@@ -403,7 +411,7 @@ void hostif_data_indication(struct ks_wlan_private *priv)
 	struct ether_hdr *eth_hdr;
 	unsigned short eth_proto;
 	struct ieee802_1x_hdr *aa1x_hdr;
-	struct wpa_eapol_key *eap_key;
+	size_t size;
 	int ret;
 
 	DPRINTK(3, "\n");
@@ -451,65 +459,58 @@ void hostif_data_indication(struct ks_wlan_private *priv)
 	case 0xAA:	/* SNAP */
 		rx_ind_size = priv->rx_size - 6;
 		skb = dev_alloc_skb(rx_ind_size);
+		if (!skb) {
+			priv->nstats.rx_dropped++;
+			return;
+		}
 		DPRINTK(4, "SNAP, rx_ind_size = %d\n", rx_ind_size);
 
-		if (skb) {
-			memcpy(skb_put(skb, 12), priv->rxp, 12);	/* 8802/FDDI MAC copy */
-			/* (SNAP+UI..) skip */
-			memcpy(skb_put(skb, rx_ind_size - 12), priv->rxp + 18, rx_ind_size - 12);	/* copy after Type */
+		size = ETH_ALEN * 2;
+		memcpy(skb_put(skb, size), priv->rxp, size);
 
-			aa1x_hdr = (struct ieee802_1x_hdr *)(priv->rxp + 20);
-			if (aa1x_hdr->type == IEEE802_1X_TYPE_EAPOL_KEY &&
-			    priv->wpa.rsn_enabled) {
-				eap_key = (struct wpa_eapol_key *)(aa1x_hdr + 1);
-				atomic_set(&priv->psstatus.snooze_guard, 1);
-			}
+		/* (SNAP+UI..) skip */
 
-			/* rx indication */
-			skb->dev = priv->net_dev;
-			skb->protocol = eth_type_trans(skb, skb->dev);
-			priv->nstats.rx_packets++;
-			priv->nstats.rx_bytes += rx_ind_size;
-			netif_rx(skb);
-		} else {
-			priv->nstats.rx_dropped++;
-		}
+		size = rx_ind_size - (ETH_ALEN * 2);
+		memcpy(skb_put(skb, size), &eth_hdr->h_proto, size);
+
+		aa1x_hdr = (struct ieee802_1x_hdr *)(priv->rxp + ETHER_HDR_SIZE);
 		break;
 	case 0xF0:	/* NETBEUI/NetBIOS */
 		rx_ind_size = (priv->rx_size + 2);
 		skb = dev_alloc_skb(rx_ind_size);
+		if (!skb) {
+			priv->nstats.rx_dropped++;
+			return;
+		}
 		DPRINTK(3, "NETBEUI/NetBIOS rx_ind_size=%d\n", rx_ind_size);
 
-		if (skb) {
-			memcpy(skb_put(skb, 12), priv->rxp, 12);	/* 8802/FDDI MAC copy */
+		memcpy(skb_put(skb, 12), priv->rxp, 12);	/* 8802/FDDI MAC copy */
 
-			temp[0] = (((rx_ind_size - 12) >> 8) & 0xff);	/* NETBEUI size add */
-			temp[1] = ((rx_ind_size - 12) & 0xff);
-			memcpy(skb_put(skb, 2), temp, 2);
+		temp[0] = (((rx_ind_size - 12) >> 8) & 0xff);	/* NETBEUI size add */
+		temp[1] = ((rx_ind_size - 12) & 0xff);
+		memcpy(skb_put(skb, 2), temp, 2);
 
-			memcpy(skb_put(skb, rx_ind_size - 14), priv->rxp + 12, rx_ind_size - 14);	/* copy after Type */
+		memcpy(skb_put(skb, rx_ind_size - 14), priv->rxp + 12,
+		       rx_ind_size - 14);	/* copy after Type */
 
-			aa1x_hdr = (struct ieee802_1x_hdr *)(priv->rxp + 14);
-			if (aa1x_hdr->type == IEEE802_1X_TYPE_EAPOL_KEY &&
-			    priv->wpa.rsn_enabled) {
-				eap_key = (struct wpa_eapol_key *)(aa1x_hdr + 1);
-				atomic_set(&priv->psstatus.snooze_guard, 1);
-			}
-
-			/* rx indication */
-			skb->dev = priv->net_dev;
-			skb->protocol = eth_type_trans(skb, skb->dev);
-			priv->nstats.rx_packets++;
-			priv->nstats.rx_bytes += rx_ind_size;
-			netif_rx(skb);
-		} else {
-			priv->nstats.rx_dropped++;
-		}
+		aa1x_hdr = (struct ieee802_1x_hdr *)(priv->rxp + 14);
 		break;
 	default:	/* other rx data */
 		DPRINTK(2, "invalid data format\n");
 		priv->nstats.rx_errors++;
+		return;
 	}
+
+	if (aa1x_hdr->type == IEEE802_1X_TYPE_EAPOL_KEY &&
+	    priv->wpa.rsn_enabled)
+		atomic_set(&priv->psstatus.snooze_guard, 1);
+
+	/* rx indication */
+	skb->dev = priv->net_dev;
+	skb->protocol = eth_type_trans(skb, skb->dev);
+	priv->nstats.rx_packets++;
+	priv->nstats.rx_bytes += rx_ind_size;
+	netif_rx(skb);
 }
 
 static
@@ -566,9 +567,9 @@ void hostif_mib_get_confirm(struct ks_wlan_private *priv)
 		break;
 	case LOCAL_GAIN:
 		memcpy(&priv->gain, priv->rxp, sizeof(priv->gain));
-		DPRINTK(3, "TxMode=%d, RxMode=%d, TxGain=%d, RxGain=%d\n",
-			priv->gain.TxMode, priv->gain.RxMode, priv->gain.TxGain,
-			priv->gain.RxGain);
+		DPRINTK(3, "tx_mode=%d, rx_mode=%d, tx_gain=%d, rx_gain=%d\n",
+			priv->gain.tx_mode, priv->gain.rx_mode,
+			priv->gain.tx_gain, priv->gain.rx_gain);
 		break;
 	case LOCAL_EEPROM_SUM:
 		memcpy(&priv->eeprom_sum, priv->rxp, sizeof(priv->eeprom_sum));
@@ -723,11 +724,11 @@ void hostif_mib_set_confirm(struct ks_wlan_private *priv)
 }
 
 static
-void hostif_power_mngmt_confirm(struct ks_wlan_private *priv)
+void hostif_power_mgmt_confirm(struct ks_wlan_private *priv)
 {
 	DPRINTK(3, "\n");
 
-	if (priv->reg.powermgt > POWMGT_ACTIVE_MODE &&
+	if (priv->reg.power_mgmt > POWER_MGMT_ACTIVE &&
 	    priv->reg.operation_mode == MODE_INFRASTRUCTURE) {
 		atomic_set(&priv->psstatus.confirm_wait, 0);
 		priv->dev_state = DEVICE_STATE_SLEEP;
@@ -755,7 +756,7 @@ void hostif_start_confirm(struct ks_wlan_private *priv)
 	wrqu.data.length = 0;
 	wrqu.data.flags = 0;
 	wrqu.ap_addr.sa_family = ARPHRD_ETHER;
-	if ((priv->connect_status & CONNECT_STATUS_MASK) == CONNECT_STATUS) {
+	if (is_connect_status(priv->connect_status)) {
 		eth_zero_addr(wrqu.ap_addr.sa_data);
 		DPRINTK(3, "IWEVENT: disconnect\n");
 		wireless_send_event(priv->net_dev, SIOCGIWAP, &wrqu, NULL);
@@ -802,8 +803,8 @@ void hostif_connect_indication(struct ks_wlan_private *priv)
 	}
 
 	get_current_ap(priv, (struct link_ap_info_t *)priv->rxp);
-	if ((priv->connect_status & CONNECT_STATUS_MASK) == CONNECT_STATUS &&
-	    (old_status & CONNECT_STATUS_MASK) == DISCONNECT_STATUS) {
+	if (is_connect_status(priv->connect_status) &&
+	    is_disconnect_status(old_status)) {
 		/* for power save */
 		atomic_set(&priv->psstatus.snooze_guard, 0);
 		atomic_set(&priv->psstatus.confirm_wait, 0);
@@ -813,8 +814,8 @@ void hostif_connect_indication(struct ks_wlan_private *priv)
 	wrqu0.data.length = 0;
 	wrqu0.data.flags = 0;
 	wrqu0.ap_addr.sa_family = ARPHRD_ETHER;
-	if ((priv->connect_status & CONNECT_STATUS_MASK) == DISCONNECT_STATUS &&
-	    (old_status & CONNECT_STATUS_MASK) == CONNECT_STATUS) {
+	if (is_disconnect_status(priv->connect_status) &&
+	    is_connect_status(old_status)) {
 		eth_zero_addr(wrqu0.ap_addr.sa_data);
 		DPRINTK(3, "IWEVENT: disconnect\n");
 		DPRINTK(3, "disconnect :: scan_ind_count=%d\n",
@@ -836,13 +837,13 @@ void hostif_scan_indication(struct ks_wlan_private *priv)
 	if (priv->scan_ind_count) {
 		for (i = 0; i < priv->aplist.size; i++) {	/* bssid check */
 			if (memcmp(ap_info->bssid,
-				   priv->aplist.ap[i].bssid, ETH_ALEN) == 0) {
-				if (ap_info->frame_type ==
-				    FRAME_TYPE_PROBE_RESP)
-					get_ap_information(priv, ap_info,
-							   &priv->aplist.ap[i]);
-				return;
-			}
+				   priv->aplist.ap[i].bssid, ETH_ALEN) != 0)
+				continue;
+
+			if (ap_info->frame_type == FRAME_TYPE_PROBE_RESP)
+				get_ap_information(priv, ap_info,
+						   &priv->aplist.ap[i]);
+			return;
 		}
 	}
 	priv->scan_ind_count++;
@@ -871,7 +872,7 @@ void hostif_stop_confirm(struct ks_wlan_private *priv)
 		priv->dev_state = DEVICE_STATE_READY;
 
 	/* disconnect indication */
-	if ((priv->connect_status & CONNECT_STATUS_MASK) == CONNECT_STATUS) {
+	if (is_connect_status(priv->connect_status)) {
 		netif_carrier_off(netdev);
 		tmp = FORCE_DISCONNECT & priv->connect_status;
 		priv->connect_status = tmp | DISCONNECT_STATUS;
@@ -880,8 +881,8 @@ void hostif_stop_confirm(struct ks_wlan_private *priv)
 		wrqu0.data.length = 0;
 		wrqu0.data.flags = 0;
 		wrqu0.ap_addr.sa_family = ARPHRD_ETHER;
-		if ((priv->connect_status & CONNECT_STATUS_MASK) == DISCONNECT_STATUS &&
-		    (old_status & CONNECT_STATUS_MASK) == CONNECT_STATUS) {
+		if (is_disconnect_status(priv->connect_status) &&
+		    is_connect_status(old_status)) {
 			eth_zero_addr(wrqu0.ap_addr.sa_data);
 			DPRINTK(3, "IWEVENT: disconnect\n");
 			netdev_info(netdev, "IWEVENT: disconnect\n");
@@ -947,18 +948,18 @@ void hostif_associate_indication(struct ks_wlan_private *priv)
 	wrqu.data.length += sizeof(associnfo_leader0) - 1;
 	pbuf += sizeof(associnfo_leader0) - 1;
 
-	for (i = 0; i < assoc_req->reqIEs_size; i++)
+	for (i = 0; i < le16_to_cpu(assoc_req->req_ies_size); i++)
 		pbuf += sprintf(pbuf, "%02x", *(pb + i));
-	wrqu.data.length += (assoc_req->reqIEs_size) * 2;
+	wrqu.data.length += (le16_to_cpu(assoc_req->req_ies_size)) * 2;
 
 	memcpy(pbuf, associnfo_leader1, sizeof(associnfo_leader1) - 1);
 	wrqu.data.length += sizeof(associnfo_leader1) - 1;
 	pbuf += sizeof(associnfo_leader1) - 1;
 
-	pb += assoc_req->reqIEs_size;
-	for (i = 0; i < assoc_resp->respIEs_size; i++)
+	pb += assoc_req->req_ies_size;
+	for (i = 0; i < le16_to_cpu(assoc_resp->resp_ies_size); i++)
 		pbuf += sprintf(pbuf, "%02x", *(pb + i));
-	wrqu.data.length += (assoc_resp->respIEs_size) * 2;
+	wrqu.data.length += (le16_to_cpu(assoc_resp->resp_ies_size)) * 2;
 
 	pbuf += sprintf(pbuf, ")");
 	wrqu.data.length += 1;
@@ -993,31 +994,36 @@ void hostif_phy_information_confirm(struct ks_wlan_private *priv)
 {
 	struct iw_statistics *wstats = &priv->wstats;
 	unsigned char rssi, signal, noise;
-	unsigned char LinkSpeed;
-	unsigned int TransmittedFrameCount, ReceivedFragmentCount;
-	unsigned int FailedCount, FCSErrorCount;
+	unsigned char link_speed;
+	unsigned int transmitted_frame_count, received_fragment_count;
+	unsigned int failed_count, fcs_error_count;
 
 	DPRINTK(3, "\n");
 	rssi = get_BYTE(priv);
 	signal = get_BYTE(priv);
 	noise = get_BYTE(priv);
-	LinkSpeed = get_BYTE(priv);
-	TransmittedFrameCount = get_DWORD(priv);
-	ReceivedFragmentCount = get_DWORD(priv);
-	FailedCount = get_DWORD(priv);
-	FCSErrorCount = get_DWORD(priv);
+	link_speed = get_BYTE(priv);
+	transmitted_frame_count = get_DWORD(priv);
+	received_fragment_count = get_DWORD(priv);
+	failed_count = get_DWORD(priv);
+	fcs_error_count = get_DWORD(priv);
 
 	DPRINTK(4, "phyinfo confirm rssi=%d signal=%d\n", rssi, signal);
-	priv->current_rate = (LinkSpeed & RATE_MASK);
+	priv->current_rate = (link_speed & RATE_MASK);
 	wstats->qual.qual = signal;
 	wstats->qual.level = 256 - rssi;
 	wstats->qual.noise = 0;	/* invalid noise value */
 	wstats->qual.updated = IW_QUAL_ALL_UPDATED | IW_QUAL_DBM;
 
-	DPRINTK(3, "\n    rssi=%u\n    signal=%u\n    LinkSpeed=%ux500Kbps\n \
-   TransmittedFrameCount=%u\n    ReceivedFragmentCount=%u\n    FailedCount=%u\n \
-   FCSErrorCount=%u\n", rssi, signal, LinkSpeed, TransmittedFrameCount, ReceivedFragmentCount, FailedCount, FCSErrorCount);
-
+	DPRINTK(3, "\n    rssi=%u\n"
+		   "    signal=%u\n"
+		   "    link_speed=%ux500Kbps\n"
+		   "    transmitted_frame_count=%u\n"
+		   "    received_fragment_count=%u\n"
+		   "    failed_count=%u\n"
+		   "    fcs_error_count=%u\n",
+		rssi, signal, link_speed, transmitted_frame_count,
+		received_fragment_count, failed_count, fcs_error_count);
 	/* wake_up_interruptible_all(&priv->confirm_wait); */
 	complete(&priv->confirm_wait);
 }
@@ -1046,8 +1052,8 @@ void hostif_event_check(struct ks_wlan_private *priv)
 	case HIF_MIB_SET_CONF:
 		hostif_mib_set_confirm(priv);
 		break;
-	case HIF_POWERMGT_CONF:
-		hostif_power_mngmt_confirm(priv);
+	case HIF_POWER_MGMT_CONF:
+		hostif_power_mgmt_confirm(priv);
 		break;
 	case HIF_SLEEP_CONF:
 		hostif_sleep_confirm(priv);
@@ -1102,6 +1108,21 @@ void hostif_event_check(struct ks_wlan_private *priv)
 	priv->hostt.qtail = (priv->hostt.qtail + 1) % SME_EVENT_BUFF_SIZE;
 }
 
+/* allocate size bytes, set header size and event */
+static void *hostif_generic_request(size_t size, int event)
+{
+	struct hostif_hdr *p;
+
+	p = kzalloc(hif_align_size(size), KS_WLAN_MEM_FLAG);
+	if (!p)
+		return NULL;
+
+	p->size = cpu_to_le16((u16)(size - sizeof(p->size)));
+	p->event = cpu_to_le16(event);
+
+	return p;
+}
+
 int hostif_data_request(struct ks_wlan_private *priv, struct sk_buff *skb)
 {
 	unsigned int skb_len = 0;
@@ -1118,6 +1139,7 @@ int hostif_data_request(struct ks_wlan_private *priv, struct sk_buff *skb)
 	struct ieee802_1x_hdr *aa1x_hdr;
 	struct wpa_eapol_key *eap_key;
 	struct ethhdr *eth;
+	size_t size;
 	int ret;
 
 	skb_len = skb->len;
@@ -1127,7 +1149,7 @@ int hostif_data_request(struct ks_wlan_private *priv, struct sk_buff *skb)
 		goto err_kfree_skb;
 	}
 
-	if (((priv->connect_status & CONNECT_STATUS_MASK) == DISCONNECT_STATUS) ||
+	if (is_disconnect_status(priv->connect_status) ||
 	    (priv->connect_status & FORCE_DISCONNECT) ||
 	    priv->wpa.mic_failure.stop) {
 		DPRINTK(3, " DISCONNECT\n");
@@ -1145,12 +1167,9 @@ int hostif_data_request(struct ks_wlan_private *priv, struct sk_buff *skb)
 			netif_stop_queue(priv->net_dev);
 	}
 
-	DPRINTK(4, "skb_buff length=%d\n", skb_len);
-	pp = kmalloc(hif_align_size(sizeof(*pp) + 6 + skb_len + 8),
-		     KS_WLAN_MEM_FLAG);
-
+	size = sizeof(*pp) + 6 + skb_len + 8;
+	pp = kmalloc(hif_align_size(size), KS_WLAN_MEM_FLAG);
 	if (!pp) {
-		DPRINTK(3, "allocate memory failed..\n");
 		ret = -ENOMEM;
 		goto err_kfree_skb;
 	}
@@ -1169,11 +1188,13 @@ int hostif_data_request(struct ks_wlan_private *priv, struct sk_buff *skb)
 		goto err_kfree;
 	}
 
-	/* MAC address copy */
-	memcpy(p, buffer, 12);	/* DST/SRC MAC address */
-	p += 12;
-	buffer += 12;
-	length -= 12;
+	/* dest and src MAC address copy */
+	size = ETH_ALEN * 2;
+	memcpy(p, buffer, size);
+	p += size;
+	buffer += size;
+	length -= size;
+
 	/* EtherType/Length check */
 	if (*(buffer + 1) + (*buffer << 8) > 1500) {
 		/* ProtocolEAP = *(buffer+1) + (*buffer << 8); */
@@ -1212,7 +1233,6 @@ int hostif_data_request(struct ks_wlan_private *priv, struct sk_buff *skb)
 			keyinfo = ntohs(eap_key->key_info);
 		}
 	}
-
 
 	if (priv->wpa.rsn_enabled && priv->wpa.key[0].key_len) {
 		if (eth_proto == ETHER_PROTOCOL_TYPE_EAP &&
@@ -1280,11 +1300,11 @@ err_kfree_skb:
 	return ret;
 }
 
-#define ps_confirm_wait_inc(priv) do { \
-	if (atomic_read(&priv->psstatus.status) > PS_ACTIVE_SET) { \
-		atomic_inc(&priv->psstatus.confirm_wait); \
-		/* atomic_set(&priv->psstatus.status, PS_CONF_WAIT);*/ \
-	} } while (0)
+#define ps_confirm_wait_inc(priv)					 \
+	do {								 \
+		if (atomic_read(&priv->psstatus.status) > PS_ACTIVE_SET) \
+			atomic_inc(&priv->psstatus.confirm_wait);	 \
+	} while (0)
 
 static
 void hostif_mib_get_request(struct ks_wlan_private *priv,
@@ -1294,15 +1314,10 @@ void hostif_mib_get_request(struct ks_wlan_private *priv,
 
 	DPRINTK(3, "\n");
 
-	/* make primitive */
-	pp = kmalloc(hif_align_size(sizeof(*pp)), KS_WLAN_MEM_FLAG);
-	if (!pp) {
-		DPRINTK(3, "allocate memory failed..\n");
+	pp = hostif_generic_request(sizeof(*pp), HIF_MIB_GET_REQ);
+	if (!pp)
 		return;
-	}
-	pp->header.size =
-	    cpu_to_le16((uint16_t)(sizeof(*pp) - sizeof(pp->header.size)));
-	pp->header.event = cpu_to_le16((uint16_t)HIF_MIB_GET_REQ);
+
 	pp->mib_attribute = cpu_to_le32((uint32_t)mib_attribute);
 
 	/* send to device request */
@@ -1324,17 +1339,10 @@ void hostif_mib_set_request(struct ks_wlan_private *priv,
 		return;
 	}
 
-	/* make primitive */
-	pp = kmalloc(hif_align_size(sizeof(*pp) + size), KS_WLAN_MEM_FLAG);
-	if (!pp) {
-		DPRINTK(3, "allocate memory failed..\n");
+	pp = hostif_generic_request(sizeof(*pp), HIF_MIB_SET_REQ);
+	if (!pp)
 		return;
-	}
 
-	pp->header.size =
-	    cpu_to_le16((uint16_t)
-			(sizeof(*pp) - sizeof(pp->header.size) + size));
-	pp->header.event = cpu_to_le16((uint16_t)HIF_MIB_SET_REQ);
 	pp->mib_attribute = cpu_to_le32((uint32_t)mib_attribute);
 	pp->mib_value.size = cpu_to_le16((uint16_t)size);
 	pp->mib_value.type = cpu_to_le16((uint16_t)type);
@@ -1352,15 +1360,10 @@ void hostif_start_request(struct ks_wlan_private *priv, unsigned char mode)
 
 	DPRINTK(3, "\n");
 
-	/* make primitive */
-	pp = kmalloc(hif_align_size(sizeof(*pp)), KS_WLAN_MEM_FLAG);
-	if (!pp) {
-		DPRINTK(3, "allocate memory failed..\n");
+	pp = hostif_generic_request(sizeof(*pp), HIF_START_REQ);
+	if (!pp)
 		return;
-	}
-	pp->header.size =
-	    cpu_to_le16((uint16_t)(sizeof(*pp) - sizeof(pp->header.size)));
-	pp->header.event = cpu_to_le16((uint16_t)HIF_START_REQ);
+
 	pp->mode = cpu_to_le16((uint16_t)mode);
 
 	/* send to device request */
@@ -1379,16 +1382,10 @@ void hostif_ps_adhoc_set_request(struct ks_wlan_private *priv)
 
 	DPRINTK(3, "\n");
 
-	/* make primitive */
-	pp = kmalloc(hif_align_size(sizeof(*pp)), KS_WLAN_MEM_FLAG);
-	if (!pp) {
-		DPRINTK(3, "allocate memory failed..\n");
+	pp = hostif_generic_request(sizeof(*pp), HIF_PS_ADH_SET_REQ);
+	if (!pp)
 		return;
-	}
-	memset(pp, 0, sizeof(*pp));
-	pp->header.size =
-	    cpu_to_le16((uint16_t)(sizeof(*pp) - sizeof(pp->header.size)));
-	pp->header.event = cpu_to_le16((uint16_t)HIF_PS_ADH_SET_REQ);
+
 	pp->phy_type = cpu_to_le16((uint16_t)(priv->reg.phy_type));
 	pp->cts_mode = cpu_to_le16((uint16_t)(priv->reg.cts_mode));
 	pp->scan_type = cpu_to_le16((uint16_t)(priv->reg.scan_type));
@@ -1422,15 +1419,10 @@ void hostif_infrastructure_set_request(struct ks_wlan_private *priv)
 
 	DPRINTK(3, "ssid.size=%d\n", priv->reg.ssid.size);
 
-	/* make primitive */
-	pp = kmalloc(hif_align_size(sizeof(*pp)), KS_WLAN_MEM_FLAG);
-	if (!pp) {
-		DPRINTK(3, "allocate memory failed..\n");
+	pp = hostif_generic_request(sizeof(*pp), HIF_INFRA_SET_REQ);
+	if (!pp)
 		return;
-	}
-	pp->header.size =
-	    cpu_to_le16((uint16_t)(sizeof(*pp) - sizeof(pp->header.size)));
-	pp->header.event = cpu_to_le16((uint16_t)HIF_INFRA_SET_REQ);
+
 	pp->phy_type = cpu_to_le16((uint16_t)(priv->reg.phy_type));
 	pp->cts_mode = cpu_to_le16((uint16_t)(priv->reg.cts_mode));
 	pp->scan_type = cpu_to_le16((uint16_t)(priv->reg.scan_type));
@@ -1488,15 +1480,10 @@ static void hostif_infrastructure_set2_request(struct ks_wlan_private *priv)
 
 	DPRINTK(2, "ssid.size=%d\n", priv->reg.ssid.size);
 
-	/* make primitive */
-	pp = kmalloc(hif_align_size(sizeof(*pp)), KS_WLAN_MEM_FLAG);
-	if (!pp) {
-		DPRINTK(3, "allocate memory failed..\n");
+	pp = hostif_generic_request(sizeof(*pp), HIF_INFRA_SET2_REQ);
+	if (!pp)
 		return;
-	}
-	pp->header.size =
-	    cpu_to_le16((uint16_t)(sizeof(*pp) - sizeof(pp->header.size)));
-	pp->header.event = cpu_to_le16((uint16_t)HIF_INFRA_SET2_REQ);
+
 	pp->phy_type = cpu_to_le16((uint16_t)(priv->reg.phy_type));
 	pp->cts_mode = cpu_to_le16((uint16_t)(priv->reg.cts_mode));
 	pp->scan_type = cpu_to_le16((uint16_t)(priv->reg.scan_type));
@@ -1557,16 +1544,10 @@ void hostif_adhoc_set_request(struct ks_wlan_private *priv)
 
 	DPRINTK(3, "\n");
 
-	/* make primitive */
-	pp = kmalloc(hif_align_size(sizeof(*pp)), KS_WLAN_MEM_FLAG);
-	if (!pp) {
-		DPRINTK(3, "allocate memory failed..\n");
+	pp = hostif_generic_request(sizeof(*pp), HIF_ADH_SET_REQ);
+	if (!pp)
 		return;
-	}
-	memset(pp, 0, sizeof(*pp));
-	pp->header.size =
-	    cpu_to_le16((uint16_t)(sizeof(*pp) - sizeof(pp->header.size)));
-	pp->header.event = cpu_to_le16((uint16_t)HIF_ADH_SET_REQ);
+
 	pp->phy_type = cpu_to_le16((uint16_t)(priv->reg.phy_type));
 	pp->cts_mode = cpu_to_le16((uint16_t)(priv->reg.cts_mode));
 	pp->scan_type = cpu_to_le16((uint16_t)(priv->reg.scan_type));
@@ -1602,16 +1583,10 @@ void hostif_adhoc_set2_request(struct ks_wlan_private *priv)
 
 	DPRINTK(3, "\n");
 
-	/* make primitive */
-	pp = kmalloc(hif_align_size(sizeof(*pp)), KS_WLAN_MEM_FLAG);
-	if (!pp) {
-		DPRINTK(3, "allocate memory failed..\n");
+	pp = hostif_generic_request(sizeof(*pp), HIF_ADH_SET_REQ);
+	if (!pp)
 		return;
-	}
-	memset(pp, 0, sizeof(*pp));
-	pp->header.size =
-	    cpu_to_le16((uint16_t)(sizeof(*pp) - sizeof(pp->header.size)));
-	pp->header.event = cpu_to_le16((uint16_t)HIF_ADH_SET_REQ);
+
 	pp->phy_type = cpu_to_le16((uint16_t)(priv->reg.phy_type));
 	pp->cts_mode = cpu_to_le16((uint16_t)(priv->reg.cts_mode));
 	pp->scan_type = cpu_to_le16((uint16_t)(priv->reg.scan_type));
@@ -1649,15 +1624,9 @@ void hostif_stop_request(struct ks_wlan_private *priv)
 
 	DPRINTK(3, "\n");
 
-	/* make primitive */
-	pp = kmalloc(hif_align_size(sizeof(*pp)), KS_WLAN_MEM_FLAG);
-	if (!pp) {
-		DPRINTK(3, "allocate memory failed..\n");
+	pp = hostif_generic_request(sizeof(*pp), HIF_STOP_REQ);
+	if (!pp)
 		return;
-	}
-	pp->header.size =
-	    cpu_to_le16((uint16_t)(sizeof(*pp) - sizeof(pp->header.size)));
-	pp->header.event = cpu_to_le16((uint16_t)HIF_STOP_REQ);
 
 	/* send to device request */
 	ps_confirm_wait_inc(priv);
@@ -1671,15 +1640,10 @@ void hostif_phy_information_request(struct ks_wlan_private *priv)
 
 	DPRINTK(3, "\n");
 
-	/* make primitive */
-	pp = kmalloc(hif_align_size(sizeof(*pp)), KS_WLAN_MEM_FLAG);
-	if (!pp) {
-		DPRINTK(3, "allocate memory failed..\n");
+	pp = hostif_generic_request(sizeof(*pp), HIF_PHY_INFO_REQ);
+	if (!pp)
 		return;
-	}
-	pp->header.size =
-	    cpu_to_le16((uint16_t)(sizeof(*pp) - sizeof(pp->header.size)));
-	pp->header.event = cpu_to_le16((uint16_t)HIF_PHY_INFO_REQ);
+
 	if (priv->reg.phy_info_timer) {
 		pp->type = cpu_to_le16((uint16_t)TIME_TYPE);
 		pp->time = cpu_to_le16((uint16_t)(priv->reg.phy_info_timer));
@@ -1694,23 +1658,19 @@ void hostif_phy_information_request(struct ks_wlan_private *priv)
 }
 
 static
-void hostif_power_mngmt_request(struct ks_wlan_private *priv,
-				unsigned long mode, unsigned long wake_up,
-				unsigned long receiveDTIMs)
+void hostif_power_mgmt_request(struct ks_wlan_private *priv,
+			       unsigned long mode, unsigned long wake_up,
+			       unsigned long receiveDTIMs)
 {
-	struct hostif_power_mngmt_request_t *pp;
+	struct hostif_power_mgmt_request_t *pp;
 
 	DPRINTK(3, "mode=%lu wake_up=%lu receiveDTIMs=%lu\n", mode, wake_up,
 		receiveDTIMs);
-	/* make primitive */
-	pp = kmalloc(hif_align_size(sizeof(*pp)), KS_WLAN_MEM_FLAG);
-	if (!pp) {
-		DPRINTK(3, "allocate memory failed..\n");
+
+	pp = hostif_generic_request(sizeof(*pp), HIF_POWER_MGMT_REQ);
+	if (!pp)
 		return;
-	}
-	pp->header.size =
-	    cpu_to_le16((uint16_t)(sizeof(*pp) - sizeof(pp->header.size)));
-	pp->header.event = cpu_to_le16((uint16_t)HIF_POWERMGT_REQ);
+
 	pp->mode = cpu_to_le32((uint32_t)mode);
 	pp->wake_up = cpu_to_le32((uint32_t)wake_up);
 	pp->receiveDTIMs = cpu_to_le32((uint32_t)receiveDTIMs);
@@ -1721,22 +1681,17 @@ void hostif_power_mngmt_request(struct ks_wlan_private *priv,
 }
 
 static
-void hostif_sleep_request(struct ks_wlan_private *priv, unsigned long mode)
+void hostif_sleep_request(struct ks_wlan_private *priv,
+			  enum sleep_mode_type mode)
 {
 	struct hostif_sleep_request_t *pp;
 
-	DPRINTK(3, "mode=%lu\n", mode);
+	DPRINTK(3, "mode=%lu\n", (long)mode);
 
 	if (mode == SLP_SLEEP) {
-		/* make primitive */
-		pp = kmalloc(hif_align_size(sizeof(*pp)), KS_WLAN_MEM_FLAG);
-		if (!pp) {
-			DPRINTK(3, "allocate memory failed..\n");
+		pp = hostif_generic_request(sizeof(*pp), HIF_SLEEP_REQ);
+		if (!pp)
 			return;
-		}
-		pp->header.size =
-		    cpu_to_le16((uint16_t)(sizeof(*pp) - sizeof(pp->header.size)));
-		pp->header.event = cpu_to_le16((uint16_t)HIF_SLEEP_REQ);
 
 		/* send to device request */
 		ps_confirm_wait_inc(priv);
@@ -1746,7 +1701,7 @@ void hostif_sleep_request(struct ks_wlan_private *priv, unsigned long mode)
 		atomic_set(&priv->sleepstatus.wakeup_request, 1);
 		queue_delayed_work(priv->wq, &priv->rw_dwork, 1);
 	} else {
-		DPRINTK(3, "invalid mode %ld\n", mode);
+		DPRINTK(3, "invalid mode %ld\n", (long)mode);
 		return;
 	}
 }
@@ -1759,15 +1714,11 @@ void hostif_bss_scan_request(struct ks_wlan_private *priv,
 	struct hostif_bss_scan_request_t *pp;
 
 	DPRINTK(2, "\n");
-	/* make primitive */
-	pp = kmalloc(hif_align_size(sizeof(*pp)), KS_WLAN_MEM_FLAG);
-	if (!pp) {
-		DPRINTK(3, "allocate memory failed..\n");
+
+	pp = hostif_generic_request(sizeof(*pp), HIF_SCAN_REQ);
+	if (!pp)
 		return;
-	}
-	pp->header.size =
-	    cpu_to_le16((uint16_t)(sizeof(*pp) - sizeof(pp->header.size)));
-	pp->header.event = cpu_to_le16((uint16_t)HIF_SCAN_REQ);
+
 	pp->scan_type = scan_type;
 
 	pp->ch_time_min = cpu_to_le32((uint32_t)110);	/* default value */
@@ -1815,15 +1766,11 @@ void hostif_mic_failure_request(struct ks_wlan_private *priv,
 	struct hostif_mic_failure_request_t *pp;
 
 	DPRINTK(3, "count=%d :: timer=%d\n", failure_count, timer);
-	/* make primitive */
-	pp = kmalloc(hif_align_size(sizeof(*pp)), KS_WLAN_MEM_FLAG);
-	if (!pp) {
-		DPRINTK(3, "allocate memory failed..\n");
+
+	pp = hostif_generic_request(sizeof(*pp), HIF_MIC_FAILURE_REQ);
+	if (!pp)
 		return;
-	}
-	pp->header.size =
-	    cpu_to_le16((uint16_t)(sizeof(*pp) - sizeof(pp->header.size)));
-	pp->header.event = cpu_to_le16((uint16_t)HIF_MIC_FAILURE_REQ);
+
 	pp->failure_count = cpu_to_le16((uint16_t)failure_count);
 	pp->timer = cpu_to_le16((uint16_t)timer);
 
@@ -2268,18 +2215,18 @@ spin_unlock:
 }
 
 static
-void hostif_sme_powermgt_set(struct ks_wlan_private *priv)
+void hostif_sme_power_mgmt_set(struct ks_wlan_private *priv)
 {
 	unsigned long mode, wake_up, receiveDTIMs;
 
 	DPRINTK(3, "\n");
-	switch (priv->reg.powermgt) {
-	case POWMGT_ACTIVE_MODE:
+	switch (priv->reg.power_mgmt) {
+	case POWER_MGMT_ACTIVE:
 		mode = POWER_ACTIVE;
 		wake_up = 0;
 		receiveDTIMs = 0;
 		break;
-	case POWMGT_SAVE1_MODE:
+	case POWER_MGMT_SAVE1:
 		if (priv->reg.operation_mode == MODE_INFRASTRUCTURE) {
 			mode = POWER_SAVE;
 			wake_up = 0;
@@ -2290,7 +2237,7 @@ void hostif_sme_powermgt_set(struct ks_wlan_private *priv)
 			receiveDTIMs = 0;
 		}
 		break;
-	case POWMGT_SAVE2_MODE:
+	case POWER_MGMT_SAVE2:
 		if (priv->reg.operation_mode == MODE_INFRASTRUCTURE) {
 			mode = POWER_SAVE;
 			wake_up = 0;
@@ -2307,7 +2254,7 @@ void hostif_sme_powermgt_set(struct ks_wlan_private *priv)
 		receiveDTIMs = 0;
 		break;
 	}
-	hostif_power_mngmt_request(priv, mode, wake_up, receiveDTIMs);
+	hostif_power_mgmt_request(priv, mode, wake_up, receiveDTIMs);
 }
 
 static
@@ -2440,7 +2387,7 @@ void hostif_sme_execute(struct ks_wlan_private *priv, int event)
 					priv->scan_ssid, priv->scan_ssid_len);
 		break;
 	case SME_POW_MNGMT_REQUEST:
-		hostif_sme_powermgt_set(priv);
+		hostif_sme_power_mgmt_set(priv);
 		break;
 	case SME_PHY_INFO_REQUEST:
 		hostif_phy_information_request(priv);

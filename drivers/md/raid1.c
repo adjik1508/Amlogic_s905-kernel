@@ -666,8 +666,11 @@ static int read_balance(struct r1conf *conf, struct r1bio *r1_bio, int *max_sect
 					break;
 			}
 			continue;
-		} else
+		} else {
+			if ((sectors > best_good_sectors) && (best_disk >= 0))
+				best_disk = -1;
 			best_good_sectors = sectors;
+		}
 
 		if (best_disk >= 0)
 			/* At least two disks to choose from so failfast is OK */
@@ -885,7 +888,7 @@ static void raise_barrier(struct r1conf *conf, sector_t sector_nr)
 			     atomic_read(&conf->barrier[idx]) < RESYNC_DEPTH,
 			    conf->resync_lock);
 
-	atomic_inc(&conf->nr_pending[idx]);
+	atomic_inc(&conf->nr_sync_pending);
 	spin_unlock_irq(&conf->resync_lock);
 }
 
@@ -896,7 +899,7 @@ static void lower_barrier(struct r1conf *conf, sector_t sector_nr)
 	BUG_ON(atomic_read(&conf->barrier[idx]) <= 0);
 
 	atomic_dec(&conf->barrier[idx]);
-	atomic_dec(&conf->nr_pending[idx]);
+	atomic_dec(&conf->nr_sync_pending);
 	wake_up(&conf->wait_barrier);
 }
 
@@ -1033,7 +1036,8 @@ static int get_unqueued_pending(struct r1conf *conf)
 {
 	int idx, ret;
 
-	for (ret = 0, idx = 0; idx < BARRIER_BUCKETS_NR; idx++)
+	ret = atomic_read(&conf->nr_sync_pending);
+	for (idx = 0; idx < BARRIER_BUCKETS_NR; idx++)
 		ret += atomic_read(&conf->nr_pending[idx]) -
 			atomic_read(&conf->nr_queued[idx]);
 
@@ -1528,17 +1532,16 @@ static void raid1_write_request(struct mddev *mddev, struct bio *bio,
 			plug = container_of(cb, struct raid1_plug_cb, cb);
 		else
 			plug = NULL;
-		spin_lock_irqsave(&conf->device_lock, flags);
 		if (plug) {
 			bio_list_add(&plug->pending, mbio);
 			plug->pending_cnt++;
 		} else {
+			spin_lock_irqsave(&conf->device_lock, flags);
 			bio_list_add(&conf->pending_bio_list, mbio);
 			conf->pending_count++;
-		}
-		spin_unlock_irqrestore(&conf->device_lock, flags);
-		if (!plug)
+			spin_unlock_irqrestore(&conf->device_lock, flags);
 			md_wakeup_thread(mddev->thread);
+		}
 	}
 
 	r1_bio_write_done(r1_bio);
@@ -1831,9 +1834,9 @@ static int raid1_remove_disk(struct mddev *mddev, struct md_rdev *rdev)
 			p->rdev = repl;
 			conf->mirrors[conf->raid_disks + number].rdev = NULL;
 			unfreeze_array(conf);
-			clear_bit(WantReplacement, &rdev->flags);
-		} else
-			clear_bit(WantReplacement, &rdev->flags);
+		}
+
+		clear_bit(WantReplacement, &rdev->flags);
 		err = md_integrity_register(mddev);
 	}
 abort:
@@ -2961,7 +2964,6 @@ static struct r1conf *setup_conf(struct mddev *mddev)
 	err = -EINVAL;
 	spin_lock_init(&conf->device_lock);
 	rdev_for_each(rdev, mddev) {
-		struct request_queue *q;
 		int disk_idx = rdev->raid_disk;
 		if (disk_idx >= mddev->raid_disks
 		    || disk_idx < 0)
@@ -2974,8 +2976,6 @@ static struct r1conf *setup_conf(struct mddev *mddev)
 		if (disk->rdev)
 			goto abort;
 		disk->rdev = rdev;
-		q = bdev_get_queue(rdev->bdev);
-
 		disk->head_position = 0;
 		disk->seq_start = MaxSector;
 	}
@@ -3199,7 +3199,7 @@ static int raid1_reshape(struct mddev *mddev)
 	struct r1conf *conf = mddev->private;
 	int cnt, raid_disks;
 	unsigned long flags;
-	int d, d2, err;
+	int d, d2;
 
 	/* Cannot change chunk_size, layout, or level */
 	if (mddev->chunk_sectors != mddev->new_chunk_sectors ||
@@ -3211,11 +3211,8 @@ static int raid1_reshape(struct mddev *mddev)
 		return -EINVAL;
 	}
 
-	if (!mddev_is_clustered(mddev)) {
-		err = md_allow_write(mddev);
-		if (err)
-			return err;
-	}
+	if (!mddev_is_clustered(mddev))
+		md_allow_write(mddev);
 
 	raid_disks = mddev->raid_disks + mddev->delta_disks;
 

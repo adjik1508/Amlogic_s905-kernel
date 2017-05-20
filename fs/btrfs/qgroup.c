@@ -2033,6 +2033,7 @@ int btrfs_qgroup_account_extents(struct btrfs_trans_handle *trans,
 				if (ret < 0)
 					goto cleanup;
 			}
+
 			/*
 			 * Use SEQ_LAST as time_seq to do special search, which
 			 * doesn't lock tree or delayed_refs and search current
@@ -2358,6 +2359,11 @@ static int qgroup_reserve(struct btrfs_root *root, u64 num_bytes, bool enforce)
 
 	if (num_bytes == 0)
 		return 0;
+
+	if (test_bit(BTRFS_FS_QUOTA_OVERRIDE, &fs_info->flags) &&
+	    capable(CAP_SYS_RESOURCE))
+		enforce = false;
+
 retry:
 	spin_lock(&fs_info->qgroup_lock);
 	quota_root = fs_info->quota_root;
@@ -2831,11 +2837,13 @@ btrfs_qgroup_rescan_resume(struct btrfs_fs_info *fs_info)
  *       to free *ALL* reserved space.
  */
 int btrfs_qgroup_reserve_data(struct inode *inode,
-			struct extent_changeset *reserved, u64 start, u64 len)
+			struct extent_changeset **reserved_ret, u64 start,
+			u64 len)
 {
 	struct btrfs_root *root = BTRFS_I(inode)->root;
 	struct ulist_node *unode;
 	struct ulist_iterator uiter;
+	struct extent_changeset *reserved;
 	u64 orig_reserved;
 	u64 to_reserve;
 	int ret;
@@ -2845,8 +2853,14 @@ int btrfs_qgroup_reserve_data(struct inode *inode,
 		return 0;
 
 	/* @reserved parameter is mandatory for qgroup */
-	if (WARN_ON(!reserved))
+	if (WARN_ON(!reserved_ret))
 		return -EINVAL;
+	if (!*reserved_ret) {
+		*reserved_ret = extent_changeset_alloc();
+		if (!*reserved_ret)
+			return -ENOMEM;
+	}
+	reserved = *reserved_ret;
 	/* Record already reserved space */
 	orig_reserved = reserved->bytes_changed;
 	ret = set_record_extent_bits(&BTRFS_I(inode)->io_tree, start,
@@ -2941,8 +2955,7 @@ static int __btrfs_qgroup_release_data(struct inode *inode,
 	WARN_ON(!free && reserved);
 	if (free && reserved)
 		return qgroup_free_reserved_data(inode, reserved, start, len);
-	changeset.bytes_changed = 0;
-	ulist_init(&changeset.range_changed);
+	extent_changeset_init(&changeset);
 	ret = clear_record_extent_bits(&BTRFS_I(inode)->io_tree, start, 
 			start + len -1, EXTENT_QGROUP_RESERVED, &changeset);
 	if (ret < 0)
@@ -2958,7 +2971,7 @@ static int __btrfs_qgroup_release_data(struct inode *inode,
 				changeset.bytes_changed);
 	ret = changeset.bytes_changed;
 out:
-	ulist_release(&changeset.range_changed);
+	extent_changeset_release(&changeset);
 	return ret;
 }
 
@@ -3061,8 +3074,7 @@ void btrfs_qgroup_check_reserved_leak(struct inode *inode)
 	struct ulist_iterator iter;
 	int ret;
 
-	changeset.bytes_changed = 0;
-	ulist_init(&changeset.range_changed);
+	extent_changeset_init(&changeset);
 	ret = clear_record_extent_bits(&BTRFS_I(inode)->io_tree, 0, (u64)-1,
 			EXTENT_QGROUP_RESERVED, &changeset);
 
@@ -3079,5 +3091,5 @@ void btrfs_qgroup_check_reserved_leak(struct inode *inode)
 				changeset.bytes_changed);
 
 	}
-	ulist_release(&changeset.range_changed);
+	extent_changeset_release(&changeset);
 }

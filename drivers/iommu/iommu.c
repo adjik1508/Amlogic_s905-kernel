@@ -1105,8 +1105,12 @@ static int iommu_bus_notifier(struct notifier_block *nb,
 	 * result in ADD/DEL notifiers to group->notifier
 	 */
 	if (action == BUS_NOTIFY_ADD_DEVICE) {
-		if (ops->add_device)
-			return ops->add_device(dev);
+		if (ops->add_device) {
+			int ret;
+
+			ret = ops->add_device(dev);
+			return (ret) ? NOTIFY_DONE : NOTIFY_OK;
+		}
 	} else if (action == BUS_NOTIFY_REMOVED_DEVICE) {
 		if (ops->remove_device && dev->iommu_group) {
 			ops->remove_device(dev);
@@ -1673,6 +1677,48 @@ void iommu_domain_window_disable(struct iommu_domain *domain, u32 wnd_nr)
 	return domain->ops->domain_window_disable(domain, wnd_nr);
 }
 EXPORT_SYMBOL_GPL(iommu_domain_window_disable);
+
+/**
+ * report_iommu_fault() - report about an IOMMU fault to the IOMMU framework
+ * @domain: the iommu domain where the fault has happened
+ * @dev: the device where the fault has happened
+ * @iova: the faulting address
+ * @flags: mmu fault flags (e.g. IOMMU_FAULT_READ/IOMMU_FAULT_WRITE/...)
+ *
+ * This function should be called by the low-level IOMMU implementations
+ * whenever IOMMU faults happen, to allow high-level users, that are
+ * interested in such events, to know about them.
+ *
+ * This event may be useful for several possible use cases:
+ * - mere logging of the event
+ * - dynamic TLB/PTE loading
+ * - if restarting of the faulting device is required
+ *
+ * Returns 0 on success and an appropriate error code otherwise (if dynamic
+ * PTE/TLB loading will one day be supported, implementations will be able
+ * to tell whether it succeeded or not according to this return value).
+ *
+ * Specifically, -ENOSYS is returned if a fault handler isn't installed
+ * (though fault handlers can also return -ENOSYS, in case they want to
+ * elicit the default behavior of the IOMMU drivers).
+ */
+int report_iommu_fault(struct iommu_domain *domain, struct device *dev,
+		       unsigned long iova, int flags)
+{
+	int ret = -ENOSYS;
+
+	/*
+	 * if upper layers showed interest and installed a fault handler,
+	 * invoke it.
+	 */
+	if (domain->handler)
+		ret = domain->handler(domain, dev, iova, flags,
+						domain->handler_token);
+
+	trace_io_page_fault(dev, iova, flags);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(report_iommu_fault);
 
 static int __init iommu_init(void)
 {

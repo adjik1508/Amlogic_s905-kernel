@@ -1800,6 +1800,7 @@ enum {
 	ALC882_FIXUP_NO_PRIMARY_HP,
 	ALC887_FIXUP_ASUS_BASS,
 	ALC887_FIXUP_BASS_CHMAP,
+	ALC1220_FIXUP_GB_DUAL_CODECS,
 };
 
 static void alc889_fixup_coef(struct hda_codec *codec,
@@ -1961,6 +1962,61 @@ static void alc882_fixup_no_primary_hp(struct hda_codec *codec,
 
 static void alc_fixup_bass_chmap(struct hda_codec *codec,
 				 const struct hda_fixup *fix, int action);
+
+/* For dual-codec configuration, we need to disable some features to avoid
+ * conflicts of kctls and PCM streams
+ */
+static void alc_fixup_dual_codecs(struct hda_codec *codec,
+				  const struct hda_fixup *fix, int action)
+{
+	struct alc_spec *spec = codec->spec;
+
+	if (action != HDA_FIXUP_ACT_PRE_PROBE)
+		return;
+	/* disable vmaster */
+	spec->gen.suppress_vmaster = 1;
+	/* auto-mute and auto-mic switch don't work with multiple codecs */
+	spec->gen.suppress_auto_mute = 1;
+	spec->gen.suppress_auto_mic = 1;
+	/* disable aamix as well */
+	spec->gen.mixer_nid = 0;
+	/* add location prefix to avoid conflicts */
+	codec->force_pin_prefix = 1;
+}
+
+static void rename_ctl(struct hda_codec *codec, const char *oldname,
+		       const char *newname)
+{
+	struct snd_kcontrol *kctl;
+
+	kctl = snd_hda_find_mixer_ctl(codec, oldname);
+	if (kctl)
+		strcpy(kctl->id.name, newname);
+}
+
+static void alc1220_fixup_gb_dual_codecs(struct hda_codec *codec,
+					 const struct hda_fixup *fix,
+					 int action)
+{
+	alc_fixup_dual_codecs(codec, fix, action);
+	switch (action) {
+	case HDA_FIXUP_ACT_PRE_PROBE:
+		/* override card longname to provide a unique UCM profile */
+		strcpy(codec->card->longname, "HDAudio-Gigabyte-ALC1220DualCodecs");
+		break;
+	case HDA_FIXUP_ACT_BUILD:
+		/* rename Capture controls depending on the codec */
+		rename_ctl(codec, "Capture Volume",
+			   codec->addr == 0 ?
+			   "Rear-Panel Capture Volume" :
+			   "Front-Panel Capture Volume");
+		rename_ctl(codec, "Capture Switch",
+			   codec->addr == 0 ?
+			   "Rear-Panel Capture Switch" :
+			   "Front-Panel Capture Switch");
+		break;
+	}
+}
 
 static const struct hda_fixup alc882_fixups[] = {
 	[ALC882_FIXUP_ABIT_AW9D_MAX] = {
@@ -2198,6 +2254,10 @@ static const struct hda_fixup alc882_fixups[] = {
 		.type = HDA_FIXUP_FUNC,
 		.v.func = alc_fixup_bass_chmap,
 	},
+	[ALC1220_FIXUP_GB_DUAL_CODECS] = {
+		.type = HDA_FIXUP_FUNC,
+		.v.func = alc1220_fixup_gb_dual_codecs,
+	},
 };
 
 static const struct snd_pci_quirk alc882_fixup_tbl[] = {
@@ -2267,6 +2327,7 @@ static const struct snd_pci_quirk alc882_fixup_tbl[] = {
 	SND_PCI_QUIRK(0x1462, 0x7350, "MSI-7350", ALC889_FIXUP_CD),
 	SND_PCI_QUIRK_VENDOR(0x1462, "MSI", ALC882_FIXUP_GPIO3),
 	SND_PCI_QUIRK(0x1458, 0xa002, "Gigabyte EP45-DS3/Z87X-UD3H", ALC889_FIXUP_FRONT_HP_NO_PRESENCE),
+	SND_PCI_QUIRK(0x1458, 0xa0b8, "Gigabyte AZ370-Gaming", ALC1220_FIXUP_GB_DUAL_CODECS),
 	SND_PCI_QUIRK(0x147b, 0x107a, "Abit AW9D-MAX", ALC882_FIXUP_ABIT_AW9D_MAX),
 	SND_PCI_QUIRK_VENDOR(0x1558, "Clevo laptop", ALC882_FIXUP_EAPD),
 	SND_PCI_QUIRK(0x161f, 0x2054, "Medion laptop", ALC883_FIXUP_EAPD),
@@ -2512,18 +2573,37 @@ static int patch_alc262(struct hda_codec *codec)
  *  ALC268
  */
 /* bind Beep switches of both NID 0x0f and 0x10 */
-static const struct hda_bind_ctls alc268_bind_beep_sw = {
-	.ops = &snd_hda_bind_sw,
-	.values = {
-		HDA_COMPOSE_AMP_VAL(0x0f, 3, 1, HDA_INPUT),
-		HDA_COMPOSE_AMP_VAL(0x10, 3, 1, HDA_INPUT),
-		0
-	},
-};
+static int alc268_beep_switch_put(struct snd_kcontrol *kcontrol,
+				  struct snd_ctl_elem_value *ucontrol)
+{
+	struct hda_codec *codec = snd_kcontrol_chip(kcontrol);
+	unsigned long pval;
+	int err;
+
+	mutex_lock(&codec->control_mutex);
+	pval = kcontrol->private_value;
+	kcontrol->private_value = (pval & ~0xff) | 0x0f;
+	err = snd_hda_mixer_amp_switch_put(kcontrol, ucontrol);
+	if (err >= 0) {
+		kcontrol->private_value = (pval & ~0xff) | 0x10;
+		err = snd_hda_mixer_amp_switch_put(kcontrol, ucontrol);
+	}
+	kcontrol->private_value = pval;
+	mutex_unlock(&codec->control_mutex);
+	return err;
+}
 
 static const struct snd_kcontrol_new alc268_beep_mixer[] = {
 	HDA_CODEC_VOLUME("Beep Playback Volume", 0x1d, 0x0, HDA_INPUT),
-	HDA_BIND_SW("Beep Playback Switch", &alc268_bind_beep_sw),
+	{
+		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+		.name = "Beep Playback Switch",
+		.subdevice = HDA_SUBDEV_AMP_FLAG,
+		.info = snd_hda_mixer_amp_switch_info,
+		.get = snd_hda_mixer_amp_switch_get,
+		.put = alc268_beep_switch_put,
+		.private_value = HDA_COMPOSE_AMP_VAL(0x0f, 3, 1, HDA_INPUT)
+	},
 	{ }
 };
 
@@ -4663,7 +4743,6 @@ static void alc282_fixup_asus_tx300(struct hda_codec *codec,
 		{ 0x1b, 0x21114000 }, /* dock speaker pin */
 		{}
 	};
-	struct snd_kcontrol *kctl;
 
 	switch (action) {
 	case HDA_FIXUP_ACT_PRE_PROBE:
@@ -4678,12 +4757,10 @@ static void alc282_fixup_asus_tx300(struct hda_codec *codec,
 		/* this is a bit tricky; give more sane names for the main
 		 * (tablet) speaker and the dock speaker, respectively
 		 */
-		kctl = snd_hda_find_mixer_ctl(codec, "Speaker Playback Switch");
-		if (kctl)
-			strcpy(kctl->id.name, "Dock Speaker Playback Switch");
-		kctl = snd_hda_find_mixer_ctl(codec, "Bass Speaker Playback Switch");
-		if (kctl)
-			strcpy(kctl->id.name, "Speaker Playback Switch");
+		rename_ctl(codec, "Speaker Playback Switch",
+			   "Dock Speaker Playback Switch");
+		rename_ctl(codec, "Bass Speaker Playback Switch",
+			   "Speaker Playback Switch");
 		break;
 	}
 }
@@ -4763,6 +4840,30 @@ static void alc280_fixup_hp_9480m(struct hda_codec *codec,
 
 		/* Initialize GPIO configuration */
 		snd_hda_add_verbs(codec, gpio_init);
+	}
+}
+
+static void alc233_alc662_fixup_lenovo_dual_codecs(struct hda_codec *codec,
+					 const struct hda_fixup *fix,
+					 int action)
+{
+	alc_fixup_dual_codecs(codec, fix, action);
+	switch (action) {
+	case HDA_FIXUP_ACT_PRE_PROBE:
+		/* override card longname to provide a unique UCM profile */
+		strcpy(codec->card->longname, "HDAudio-Lenovo-DualCodecs");
+		break;
+	case HDA_FIXUP_ACT_BUILD:
+		/* rename Capture controls depending on the codec */
+		rename_ctl(codec, "Capture Volume",
+			   codec->addr == 0 ?
+			   "Rear-Panel Capture Volume" :
+			   "Front-Panel Capture Volume");
+		rename_ctl(codec, "Capture Switch",
+			   codec->addr == 0 ?
+			   "Rear-Panel Capture Switch" :
+			   "Front-Panel Capture Switch");
+		break;
 	}
 }
 
@@ -4879,6 +4980,7 @@ enum {
 	ALC256_FIXUP_ASUS_AIO_GPIO2,
 	ALC233_FIXUP_ASUS_MIC_NO_PRESENCE,
 	ALC233_FIXUP_EAPD_COEF_AND_MIC_NO_PRESENCE,
+	ALC233_FIXUP_LENOVO_MULTI_CODECS,
 };
 
 static const struct hda_fixup alc269_fixups[] = {
@@ -5648,6 +5750,10 @@ static const struct hda_fixup alc269_fixups[] = {
 		.chained = true,
 		.chain_id = ALC233_FIXUP_ASUS_MIC_NO_PRESENCE
 	},
+	[ALC233_FIXUP_LENOVO_MULTI_CODECS] = {
+		.type = HDA_FIXUP_FUNC,
+		.v.func = alc233_alc662_fixup_lenovo_dual_codecs,
+	},
 };
 
 static const struct snd_pci_quirk alc269_fixup_tbl[] = {
@@ -5802,6 +5908,7 @@ static const struct snd_pci_quirk alc269_fixup_tbl[] = {
 	SND_PCI_QUIRK(0x144d, 0xc740, "Samsung Ativ book 8 (NP870Z5G)", ALC269_FIXUP_ATIV_BOOK_8),
 	SND_PCI_QUIRK(0x1458, 0xfa53, "Gigabyte BXBT-2807", ALC283_FIXUP_HEADSET_MIC),
 	SND_PCI_QUIRK(0x1462, 0xb120, "MSI Cubi MS-B120", ALC283_FIXUP_HEADSET_MIC),
+	SND_PCI_QUIRK(0x17aa, 0x1036, "Lenovo P520", ALC233_FIXUP_LENOVO_MULTI_CODECS),
 	SND_PCI_QUIRK(0x17aa, 0x20f2, "Thinkpad SL410/510", ALC269_FIXUP_SKU_IGNORE),
 	SND_PCI_QUIRK(0x17aa, 0x215e, "Thinkpad L512", ALC269_FIXUP_SKU_IGNORE),
 	SND_PCI_QUIRK(0x17aa, 0x21b8, "Thinkpad Edge 14", ALC269_FIXUP_SKU_IGNORE),
@@ -6377,8 +6484,11 @@ static int patch_alc269(struct hda_codec *codec)
 		break;
 	case 0x10ec0225:
 	case 0x10ec0295:
+		spec->codec_variant = ALC269_TYPE_ALC225;
+		break;
 	case 0x10ec0299:
 		spec->codec_variant = ALC269_TYPE_ALC225;
+		spec->gen.mixer_nid = 0; /* no loopback on ALC299 */
 		break;
 	case 0x10ec0234:
 	case 0x10ec0274:
@@ -6815,6 +6925,7 @@ enum {
 	ALC668_FIXUP_DELL_DISABLE_AAMIX,
 	ALC668_FIXUP_DELL_XPS13,
 	ALC662_FIXUP_ASUS_Nx50,
+	ALC668_FIXUP_ASUS_Nx51_HEADSET_MODE,
 	ALC668_FIXUP_ASUS_Nx51,
 	ALC891_FIXUP_HEADSET_MODE,
 	ALC891_FIXUP_DELL_MIC_NO_PRESENCE,
@@ -6822,6 +6933,7 @@ enum {
 	ALC892_FIXUP_ASROCK_MOBO,
 	ALC662_FIXUP_USI_FUNC,
 	ALC662_FIXUP_USI_HEADSET_MODE,
+	ALC662_FIXUP_LENOVO_MULTI_CODECS,
 };
 
 static const struct hda_fixup alc662_fixups[] = {
@@ -7068,14 +7180,21 @@ static const struct hda_fixup alc662_fixups[] = {
 		.chained = true,
 		.chain_id = ALC662_FIXUP_BASS_1A
 	},
+	[ALC668_FIXUP_ASUS_Nx51_HEADSET_MODE] = {
+		.type = HDA_FIXUP_FUNC,
+		.v.func = alc_fixup_headset_mode_alc668,
+		.chain_id = ALC662_FIXUP_BASS_CHMAP
+	},
 	[ALC668_FIXUP_ASUS_Nx51] = {
 		.type = HDA_FIXUP_PINS,
 		.v.pins = (const struct hda_pintbl[]) {
-			{0x1a, 0x90170151}, /* bass speaker */
+			{ 0x19, 0x03a1913d }, /* use as headphone mic, without its own jack detect */
+			{ 0x1a, 0x90170151 }, /* bass speaker */
+			{ 0x1b, 0x03a1113c }, /* use as headset mic, without its own jack detect */
 			{}
 		},
 		.chained = true,
-		.chain_id = ALC662_FIXUP_BASS_CHMAP,
+		.chain_id = ALC668_FIXUP_ASUS_Nx51_HEADSET_MODE,
 	},
 	[ALC891_FIXUP_HEADSET_MODE] = {
 		.type = HDA_FIXUP_FUNC,
@@ -7120,6 +7239,10 @@ static const struct hda_fixup alc662_fixups[] = {
 		.chained = true,
 		.chain_id = ALC662_FIXUP_USI_FUNC
 	},
+	[ALC662_FIXUP_LENOVO_MULTI_CODECS] = {
+		.type = HDA_FIXUP_FUNC,
+		.v.func = alc233_alc662_fixup_lenovo_dual_codecs,
+	},
 };
 
 static const struct snd_pci_quirk alc662_fixup_tbl[] = {
@@ -7157,6 +7280,7 @@ static const struct snd_pci_quirk alc662_fixup_tbl[] = {
 	SND_PCI_QUIRK(0x105b, 0x0cd6, "Foxconn", ALC662_FIXUP_ASUS_MODE2),
 	SND_PCI_QUIRK(0x144d, 0xc051, "Samsung R720", ALC662_FIXUP_IDEAPAD),
 	SND_PCI_QUIRK(0x14cd, 0x5003, "USI", ALC662_FIXUP_USI_HEADSET_MODE),
+	SND_PCI_QUIRK(0x17aa, 0x1036, "Lenovo P520", ALC662_FIXUP_LENOVO_MULTI_CODECS),
 	SND_PCI_QUIRK(0x17aa, 0x38af, "Lenovo Ideapad Y550P", ALC662_FIXUP_IDEAPAD),
 	SND_PCI_QUIRK(0x17aa, 0x3a0d, "Lenovo Ideapad Y550", ALC662_FIXUP_IDEAPAD),
 	SND_PCI_QUIRK(0x1849, 0x5892, "ASRock B150M", ALC892_FIXUP_ASROCK_MOBO),

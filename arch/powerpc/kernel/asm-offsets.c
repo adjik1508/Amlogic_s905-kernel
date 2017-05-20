@@ -220,6 +220,7 @@ int main(void)
 	OFFSET(PACA_EXGEN, paca_struct, exgen);
 	OFFSET(PACA_EXMC, paca_struct, exmc);
 	OFFSET(PACA_EXSLB, paca_struct, exslb);
+	OFFSET(PACA_EXNMI, paca_struct, exnmi);
 	OFFSET(PACALPPACAPTR, paca_struct, lppaca_ptr);
 	OFFSET(PACA_SLBSHADOWPTR, paca_struct, slb_shadow_ptr);
 	OFFSET(SLBSHADOW_STACKVSID, slb_shadow, save_area[SLB_NUM_BOLTED - 1].vsid);
@@ -233,7 +234,9 @@ int main(void)
 	OFFSET(PACAEMERGSP, paca_struct, emergency_sp);
 #ifdef CONFIG_PPC_BOOK3S_64
 	OFFSET(PACAMCEMERGSP, paca_struct, mc_emergency_sp);
+	OFFSET(PACA_NMI_EMERG_SP, paca_struct, nmi_emergency_sp);
 	OFFSET(PACA_IN_MCE, paca_struct, in_mce);
+	OFFSET(PACA_IN_NMI, paca_struct, in_nmi);
 #endif
 	OFFSET(PACAHWCPUID, paca_struct, hw_cpu_id);
 	OFFSET(PACAKEXECSTATE, paca_struct, kexec_state);
@@ -631,6 +634,8 @@ int main(void)
 	HSTATE_FIELD(HSTATE_KVM_VCPU, kvm_vcpu);
 	HSTATE_FIELD(HSTATE_KVM_VCORE, kvm_vcore);
 	HSTATE_FIELD(HSTATE_XICS_PHYS, xics_phys);
+	HSTATE_FIELD(HSTATE_XIVE_TIMA_PHYS, xive_tima_phys);
+	HSTATE_FIELD(HSTATE_XIVE_TIMA_VIRT, xive_tima_virt);
 	HSTATE_FIELD(HSTATE_SAVED_XIRR, saved_xirr);
 	HSTATE_FIELD(HSTATE_HOST_IPI, host_ipi);
 	HSTATE_FIELD(HSTATE_PTID, ptid);
@@ -714,6 +719,14 @@ int main(void)
 #ifdef CONFIG_KVM_BOOKE_HV
 	OFFSET(VCPU_HOST_MAS4, kvm_vcpu, arch.host_mas4);
 	OFFSET(VCPU_HOST_MAS6, kvm_vcpu, arch.host_mas6);
+#endif
+
+#ifdef CONFIG_KVM_XICS
+	DEFINE(VCPU_XIVE_SAVED_STATE, offsetof(struct kvm_vcpu,
+					       arch.xive_saved_state));
+	DEFINE(VCPU_XIVE_CAM_WORD, offsetof(struct kvm_vcpu,
+					    arch.xive_cam_word));
+	DEFINE(VCPU_XIVE_PUSHED, offsetof(struct kvm_vcpu, arch.xive_pushed));
 #endif
 
 #ifdef CONFIG_KVM_EXIT_TIMING

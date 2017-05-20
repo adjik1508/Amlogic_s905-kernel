@@ -15,6 +15,7 @@
 #include <linux/kernel.h>
 #include <linux/stringify.h>
 #include <asm/bug.h>
+#include <sys/param.h>
 #include "util.h"
 #include "debug.h"
 #include "builtin.h"
@@ -26,11 +27,13 @@
 #include "tool.h"
 #include "data.h"
 #include "sort.h"
+#include "event.h"
 #include "evlist.h"
 #include "evsel.h"
 #include <asm/bug.h>
 #include "ui/browsers/hists.h"
 #include "evlist.h"
+#include "thread.h"
 
 struct c2c_hists {
 	struct hists		hists;

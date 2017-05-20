@@ -371,7 +371,7 @@ atmel_pmecc_create_user(struct atmel_pmecc *pmecc,
 
 	user->pmecc = pmecc;
 
-	user->partial_syn = (u16 *)PTR_ALIGN(user + 1, sizeof(u16));
+	user->partial_syn = (s16 *)PTR_ALIGN(user + 1, sizeof(u16));
 	user->si = user->partial_syn + ((2 * req->ecc.strength) + 1);
 	user->lmu = user->si + ((2 * req->ecc.strength) + 1);
 	user->smu = user->lmu + (req->ecc.strength + 1);
@@ -896,20 +896,20 @@ static struct atmel_pmecc *atmel_pmecc_get_by_node(struct device *userdev,
 
 static const int atmel_pmecc_strengths[] = { 2, 4, 8, 12, 24, 32 };
 
-struct atmel_pmecc_caps at91sam9g45_caps = {
+static struct atmel_pmecc_caps at91sam9g45_caps = {
 	.strengths = atmel_pmecc_strengths,
 	.nstrengths = 5,
 	.el_offset = 0x8c,
 };
 
-struct atmel_pmecc_caps sama5d4_caps = {
+static struct atmel_pmecc_caps sama5d4_caps = {
 	.strengths = atmel_pmecc_strengths,
 	.nstrengths = 5,
 	.el_offset = 0x8c,
 	.correct_erased_chunks = true,
 };
 
-struct atmel_pmecc_caps sama5d2_caps = {
+static struct atmel_pmecc_caps sama5d2_caps = {
 	.strengths = atmel_pmecc_strengths,
 	.nstrengths = 6,
 	.el_offset = 0xac,

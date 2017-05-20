@@ -20,7 +20,7 @@
  *
  *
  *  libata documentation is available via 'make {ps|pdf}docs',
- *  as Documentation/DocBook/libata.*
+ *  as Documentation/driver-api/libata.rst
  *
  *  Hardware documentation available from http://www.t13.org/
  *
@@ -815,11 +815,6 @@ static inline bool ata_id_sct_features_ctrl(const u16 *id)
 static inline bool ata_id_sct_error_recovery_ctrl(const u16 *id)
 {
 	return id[ATA_ID_SCT_CMD_XPORT] & (1 << 3) ? true : false;
-}
-
-static inline bool ata_id_sct_write_same(const u16 *id)
-{
-	return id[ATA_ID_SCT_CMD_XPORT] & (1 << 2) ? true : false;
 }
 
 static inline bool ata_id_sct_long_sector_access(const u16 *id)

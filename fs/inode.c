@@ -402,6 +402,8 @@ static void inode_lru_list_add(struct inode *inode)
 {
 	if (list_lru_add(&inode->i_sb->s_inode_lru, &inode->i_lru))
 		this_cpu_inc(nr_unused);
+	else
+		inode->i_state |= I_REFERENCED;
 }
 
 /*
@@ -1489,7 +1491,6 @@ static void iput_final(struct inode *inode)
 		drop = generic_drop_inode(inode);
 
 	if (!drop && (sb->s_flags & MS_ACTIVE)) {
-		inode->i_state |= I_REFERENCED;
 		inode_add_lru(inode);
 		spin_unlock(&inode->i_lock);
 		return;
@@ -1950,7 +1951,7 @@ void __init inode_init(void)
 					sizeof(struct hlist_head),
 					ihash_entries,
 					14,
-					HASH_ZERO | HASH_ADAPT,
+					HASH_ZERO,
 					&i_hash_shift,
 					&i_hash_mask,
 					0,

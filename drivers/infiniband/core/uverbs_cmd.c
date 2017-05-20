@@ -943,7 +943,7 @@ ssize_t ib_uverbs_create_comp_channel(struct ib_uverbs_file *file,
 
 	ev_file = container_of(uobj, struct ib_uverbs_completion_event_file,
 			       uobj_file.uobj);
-	ib_uverbs_init_event_file(&ev_file->ev_file);
+	ib_uverbs_init_event_queue(&ev_file->ev_queue);
 
 	if (copy_to_user((void __user *) (unsigned long) cmd.response,
 			 &resp, sizeof resp)) {
@@ -1015,7 +1015,7 @@ static struct ib_ucq_object *create_cq(struct ib_uverbs_file *file,
 	cq->uobject       = &obj->uobject;
 	cq->comp_handler  = ib_uverbs_comp_handler;
 	cq->event_handler = ib_uverbs_cq_event_handler;
-	cq->cq_context    = &ev_file->ev_file;
+	cq->cq_context    = &ev_file->ev_queue;
 	atomic_set(&cq->usecnt, 0);
 
 	obj->uobject.object = cq;
@@ -1296,7 +1296,7 @@ ssize_t ib_uverbs_destroy_cq(struct ib_uverbs_file *file,
 	struct ib_uobject		*uobj;
 	struct ib_cq               	*cq;
 	struct ib_ucq_object        	*obj;
-	struct ib_uverbs_event_file	*ev_file;
+	struct ib_uverbs_event_queue	*ev_queue;
 	int                        	 ret = -EINVAL;
 
 	if (copy_from_user(&cmd, buf, sizeof cmd))
@@ -1313,7 +1313,7 @@ ssize_t ib_uverbs_destroy_cq(struct ib_uverbs_file *file,
 	 */
 	uverbs_uobject_get(uobj);
 	cq      = uobj->object;
-	ev_file = cq->cq_context;
+	ev_queue = cq->cq_context;
 	obj     = container_of(cq->uobject, struct ib_ucq_object, uobject);
 
 	memset(&resp, 0, sizeof(resp));
@@ -1798,6 +1798,7 @@ ssize_t ib_uverbs_query_qp(struct ib_uverbs_file *file,
 	struct ib_qp                   *qp;
 	struct ib_qp_attr              *attr;
 	struct ib_qp_init_attr         *init_attr;
+	const struct ib_global_route   *grh;
 	int                            ret;
 
 	if (copy_from_user(&cmd, buf, sizeof cmd))
@@ -1847,29 +1848,39 @@ ssize_t ib_uverbs_query_qp(struct ib_uverbs_file *file,
 	resp.alt_port_num           = attr->alt_port_num;
 	resp.alt_timeout            = attr->alt_timeout;
 
-	memcpy(resp.dest.dgid, attr->ah_attr.grh.dgid.raw, 16);
-	resp.dest.flow_label        = attr->ah_attr.grh.flow_label;
-	resp.dest.sgid_index        = attr->ah_attr.grh.sgid_index;
-	resp.dest.hop_limit         = attr->ah_attr.grh.hop_limit;
-	resp.dest.traffic_class     = attr->ah_attr.grh.traffic_class;
-	resp.dest.dlid              = attr->ah_attr.dlid;
-	resp.dest.sl                = attr->ah_attr.sl;
-	resp.dest.src_path_bits     = attr->ah_attr.src_path_bits;
-	resp.dest.static_rate       = attr->ah_attr.static_rate;
-	resp.dest.is_global         = !!(attr->ah_attr.ah_flags & IB_AH_GRH);
-	resp.dest.port_num          = attr->ah_attr.port_num;
+	resp.dest.dlid              = rdma_ah_get_dlid(&attr->ah_attr);
+	resp.dest.sl                = rdma_ah_get_sl(&attr->ah_attr);
+	resp.dest.src_path_bits     = rdma_ah_get_path_bits(&attr->ah_attr);
+	resp.dest.static_rate       = rdma_ah_get_static_rate(&attr->ah_attr);
+	resp.dest.is_global         = !!(rdma_ah_get_ah_flags(&attr->ah_attr) &
+					 IB_AH_GRH);
+	if (resp.dest.is_global) {
+		grh = rdma_ah_read_grh(&attr->ah_attr);
+		memcpy(resp.dest.dgid, grh->dgid.raw, 16);
+		resp.dest.flow_label        = grh->flow_label;
+		resp.dest.sgid_index        = grh->sgid_index;
+		resp.dest.hop_limit         = grh->hop_limit;
+		resp.dest.traffic_class     = grh->traffic_class;
+	}
+	resp.dest.port_num          = rdma_ah_get_port_num(&attr->ah_attr);
 
-	memcpy(resp.alt_dest.dgid, attr->alt_ah_attr.grh.dgid.raw, 16);
-	resp.alt_dest.flow_label    = attr->alt_ah_attr.grh.flow_label;
-	resp.alt_dest.sgid_index    = attr->alt_ah_attr.grh.sgid_index;
-	resp.alt_dest.hop_limit     = attr->alt_ah_attr.grh.hop_limit;
-	resp.alt_dest.traffic_class = attr->alt_ah_attr.grh.traffic_class;
-	resp.alt_dest.dlid          = attr->alt_ah_attr.dlid;
-	resp.alt_dest.sl            = attr->alt_ah_attr.sl;
-	resp.alt_dest.src_path_bits = attr->alt_ah_attr.src_path_bits;
-	resp.alt_dest.static_rate   = attr->alt_ah_attr.static_rate;
-	resp.alt_dest.is_global     = !!(attr->alt_ah_attr.ah_flags & IB_AH_GRH);
-	resp.alt_dest.port_num      = attr->alt_ah_attr.port_num;
+	resp.alt_dest.dlid          = rdma_ah_get_dlid(&attr->alt_ah_attr);
+	resp.alt_dest.sl            = rdma_ah_get_sl(&attr->alt_ah_attr);
+	resp.alt_dest.src_path_bits = rdma_ah_get_path_bits(&attr->alt_ah_attr);
+	resp.alt_dest.static_rate
+			= rdma_ah_get_static_rate(&attr->alt_ah_attr);
+	resp.alt_dest.is_global
+			= !!(rdma_ah_get_ah_flags(&attr->alt_ah_attr) &
+						  IB_AH_GRH);
+	if (resp.alt_dest.is_global) {
+		grh = rdma_ah_read_grh(&attr->alt_ah_attr);
+		memcpy(resp.alt_dest.dgid, grh->dgid.raw, 16);
+		resp.alt_dest.flow_label    = grh->flow_label;
+		resp.alt_dest.sgid_index    = grh->sgid_index;
+		resp.alt_dest.hop_limit     = grh->hop_limit;
+		resp.alt_dest.traffic_class = grh->traffic_class;
+	}
+	resp.alt_dest.port_num      = rdma_ah_get_port_num(&attr->alt_ah_attr);
 
 	resp.max_send_wr            = init_attr->cap.max_send_wr;
 	resp.max_recv_wr            = init_attr->cap.max_recv_wr;
@@ -1943,31 +1954,47 @@ static int modify_qp(struct ib_uverbs_file *file,
 	attr->alt_timeout	  = cmd->base.alt_timeout;
 	attr->rate_limit	  = cmd->rate_limit;
 
-	memcpy(attr->ah_attr.grh.dgid.raw, cmd->base.dest.dgid, 16);
-	attr->ah_attr.grh.flow_label	= cmd->base.dest.flow_label;
-	attr->ah_attr.grh.sgid_index	= cmd->base.dest.sgid_index;
-	attr->ah_attr.grh.hop_limit	= cmd->base.dest.hop_limit;
-	attr->ah_attr.grh.traffic_class	= cmd->base.dest.traffic_class;
-	attr->ah_attr.dlid		= cmd->base.dest.dlid;
-	attr->ah_attr.sl		= cmd->base.dest.sl;
-	attr->ah_attr.src_path_bits	= cmd->base.dest.src_path_bits;
-	attr->ah_attr.static_rate	= cmd->base.dest.static_rate;
-	attr->ah_attr.ah_flags		= cmd->base.dest.is_global ?
-					  IB_AH_GRH : 0;
-	attr->ah_attr.port_num		= cmd->base.dest.port_num;
+	attr->ah_attr.type = rdma_ah_find_type(qp->device,
+					       cmd->base.dest.port_num);
+	if (cmd->base.dest.is_global) {
+		rdma_ah_set_grh(&attr->ah_attr, NULL,
+				cmd->base.dest.flow_label,
+				cmd->base.dest.sgid_index,
+				cmd->base.dest.hop_limit,
+				cmd->base.dest.traffic_class);
+		rdma_ah_set_dgid_raw(&attr->ah_attr, cmd->base.dest.dgid);
+	} else {
+		rdma_ah_set_ah_flags(&attr->ah_attr, 0);
+	}
+	rdma_ah_set_dlid(&attr->ah_attr, cmd->base.dest.dlid);
+	rdma_ah_set_sl(&attr->ah_attr, cmd->base.dest.sl);
+	rdma_ah_set_path_bits(&attr->ah_attr, cmd->base.dest.src_path_bits);
+	rdma_ah_set_static_rate(&attr->ah_attr, cmd->base.dest.static_rate);
+	rdma_ah_set_port_num(&attr->ah_attr,
+			     cmd->base.dest.port_num);
 
-	memcpy(attr->alt_ah_attr.grh.dgid.raw, cmd->base.alt_dest.dgid, 16);
-	attr->alt_ah_attr.grh.flow_label    = cmd->base.alt_dest.flow_label;
-	attr->alt_ah_attr.grh.sgid_index    = cmd->base.alt_dest.sgid_index;
-	attr->alt_ah_attr.grh.hop_limit     = cmd->base.alt_dest.hop_limit;
-	attr->alt_ah_attr.grh.traffic_class = cmd->base.alt_dest.traffic_class;
-	attr->alt_ah_attr.dlid		    = cmd->base.alt_dest.dlid;
-	attr->alt_ah_attr.sl		    = cmd->base.alt_dest.sl;
-	attr->alt_ah_attr.src_path_bits	    = cmd->base.alt_dest.src_path_bits;
-	attr->alt_ah_attr.static_rate	    = cmd->base.alt_dest.static_rate;
-	attr->alt_ah_attr.ah_flags	    = cmd->base.alt_dest.is_global ?
-					      IB_AH_GRH : 0;
-	attr->alt_ah_attr.port_num	    = cmd->base.alt_dest.port_num;
+	attr->alt_ah_attr.type = rdma_ah_find_type(qp->device,
+						   cmd->base.dest.port_num);
+	if (cmd->base.alt_dest.is_global) {
+		rdma_ah_set_grh(&attr->alt_ah_attr, NULL,
+				cmd->base.alt_dest.flow_label,
+				cmd->base.alt_dest.sgid_index,
+				cmd->base.alt_dest.hop_limit,
+				cmd->base.alt_dest.traffic_class);
+		rdma_ah_set_dgid_raw(&attr->alt_ah_attr,
+				     cmd->base.alt_dest.dgid);
+	} else {
+		rdma_ah_set_ah_flags(&attr->alt_ah_attr, 0);
+	}
+
+	rdma_ah_set_dlid(&attr->alt_ah_attr, cmd->base.alt_dest.dlid);
+	rdma_ah_set_sl(&attr->alt_ah_attr, cmd->base.alt_dest.sl);
+	rdma_ah_set_path_bits(&attr->alt_ah_attr,
+			      cmd->base.alt_dest.src_path_bits);
+	rdma_ah_set_static_rate(&attr->alt_ah_attr,
+				cmd->base.alt_dest.static_rate);
+	rdma_ah_set_port_num(&attr->alt_ah_attr,
+			     cmd->base.alt_dest.port_num);
 
 	if (qp->real_qp == qp) {
 		if (cmd->base.attr_mask & IB_QP_AV) {
@@ -2104,9 +2131,13 @@ ssize_t ib_uverbs_destroy_qp(struct ib_uverbs_file *file,
 
 static void *alloc_wr(size_t wr_size, __u32 num_sge)
 {
+	if (num_sge >= (U32_MAX - ALIGN(wr_size, sizeof (struct ib_sge))) /
+		       sizeof (struct ib_sge))
+		return NULL;
+
 	return kmalloc(ALIGN(wr_size, sizeof (struct ib_sge)) +
 			 num_sge * sizeof (struct ib_sge), GFP_KERNEL);
-};
+}
 
 ssize_t ib_uverbs_post_send(struct ib_uverbs_file *file,
 			    struct ib_device *ib_dev,
@@ -2334,6 +2365,13 @@ static struct ib_recv_wr *ib_uverbs_unmarshall_recv(const char __user *buf,
 			goto err;
 		}
 
+		if (user_wr->num_sge >=
+		    (U32_MAX - ALIGN(sizeof *next, sizeof (struct ib_sge))) /
+		    sizeof (struct ib_sge)) {
+			ret = -EINVAL;
+			goto err;
+		}
+
 		next = kmalloc(ALIGN(sizeof *next, sizeof (struct ib_sge)) +
 			       user_wr->num_sge * sizeof (struct ib_sge),
 			       GFP_KERNEL);
@@ -2492,9 +2530,10 @@ ssize_t ib_uverbs_create_ah(struct ib_uverbs_file *file,
 	struct ib_uobject		*uobj;
 	struct ib_pd			*pd;
 	struct ib_ah			*ah;
-	struct ib_ah_attr		attr;
+	struct rdma_ah_attr		attr;
 	int ret;
 	struct ib_udata                   udata;
+	u8				*dmac;
 
 	if (out_len < sizeof resp)
 		return -ENOSPC;
@@ -2516,18 +2555,25 @@ ssize_t ib_uverbs_create_ah(struct ib_uverbs_file *file,
 		goto err;
 	}
 
-	attr.dlid 	       = cmd.attr.dlid;
-	attr.sl 	       = cmd.attr.sl;
-	attr.src_path_bits     = cmd.attr.src_path_bits;
-	attr.static_rate       = cmd.attr.static_rate;
-	attr.ah_flags          = cmd.attr.is_global ? IB_AH_GRH : 0;
-	attr.port_num 	       = cmd.attr.port_num;
-	attr.grh.flow_label    = cmd.attr.grh.flow_label;
-	attr.grh.sgid_index    = cmd.attr.grh.sgid_index;
-	attr.grh.hop_limit     = cmd.attr.grh.hop_limit;
-	attr.grh.traffic_class = cmd.attr.grh.traffic_class;
-	memset(&attr.dmac, 0, sizeof(attr.dmac));
-	memcpy(attr.grh.dgid.raw, cmd.attr.grh.dgid, 16);
+	attr.type = rdma_ah_find_type(ib_dev, cmd.attr.port_num);
+	rdma_ah_set_dlid(&attr, cmd.attr.dlid);
+	rdma_ah_set_sl(&attr, cmd.attr.sl);
+	rdma_ah_set_path_bits(&attr, cmd.attr.src_path_bits);
+	rdma_ah_set_static_rate(&attr, cmd.attr.static_rate);
+	rdma_ah_set_port_num(&attr, cmd.attr.port_num);
+
+	if (cmd.attr.is_global) {
+		rdma_ah_set_grh(&attr, NULL, cmd.attr.grh.flow_label,
+				cmd.attr.grh.sgid_index,
+				cmd.attr.grh.hop_limit,
+				cmd.attr.grh.traffic_class);
+		rdma_ah_set_dgid_raw(&attr, cmd.attr.grh.dgid);
+	} else {
+		rdma_ah_set_ah_flags(&attr, 0);
+	}
+	dmac = rdma_ah_retrieve_dmac(&attr);
+	if (dmac)
+		memset(dmac, 0, ETH_ALEN);
 
 	ah = pd->device->create_ah(pd, &attr, &udata);
 
@@ -2557,7 +2603,7 @@ ssize_t ib_uverbs_create_ah(struct ib_uverbs_file *file,
 	return in_len;
 
 err_copy:
-	ib_destroy_ah(ah);
+	rdma_destroy_ah(ah);
 
 err_put:
 	uobj_put_obj_read(pd);
@@ -2647,6 +2693,7 @@ ssize_t ib_uverbs_detach_mcast(struct ib_uverbs_file *file,
 	struct ib_qp                 *qp;
 	struct ib_uverbs_mcast_entry *mcast;
 	int                           ret = -EINVAL;
+	bool                          found = false;
 
 	if (copy_from_user(&cmd, buf, sizeof cmd))
 		return -EFAULT;
@@ -2658,17 +2705,21 @@ ssize_t ib_uverbs_detach_mcast(struct ib_uverbs_file *file,
 	obj = container_of(qp->uobject, struct ib_uqp_object, uevent.uobject);
 	mutex_lock(&obj->mcast_lock);
 
-	ret = ib_detach_mcast(qp, (union ib_gid *) cmd.gid, cmd.mlid);
-	if (ret)
-		goto out_put;
-
 	list_for_each_entry(mcast, &obj->mcast_list, list)
 		if (cmd.mlid == mcast->lid &&
 		    !memcmp(cmd.gid, mcast->gid.raw, sizeof mcast->gid.raw)) {
 			list_del(&mcast->list);
 			kfree(mcast);
+			found = true;
 			break;
 		}
+
+	if (!found) {
+		ret = -EINVAL;
+		goto out_put;
+	}
+
+	ret = ib_detach_mcast(qp, (union ib_gid *)cmd.gid, cmd.mlid);
 
 out_put:
 	mutex_unlock(&obj->mcast_lock);
@@ -2688,6 +2739,13 @@ static int kern_spec_to_ib_spec_action(struct ib_uverbs_flow_spec *kern_spec,
 
 		ib_spec->flow_tag.size = sizeof(struct ib_flow_spec_action_tag);
 		ib_spec->flow_tag.tag_id = kern_spec->flow_tag.tag_id;
+		break;
+	case IB_FLOW_SPEC_ACTION_DROP:
+		if (kern_spec->drop.size !=
+		    sizeof(struct ib_uverbs_flow_spec_action_drop))
+			return -EINVAL;
+
+		ib_spec->drop.size = sizeof(struct ib_flow_spec_action_drop);
 		break;
 	default:
 		return -EINVAL;
@@ -2989,18 +3047,12 @@ int ib_uverbs_ex_destroy_wq(struct ib_uverbs_file *file,
 	uverbs_uobject_get(uobj);
 
 	ret = uobj_remove_commit(uobj);
-	if (ret) {
-		uverbs_uobject_put(uobj);
-		return ret;
-	}
-
 	resp.events_reported = obj->uevent.events_reported;
 	uverbs_uobject_put(uobj);
-	ret = ib_copy_to_udata(ucore, &resp, resp.response_length);
 	if (ret)
 		return ret;
 
-	return 0;
+	return ib_copy_to_udata(ucore, &resp, resp.response_length);
 }
 
 int ib_uverbs_ex_modify_wq(struct ib_uverbs_file *file,

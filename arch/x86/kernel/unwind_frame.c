@@ -30,6 +30,8 @@ static void unwind_dump(struct unwind_state *state)
 	static bool dumped_before = false;
 	bool prev_zero, zero = false;
 	unsigned long word, *sp;
+	struct stack_info stack_info = {0};
+	unsigned long visit_mask = 0;
 
 	if (dumped_before)
 		return;
@@ -40,21 +42,27 @@ static void unwind_dump(struct unwind_state *state)
 			state->stack_info.type, state->stack_info.next_sp,
 			state->stack_mask, state->graph_idx);
 
-	for (sp = state->orig_sp; sp < state->stack_info.end; sp++) {
-		word = READ_ONCE_NOCHECK(*sp);
+	for (sp = state->orig_sp; sp; sp = PTR_ALIGN(stack_info.next_sp, sizeof(long))) {
+		if (get_stack_info(sp, state->task, &stack_info, &visit_mask))
+			break;
 
-		prev_zero = zero;
-		zero = word == 0;
+		for (; sp < stack_info.end; sp++) {
 
-		if (zero) {
-			if (!prev_zero)
-				printk_deferred("%p: %0*x ...\n",
-						sp, BITS_PER_LONG/4, 0);
-			continue;
+			word = READ_ONCE_NOCHECK(*sp);
+
+			prev_zero = zero;
+			zero = word == 0;
+
+			if (zero) {
+				if (!prev_zero)
+					printk_deferred("%p: %0*x ...\n",
+							sp, BITS_PER_LONG/4, 0);
+				continue;
+			}
+
+			printk_deferred("%p: %0*lx (%pB)\n",
+					sp, BITS_PER_LONG/4, word, (void *)word);
 		}
-
-		printk_deferred("%p: %0*lx (%pB)\n",
-				sp, BITS_PER_LONG/4, word, (void *)word);
 	}
 }
 
@@ -91,16 +99,26 @@ static bool in_entry_code(unsigned long ip)
 	return false;
 }
 
+static inline unsigned long *last_frame(struct unwind_state *state)
+{
+	return (unsigned long *)task_pt_regs(state->task) - 2;
+}
+
 #ifdef CONFIG_X86_32
 #define GCC_REALIGN_WORDS 3
 #else
 #define GCC_REALIGN_WORDS 1
 #endif
 
+static inline unsigned long *last_aligned_frame(struct unwind_state *state)
+{
+	return last_frame(state) - GCC_REALIGN_WORDS;
+}
+
 static bool is_last_task_frame(struct unwind_state *state)
 {
-	unsigned long *last_bp = (unsigned long *)task_pt_regs(state->task) - 2;
-	unsigned long *aligned_bp = last_bp - GCC_REALIGN_WORDS;
+	unsigned long *last_bp = last_frame(state);
+	unsigned long *aligned_bp = last_aligned_frame(state);
 
 	/*
 	 * We have to check for the last task frame at two different locations
@@ -206,7 +224,7 @@ static bool update_stack_state(struct unwind_state *state,
 	}
 
 	/* Save the original stack pointer for unwind_dump(): */
-	if (!state->orig_sp || info->type != prev_type)
+	if (!state->orig_sp)
 		state->orig_sp = frame;
 
 	return true;
@@ -279,9 +297,13 @@ bad_address:
 
 	/*
 	 * Don't warn if the unwinder got lost due to an interrupt in entry
-	 * code before the stack was set up:
+	 * code or in the C handler before the first frame pointer got set up:
 	 */
 	if (state->got_irq && in_entry_code(state->ip))
+		goto the_end;
+	if (state->regs &&
+	    state->regs->sp >= (unsigned long)last_aligned_frame(state) &&
+	    state->regs->sp < (unsigned long)task_pt_regs(state->task))
 		goto the_end;
 
 	if (state->regs) {

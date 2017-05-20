@@ -418,7 +418,22 @@ int cpus_are_in_xmon(void)
 {
 	return !cpumask_empty(&cpus_in_xmon);
 }
-#endif
+
+static bool wait_for_other_cpus(int ncpus)
+{
+	unsigned long timeout;
+
+	/* We wait for 2s, which is a metric "little while" */
+	for (timeout = 20000; timeout != 0; --timeout) {
+		if (cpumask_weight(&cpus_in_xmon) >= ncpus)
+			return true;
+		udelay(100);
+		barrier();
+	}
+
+	return false;
+}
+#endif /* CONFIG_SMP */
 
 static inline int unrecoverable_excp(struct pt_regs *regs)
 {
@@ -440,7 +455,6 @@ static int xmon_core(struct pt_regs *regs, int fromipi)
 #ifdef CONFIG_SMP
 	int cpu;
 	int secondary;
-	unsigned long timeout;
 #endif
 
 	local_irq_save(flags);
@@ -527,13 +541,17 @@ static int xmon_core(struct pt_regs *regs, int fromipi)
 		xmon_owner = cpu;
 		mb();
 		if (ncpus > 1) {
-			smp_send_debugger_break();
-			/* wait for other cpus to come in */
-			for (timeout = 100000000; timeout != 0; --timeout) {
-				if (cpumask_weight(&cpus_in_xmon) >= ncpus)
-					break;
-				barrier();
-			}
+			/*
+			 * A system reset (trap == 0x100) can be triggered on
+			 * all CPUs, so when we come in via 0x100 try waiting
+			 * for the other CPUs to come in before we send the
+			 * debugger break (IPI). This is similar to
+			 * crash_kexec_secondary().
+			 */
+			if (TRAP(regs) != 0x100 || !wait_for_other_cpus(ncpus))
+				smp_send_debugger_break();
+
+			wait_for_other_cpus(ncpus);
 		}
 		remove_bpts();
 		disable_surveillance();
@@ -1351,9 +1369,19 @@ const char *getvecname(unsigned long vec)
 	case 0x100:	ret = "(System Reset)"; break;
 	case 0x200:	ret = "(Machine Check)"; break;
 	case 0x300:	ret = "(Data Access)"; break;
-	case 0x380:	ret = "(Data SLB Access)"; break;
+	case 0x380:
+		if (radix_enabled())
+			ret = "(Data Access Out of Range)";
+		else
+			ret = "(Data SLB Access)";
+		break;
 	case 0x400:	ret = "(Instruction Access)"; break;
-	case 0x480:	ret = "(Instruction SLB Access)"; break;
+	case 0x480:
+		if (radix_enabled())
+			ret = "(Instruction Access Out of Range)";
+		else
+			ret = "(Instruction SLB Access)";
+		break;
 	case 0x500:	ret = "(Hardware Interrupt)"; break;
 	case 0x600:	ret = "(Alignment)"; break;
 	case 0x700:	ret = "(Program Check)"; break;
@@ -2235,7 +2263,9 @@ static void dump_one_paca(int cpu)
 	DUMP(p, kernel_msr, "lx");
 	DUMP(p, emergency_sp, "p");
 #ifdef CONFIG_PPC_BOOK3S_64
+	DUMP(p, nmi_emergency_sp, "p");
 	DUMP(p, mc_emergency_sp, "p");
+	DUMP(p, in_nmi, "x");
 	DUMP(p, in_mce, "x");
 	DUMP(p, hmi_event_available, "x");
 #endif
@@ -3157,23 +3187,28 @@ void dump_segments(void)
 	for (i = 0; i < mmu_slb_size; i++) {
 		asm volatile("slbmfee  %0,%1" : "=r" (esid) : "r" (i));
 		asm volatile("slbmfev  %0,%1" : "=r" (vsid) : "r" (i));
-		if (esid || vsid) {
-			printf("%02d %016lx %016lx", i, esid, vsid);
-			if (esid & SLB_ESID_V) {
-				llp = vsid & SLB_VSID_LLP;
-				if (vsid & SLB_VSID_B_1T) {
-					printf("  1T  ESID=%9lx  VSID=%13lx LLP:%3lx \n",
-						GET_ESID_1T(esid),
-						(vsid & ~SLB_VSID_B) >> SLB_VSID_SHIFT_1T,
-						llp);
-				} else {
-					printf(" 256M ESID=%9lx  VSID=%13lx LLP:%3lx \n",
-						GET_ESID(esid),
-						(vsid & ~SLB_VSID_B) >> SLB_VSID_SHIFT,
-						llp);
-				}
-			} else
-				printf("\n");
+
+		if (!esid && !vsid)
+			continue;
+
+		printf("%02d %016lx %016lx", i, esid, vsid);
+
+		if (!(esid & SLB_ESID_V)) {
+			printf("\n");
+			continue;
+		}
+
+		llp = vsid & SLB_VSID_LLP;
+		if (vsid & SLB_VSID_B_1T) {
+			printf("  1T  ESID=%9lx  VSID=%13lx LLP:%3lx \n",
+				GET_ESID_1T(esid),
+				(vsid & ~SLB_VSID_B) >> SLB_VSID_SHIFT_1T,
+				llp);
+		} else {
+			printf(" 256M ESID=%9lx  VSID=%13lx LLP:%3lx \n",
+				GET_ESID(esid),
+				(vsid & ~SLB_VSID_B) >> SLB_VSID_SHIFT,
+				llp);
 		}
 	}
 }

@@ -17,7 +17,6 @@
 #include <linux/workqueue.h>
 #include <linux/module.h>
 #include <linux/if_bridge.h>
-#include <net/switchdev.h>
 #include <net/dsa.h>
 
 #include "dsa_loop.h"
@@ -188,7 +187,7 @@ static int dsa_loop_port_vlan_del(struct dsa_switch *ds, int port,
 
 static int dsa_loop_port_vlan_dump(struct dsa_switch *ds, int port,
 				   struct switchdev_obj_port_vlan *vlan,
-				   int (*cb)(struct switchdev_obj *obj))
+				   switchdev_obj_dump_cb_t *cb)
 {
 	struct dsa_loop_priv *ps = ds->priv;
 	struct mii_bus *bus = ps->bus;
@@ -256,6 +255,9 @@ static int dsa_loop_drv_probe(struct mdio_device *mdiodev)
 		return -ENOMEM;
 
 	ps = devm_kzalloc(&mdiodev->dev, sizeof(*ps), GFP_KERNEL);
+	if (!ps)
+		return -ENOMEM;
+
 	ps->netdev = dev_get_by_name(&init_net, pdata->netdev);
 	if (!ps->netdev)
 		return -EPROBE_DEFER;

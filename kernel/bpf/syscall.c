@@ -535,14 +535,18 @@ static int map_get_next_key(union bpf_attr *attr)
 	if (IS_ERR(map))
 		return PTR_ERR(map);
 
-	err = -ENOMEM;
-	key = kmalloc(map->key_size, GFP_USER);
-	if (!key)
-		goto err_put;
+	if (ukey) {
+		err = -ENOMEM;
+		key = kmalloc(map->key_size, GFP_USER);
+		if (!key)
+			goto err_put;
 
-	err = -EFAULT;
-	if (copy_from_user(key, ukey, map->key_size) != 0)
-		goto free_key;
+		err = -EFAULT;
+		if (copy_from_user(key, ukey, map->key_size) != 0)
+			goto free_key;
+	} else {
+		key = NULL;
+	}
 
 	err = -ENOMEM;
 	next_key = kmalloc(map->key_size, GFP_USER);
@@ -779,7 +783,7 @@ struct bpf_prog *bpf_prog_get_type(u32 ufd, enum bpf_prog_type type)
 EXPORT_SYMBOL_GPL(bpf_prog_get_type);
 
 /* last field in 'union bpf_attr' used by this command */
-#define	BPF_PROG_LOAD_LAST_FIELD kern_version
+#define	BPF_PROG_LOAD_LAST_FIELD prog_flags
 
 static int bpf_prog_load(union bpf_attr *attr)
 {
@@ -790,6 +794,9 @@ static int bpf_prog_load(union bpf_attr *attr)
 	bool is_gpl;
 
 	if (CHECK_ATTR(BPF_PROG_LOAD))
+		return -EINVAL;
+
+	if (attr->prog_flags & ~BPF_F_STRICT_ALIGNMENT)
 		return -EINVAL;
 
 	/* copy eBPF program license from user space */

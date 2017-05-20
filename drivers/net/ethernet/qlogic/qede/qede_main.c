@@ -231,6 +231,7 @@ static struct qed_eth_cb_ops qede_ll_ops = {
 		.link_update = qede_link_update,
 	},
 	.force_mac = qede_force_mac,
+	.ports_update = qede_udp_ports_update,
 };
 
 static int qede_netdev_event(struct notifier_block *this, unsigned long event,
@@ -562,6 +563,23 @@ static const struct net_device_ops qede_netdev_ops = {
 #endif
 };
 
+static const struct net_device_ops qede_netdev_vf_ops = {
+	.ndo_open = qede_open,
+	.ndo_stop = qede_close,
+	.ndo_start_xmit = qede_start_xmit,
+	.ndo_set_rx_mode = qede_set_rx_mode,
+	.ndo_set_mac_address = qede_set_mac_addr,
+	.ndo_validate_addr = eth_validate_addr,
+	.ndo_change_mtu = qede_change_mtu,
+	.ndo_vlan_rx_add_vid = qede_vlan_rx_add_vid,
+	.ndo_vlan_rx_kill_vid = qede_vlan_rx_kill_vid,
+	.ndo_set_features = qede_set_features,
+	.ndo_get_stats64 = qede_get_stats64,
+	.ndo_udp_tunnel_add = qede_udp_tunnel_add,
+	.ndo_udp_tunnel_del = qede_udp_tunnel_del,
+	.ndo_features_check = qede_features_check,
+};
+
 /* -------------------------------------------------------------------------
  * START OF PROBE / REMOVE
  * -------------------------------------------------------------------------
@@ -609,6 +627,7 @@ static void qede_init_ndev(struct qede_dev *edev)
 {
 	struct net_device *ndev = edev->ndev;
 	struct pci_dev *pdev = edev->pdev;
+	bool udp_tunnel_enable = false;
 	netdev_features_t hw_features;
 
 	pci_set_drvdata(pdev, ndev);
@@ -620,7 +639,10 @@ static void qede_init_ndev(struct qede_dev *edev)
 
 	ndev->watchdog_timeo = TX_TIMEOUT;
 
-	ndev->netdev_ops = &qede_netdev_ops;
+	if (IS_VF(edev))
+		ndev->netdev_ops = &qede_netdev_vf_ops;
+	else
+		ndev->netdev_ops = &qede_netdev_ops;
 
 	qede_set_ethtool_ops(ndev);
 
@@ -631,20 +653,33 @@ static void qede_init_ndev(struct qede_dev *edev)
 		      NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
 		      NETIF_F_TSO | NETIF_F_TSO6;
 
-	/* Encap features*/
-	hw_features |= NETIF_F_GSO_GRE | NETIF_F_GSO_UDP_TUNNEL |
-		       NETIF_F_TSO_ECN | NETIF_F_GSO_UDP_TUNNEL_CSUM |
-		       NETIF_F_GSO_GRE_CSUM;
-
 	if (!IS_VF(edev) && edev->dev_info.common.num_hwfns == 1)
 		hw_features |= NETIF_F_NTUPLE;
 
-	ndev->hw_enc_features = NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
-				NETIF_F_SG | NETIF_F_TSO | NETIF_F_TSO_ECN |
-				NETIF_F_TSO6 | NETIF_F_GSO_GRE |
-				NETIF_F_GSO_UDP_TUNNEL | NETIF_F_RXCSUM |
-				NETIF_F_GSO_UDP_TUNNEL_CSUM |
-				NETIF_F_GSO_GRE_CSUM;
+	if (edev->dev_info.common.vxlan_enable ||
+	    edev->dev_info.common.geneve_enable)
+		udp_tunnel_enable = true;
+
+	if (udp_tunnel_enable || edev->dev_info.common.gre_enable) {
+		hw_features |= NETIF_F_TSO_ECN;
+		ndev->hw_enc_features = NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
+					NETIF_F_SG | NETIF_F_TSO |
+					NETIF_F_TSO_ECN | NETIF_F_TSO6 |
+					NETIF_F_RXCSUM;
+	}
+
+	if (udp_tunnel_enable) {
+		hw_features |= (NETIF_F_GSO_UDP_TUNNEL |
+				NETIF_F_GSO_UDP_TUNNEL_CSUM);
+		ndev->hw_enc_features |= (NETIF_F_GSO_UDP_TUNNEL |
+					  NETIF_F_GSO_UDP_TUNNEL_CSUM);
+	}
+
+	if (edev->dev_info.common.gre_enable) {
+		hw_features |= (NETIF_F_GSO_GRE | NETIF_F_GSO_GRE_CSUM);
+		ndev->hw_enc_features |= (NETIF_F_GSO_GRE |
+					  NETIF_F_GSO_GRE_CSUM);
+	}
 
 	ndev->vlan_features = hw_features | NETIF_F_RXHASH | NETIF_F_RXCSUM |
 			      NETIF_F_HIGHDMA;
@@ -782,31 +817,12 @@ static void qede_sp_task(struct work_struct *work)
 {
 	struct qede_dev *edev = container_of(work, struct qede_dev,
 					     sp_task.work);
-	struct qed_dev *cdev = edev->cdev;
 
 	__qede_lock(edev);
 
 	if (test_and_clear_bit(QEDE_SP_RX_MODE, &edev->sp_flags))
 		if (edev->state == QEDE_STATE_OPEN)
 			qede_config_rx_mode(edev->ndev);
-
-	if (test_and_clear_bit(QEDE_SP_VXLAN_PORT_CONFIG, &edev->sp_flags)) {
-		struct qed_tunn_params tunn_params;
-
-		memset(&tunn_params, 0, sizeof(tunn_params));
-		tunn_params.update_vxlan_port = 1;
-		tunn_params.vxlan_port = edev->vxlan_dst_port;
-		qed_ops->tunn_config(cdev, &tunn_params);
-	}
-
-	if (test_and_clear_bit(QEDE_SP_GENEVE_PORT_CONFIG, &edev->sp_flags)) {
-		struct qed_tunn_params tunn_params;
-
-		memset(&tunn_params, 0, sizeof(tunn_params));
-		tunn_params.update_geneve_port = 1;
-		tunn_params.geneve_port = edev->geneve_dst_port;
-		qed_ops->tunn_config(cdev, &tunn_params);
-	}
 
 #ifdef CONFIG_RFS_ACCEL
 	if (test_and_clear_bit(QEDE_SP_ARFS_CONFIG, &edev->sp_flags)) {
@@ -911,13 +927,8 @@ static int __qede_probe(struct pci_dev *pdev, u32 dp_module, u8 dp_level,
 	edev->ops->common->set_id(cdev, edev->ndev->name, DRV_MODULE_VERSION);
 
 	/* PTP not supported on VFs */
-	if (!is_vf) {
-		rc = qede_ptp_register_phc(edev);
-		if (rc) {
-			DP_NOTICE(edev, "Cannot register PHC\n");
-			goto err5;
-		}
-	}
+	if (!is_vf)
+		qede_ptp_enable(edev, true);
 
 	edev->ops->register_ops(cdev, &qede_ll_ops, edev);
 
@@ -932,8 +943,6 @@ static int __qede_probe(struct pci_dev *pdev, u32 dp_module, u8 dp_level,
 
 	return 0;
 
-err5:
-	unregister_netdev(edev->ndev);
 err4:
 	qede_roce_dev_remove(edev);
 err3:
@@ -984,7 +993,7 @@ static void __qede_remove(struct pci_dev *pdev, enum qede_remove_mode mode)
 	unregister_netdev(ndev);
 	cancel_delayed_work_sync(&edev->sp_task);
 
-	qede_ptp_remove(edev);
+	qede_ptp_disable(edev);
 
 	qede_roce_dev_remove(edev);
 
@@ -1323,6 +1332,9 @@ static void qede_free_mem_fp(struct qede_dev *edev, struct qede_fastpath *fp)
 
 	if (fp->type & QEDE_FASTPATH_RX)
 		qede_free_mem_rxq(edev, fp->rxq);
+
+	if (fp->type & QEDE_FASTPATH_XDP)
+		qede_free_mem_txq(edev, fp->xdp_tx);
 
 	if (fp->type & QEDE_FASTPATH_TX)
 		qede_free_mem_txq(edev, fp->txq);
@@ -1881,8 +1893,6 @@ static void qede_unload(struct qede_dev *edev, enum qede_unload_mode mode,
 	qede_roce_dev_event_close(edev);
 	edev->state = QEDE_STATE_CLOSED;
 
-	qede_ptp_stop(edev);
-
 	/* Close OS Tx */
 	netif_tx_disable(edev->ndev);
 	netif_carrier_off(edev->ndev);
@@ -1991,12 +2001,9 @@ static int qede_load(struct qede_dev *edev, enum qede_load_mode mode,
 
 	qede_roce_dev_event_open(edev);
 
-	qede_ptp_start(edev, (mode == QEDE_LOAD_NORMAL));
-
 	edev->state = QEDE_STATE_OPEN;
 
 	DP_INFO(edev, "Ending successfully qede load\n");
-
 
 	goto out;
 err4:

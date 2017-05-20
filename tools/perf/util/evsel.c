@@ -16,10 +16,12 @@
 #include <linux/hw_breakpoint.h>
 #include <linux/perf_event.h>
 #include <linux/err.h>
+#include <sys/ioctl.h>
 #include <sys/resource.h>
 #include "asm/bug.h"
 #include "callchain.h"
 #include "cgroup.h"
+#include "event.h"
 #include "evsel.h"
 #include "evlist.h"
 #include "util.h"

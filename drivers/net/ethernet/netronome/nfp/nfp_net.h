@@ -102,6 +102,7 @@
 #define NFP_NET_RX_DESCS_DEFAULT 4096	/* Default # of Rx descs per ring */
 
 #define NFP_NET_FL_BATCH	16	/* Add freelist in this Batch size */
+#define NFP_NET_XDP_MAX_COMPLETE 2048	/* XDP bufs to reclaim in NAPI poll */
 
 /* Offload definitions */
 #define NFP_NET_N_VXLAN_PORTS	(NFP_NET_CFG_VXLAN_SZ / sizeof(__be16))
@@ -115,6 +116,9 @@ struct nfp_cpp;
 struct nfp_eth_table_port;
 struct nfp_net;
 struct nfp_net_r_vector;
+
+/* Convenience macro for wrapping descriptor index on ring size */
+#define D_IDX(ring, idx)	((idx) & ((ring)->cnt - 1))
 
 /* Convenience macro for writing dma address into RX/TX descriptors */
 #define nfp_desc_set_dma_addr(desc, dma_addr)				\
@@ -153,10 +157,15 @@ struct nfp_net_tx_desc {
 			__le32 dma_addr_lo; /* Low 32bit of host buf addr */
 
 			__le16 mss;	/* MSS to be used for LSO */
-			u8 l4_offset;	/* LSO, where the L4 data starts */
+			u8 lso_hdrlen;	/* LSO, TCP payload offset */
 			u8 flags;	/* TX Flags, see @PCIE_DESC_TX_* */
-
-			__le16 vlan;	/* VLAN tag to add if indicated */
+			union {
+				struct {
+					u8 l3_offset; /* L3 header offset */
+					u8 l4_offset; /* L4 header offset */
+				};
+				__le16 vlan; /* VLAN tag to add if indicated */
+			};
 			__le16 data_len; /* Length of frame + meta data */
 		} __packed;
 		__le32 vals[4];
@@ -201,6 +210,7 @@ struct nfp_net_tx_buf {
  * @txds:       Virtual address of TX ring in host memory
  * @dma:        DMA address of the TX ring
  * @size:       Size, in bytes, of the TX ring (needed to free)
+ * @is_xdp:	Is this a XDP TX ring?
  */
 struct nfp_net_tx_ring {
 	struct nfp_net_r_vector *r_vec;
@@ -221,6 +231,7 @@ struct nfp_net_tx_ring {
 
 	dma_addr_t dma;
 	unsigned int size;
+	bool is_xdp;
 } ____cacheline_aligned;
 
 /* RX and freelist descriptor format */
@@ -283,6 +294,14 @@ struct nfp_net_rx_desc {
 };
 
 #define NFP_NET_META_FIELD_MASK GENMASK(NFP_NET_META_FIELD_SIZE - 1, 0)
+
+struct nfp_meta_parsed {
+	u8 hash_type;
+	u8 csum_type;
+	u32 hash;
+	u32 mark;
+	__wsum csum;
+};
 
 struct nfp_net_rx_hash {
 	__be32 hash_type;
@@ -462,9 +481,9 @@ struct nfp_net_dp {
 	u8 chained_metadata_format:1;
 
 	u8 rx_dma_dir;
-	u8 rx_dma_off;
-
 	u8 rx_offset;
+
+	u32 rx_dma_off;
 
 	u32 ctrl;
 	u32 fl_bufsz;
@@ -810,10 +829,12 @@ nfp_net_irqs_assign(struct nfp_net *nn, struct msix_entry *irq_entries,
 		    unsigned int n);
 
 struct nfp_net_dp *nfp_net_clone_dp(struct nfp_net *nn);
-int nfp_net_ring_reconfig(struct nfp_net *nn, struct nfp_net_dp *new);
+int nfp_net_ring_reconfig(struct nfp_net *nn, struct nfp_net_dp *new,
+			  struct netlink_ext_ack *extack);
 
 bool nfp_net_link_changed_read_clear(struct nfp_net *nn);
-void nfp_net_refresh_port_config(struct nfp_net *nn);
+int nfp_net_refresh_eth_port(struct nfp_net *nn);
+void nfp_net_refresh_port_table(struct nfp_net *nn);
 
 #ifdef CONFIG_NFP_DEBUG
 void nfp_net_debugfs_create(void);

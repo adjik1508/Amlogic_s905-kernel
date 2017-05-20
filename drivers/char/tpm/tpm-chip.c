@@ -191,9 +191,10 @@ struct tpm_chip *tpm_chip_alloc(struct device *pdev,
 	/* get extra reference on main device to hold on
 	 * behalf of devs.  This holds the chip structure
 	 * while cdevs is in use.  The corresponding put
-	 * is in the tpm_devs_release
+	 * is in the tpm_devs_release (TPM2 only)
 	 */
-	get_device(&chip->dev);
+	if (chip->flags & TPM_CHIP_FLAG_TPM2)
+		get_device(&chip->dev);
 
 	if (chip->dev_num == 0)
 		chip->dev.devt = MKDEV(MISC_MAJOR, TPM_MINOR);
@@ -281,14 +282,15 @@ static int tpm_add_char_device(struct tpm_chip *chip)
 		return rc;
 	}
 
-	if (chip->flags & TPM_CHIP_FLAG_TPM2)
+	if (chip->flags & TPM_CHIP_FLAG_TPM2) {
 		rc = cdev_device_add(&chip->cdevs, &chip->devs);
-	if (rc) {
-		dev_err(&chip->dev,
-			"unable to cdev_device_add() %s, major %d, minor %d, err=%d\n",
-			dev_name(&chip->devs), MAJOR(chip->devs.devt),
-			MINOR(chip->devs.devt), rc);
-		return rc;
+		if (rc) {
+			dev_err(&chip->devs,
+				"unable to cdev_device_add() %s, major %d, minor %d, err=%d\n",
+				dev_name(&chip->devs), MAJOR(chip->devs.devt),
+				MINOR(chip->devs.devt), rc);
+			return rc;
+		}
 	}
 
 	/* Make the chip available. */

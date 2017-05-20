@@ -90,6 +90,7 @@ void devm_memunmap(struct device *dev, void *addr);
 
 void *__devm_memremap_pages(struct device *dev, struct resource *res);
 
+#ifdef CONFIG_PCI
 /*
  * The PCI specifications (Rev 3.0, 3.2.5 "Transaction Ordering and
  * Posting") mandate non-posted configuration transactions. There is
@@ -107,6 +108,7 @@ static inline void __iomem *pci_remap_cfgspace(phys_addr_t offset,
 {
 	return ioremap_nocache(offset, size);
 }
+#endif
 #endif
 
 /*

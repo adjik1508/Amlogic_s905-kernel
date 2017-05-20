@@ -138,7 +138,7 @@ static struct spk_synth synth_dtlk = {
 	.is_alive = spk_synth_is_alive_nop,
 	.synth_adjust = NULL,
 	.read_buff_add = NULL,
-	.get_index = spk_serial_in_nowait,
+	.get_index = spk_synth_get_index,
 	.indexing = {
 		.command = "\x01%di",
 		.lowindex = 1,
@@ -382,7 +382,7 @@ static void dtlk_release(void)
 	speakup_info.port_tts = 0;
 }
 
-module_param_named(port, port_forced, int, 0444);
+module_param_hw_named(port, port_forced, int, ioport, 0444);
 module_param_named(start, synth_dtlk.startup, short, 0444);
 
 MODULE_PARM_DESC(port, "Set the port for the synthesizer (override probing).");

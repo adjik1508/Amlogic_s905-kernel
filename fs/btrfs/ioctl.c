@@ -1127,10 +1127,8 @@ static int cluster_pages_for_defrag(struct inode *inode,
 	struct btrfs_ordered_extent *ordered;
 	struct extent_state *cached_state = NULL;
 	struct extent_io_tree *tree;
-	struct extent_changeset data_reserved;
+	struct extent_changeset *data_reserved = NULL;
 	gfp_t mask = btrfs_alloc_write_mask(inode->i_mapping);
-
-	extent_changeset_init(&data_reserved);
 
 	file_end = (isize - 1) >> PAGE_SHIFT;
 	if (!isize || start_index > file_end)
@@ -1229,7 +1227,7 @@ again:
 		spin_lock(&BTRFS_I(inode)->lock);
 		BTRFS_I(inode)->outstanding_extents++;
 		spin_unlock(&BTRFS_I(inode)->lock);
-		btrfs_delalloc_release_space(inode, &data_reserved,
+		btrfs_delalloc_release_space(inode, data_reserved,
 				start_index << PAGE_SHIFT,
 				(page_cnt - i_done) << PAGE_SHIFT);
 	}
@@ -1250,17 +1248,17 @@ again:
 		unlock_page(pages[i]);
 		put_page(pages[i]);
 	}
-	extent_changeset_release(&data_reserved);
+	extent_changeset_free(data_reserved);
 	return i_done;
 out:
 	for (i = 0; i < i_done; i++) {
 		unlock_page(pages[i]);
 		put_page(pages[i]);
 	}
-	btrfs_delalloc_release_space(inode, &data_reserved,
+	btrfs_delalloc_release_space(inode, data_reserved,
 			start_index << PAGE_SHIFT,
 			page_cnt << PAGE_SHIFT);
-	extent_changeset_release(&data_reserved);
+	extent_changeset_free(data_reserved);
 	return ret;
 
 }
@@ -4902,7 +4900,6 @@ static long btrfs_ioctl_qgroup_assign(struct file *file, void __user *arg)
 		goto out;
 	}
 
-	/* FIXME: check if the IDs really exist */
 	if (sa->assign) {
 		ret = btrfs_add_qgroup_relation(trans, fs_info,
 						sa->src, sa->dst);
@@ -4961,7 +4958,6 @@ static long btrfs_ioctl_qgroup_create(struct file *file, void __user *arg)
 		goto out;
 	}
 
-	/* FIXME: check if the IDs really exist */
 	if (sa->create) {
 		ret = btrfs_create_qgroup(trans, fs_info, sa->qgroupid);
 	} else {
@@ -5015,7 +5011,6 @@ static long btrfs_ioctl_qgroup_limit(struct file *file, void __user *arg)
 		qgroupid = root->root_key.objectid;
 	}
 
-	/* FIXME: check if the IDs really exist */
 	ret = btrfs_limit_qgroup(trans, fs_info, qgroupid, &sa->lim);
 
 	err = btrfs_end_transaction(trans);

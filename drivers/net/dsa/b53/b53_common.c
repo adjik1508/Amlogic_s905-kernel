@@ -29,7 +29,6 @@
 #include <linux/etherdevice.h>
 #include <linux/if_bridge.h>
 #include <net/dsa.h>
-#include <net/switchdev.h>
 
 #include "b53_regs.h"
 #include "b53_priv.h"
@@ -326,6 +325,7 @@ static void b53_get_vlan_entry(struct b53_device *dev, u16 vid,
 
 static void b53_set_forwarding(struct b53_device *dev, int enable)
 {
+	struct dsa_switch *ds = dev->ds;
 	u8 mgmt;
 
 	b53_read8(dev, B53_CTRL_PAGE, B53_SWITCH_MODE, &mgmt);
@@ -336,6 +336,15 @@ static void b53_set_forwarding(struct b53_device *dev, int enable)
 		mgmt &= ~SM_SW_FWD_EN;
 
 	b53_write8(dev, B53_CTRL_PAGE, B53_SWITCH_MODE, mgmt);
+
+	/* Include IMP port in dumb forwarding mode when no tagging protocol is
+	 * set
+	 */
+	if (ds->ops->get_tag_protocol(ds) == DSA_TAG_PROTO_NONE) {
+		b53_read8(dev, B53_CTRL_PAGE, B53_SWITCH_CTRL, &mgmt);
+		mgmt |= B53_MII_DUMB_FWDG_EN;
+		b53_write8(dev, B53_CTRL_PAGE, B53_SWITCH_CTRL, mgmt);
+	}
 }
 
 static void b53_enable_vlan(struct b53_device *dev, bool enable)
@@ -598,13 +607,36 @@ static void b53_switch_reset_gpio(struct b53_device *dev)
 
 static int b53_switch_reset(struct b53_device *dev)
 {
-	u8 mgmt;
+	unsigned int timeout = 1000;
+	u8 mgmt, reg;
 
 	b53_switch_reset_gpio(dev);
 
 	if (is539x(dev)) {
 		b53_write8(dev, B53_CTRL_PAGE, B53_SOFTRESET, 0x83);
 		b53_write8(dev, B53_CTRL_PAGE, B53_SOFTRESET, 0x00);
+	}
+
+	/* This is specific to 58xx devices here, do not use is58xx() which
+	 * covers the larger Starfigther 2 family, including 7445/7278 which
+	 * still use this driver as a library and need to perform the reset
+	 * earlier.
+	 */
+	if (dev->chip_id == BCM58XX_DEVICE_ID) {
+		b53_read8(dev, B53_CTRL_PAGE, B53_SOFTRESET, &reg);
+		reg |= SW_RST | EN_SW_RST | EN_CH_RST;
+		b53_write8(dev, B53_CTRL_PAGE, B53_SOFTRESET, reg);
+
+		do {
+			b53_read8(dev, B53_CTRL_PAGE, B53_SOFTRESET, &reg);
+			if (!(reg & SW_RST))
+				break;
+
+			usleep_range(1000, 2000);
+		} while (timeout-- > 0);
+
+		if (timeout == 0)
+			return -ETIMEDOUT;
 	}
 
 	b53_read8(dev, B53_CTRL_PAGE, B53_SWITCH_MODE, &mgmt);
@@ -1023,7 +1055,7 @@ EXPORT_SYMBOL(b53_vlan_del);
 
 int b53_vlan_dump(struct dsa_switch *ds, int port,
 		  struct switchdev_obj_port_vlan *vlan,
-		  int (*cb)(struct switchdev_obj *obj))
+		  switchdev_obj_dump_cb_t *cb)
 {
 	struct b53_device *dev = ds->priv;
 	u16 vid, vid_start = 0, pvid;
@@ -1252,7 +1284,7 @@ static void b53_arl_search_rd(struct b53_device *dev, u8 idx,
 static int b53_fdb_copy(struct net_device *dev, int port,
 			const struct b53_arl_entry *ent,
 			struct switchdev_obj_port_fdb *fdb,
-			int (*cb)(struct switchdev_obj *obj))
+			switchdev_obj_dump_cb_t *cb)
 {
 	if (!ent->is_valid)
 		return 0;
@@ -1269,7 +1301,7 @@ static int b53_fdb_copy(struct net_device *dev, int port,
 
 int b53_fdb_dump(struct dsa_switch *ds, int port,
 		 struct switchdev_obj_port_fdb *fdb,
-		 int (*cb)(struct switchdev_obj *obj))
+		 switchdev_obj_dump_cb_t *cb)
 {
 	struct b53_device *priv = ds->priv;
 	struct net_device *dev = ds->ports[port].netdev;
@@ -1311,7 +1343,7 @@ EXPORT_SYMBOL(b53_fdb_dump);
 int b53_br_join(struct dsa_switch *ds, int port, struct net_device *br)
 {
 	struct b53_device *dev = ds->priv;
-	s8 cpu_port = ds->dst->cpu_port;
+	s8 cpu_port = ds->dst->cpu_dp->index;
 	u16 pvlan, reg;
 	unsigned int i;
 
@@ -1357,7 +1389,7 @@ void b53_br_leave(struct dsa_switch *ds, int port, struct net_device *br)
 {
 	struct b53_device *dev = ds->priv;
 	struct b53_vlan *vl = &dev->vlans[0];
-	s8 cpu_port = ds->dst->cpu_port;
+	s8 cpu_port = ds->dst->cpu_dp->index;
 	unsigned int i;
 	u16 pvlan, reg, pvid;
 
@@ -1731,7 +1763,7 @@ static const struct b53_chip_data b53_switch_chips[] = {
 		.vlans	= 4096,
 		.enabled_ports = 0x1ff,
 		.arl_entries = 4,
-		.cpu_port = B53_CPU_PORT_25,
+		.cpu_port = B53_CPU_PORT,
 		.vta_regs = B53_VTA_REGS,
 		.duplex_reg = B53_DUPLEX_STAT_GE,
 		.jumbo_pm_reg = B53_JUMBO_PORT_MASK,

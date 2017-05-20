@@ -167,10 +167,11 @@ struct qede_dev {
 	u32				dp_module;
 	u8				dp_level;
 
-	u32 flags;
-#define QEDE_FLAG_IS_VF	BIT(0)
+	unsigned long flags;
+#define QEDE_FLAG_IS_VF			BIT(0)
 #define IS_VF(edev)	(!!((edev)->flags & QEDE_FLAG_IS_VF))
 #define QEDE_TX_TIMESTAMPING_EN		BIT(1)
+#define QEDE_FLAGS_PTP_TX_IN_PRORGESS	BIT(2)
 
 	const struct qed_eth_ops	*ops;
 	struct qede_ptp			*ptp;
@@ -442,8 +443,6 @@ struct qede_fastpath {
 #define QEDE_TUNN_CSUM_UNNECESSARY	BIT(2)
 
 #define QEDE_SP_RX_MODE			1
-#define QEDE_SP_VXLAN_PORT_CONFIG	2
-#define QEDE_SP_GENEVE_PORT_CONFIG	3
 
 #ifdef CONFIG_RFS_ACCEL
 int qede_rx_flow_steer(struct net_device *dev, const struct sk_buff *skb,
@@ -482,6 +481,7 @@ irqreturn_t qede_msix_fp_int(int irq, void *fp_cookie);
 
 /* Filtering function definitions */
 void qede_force_mac(void *dev, u8 *mac, bool forced);
+void qede_udp_ports_update(void *dev, u16 vxlan_port, u16 geneve_port);
 int qede_set_mac_addr(struct net_device *ndev, void *p);
 
 int qede_vlan_rx_add_vid(struct net_device *dev, __be16 proto, u16 vid);

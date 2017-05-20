@@ -141,6 +141,7 @@ next:
 	id = strsep(&dom, "=");
 	if (!dom || kstrtoul(id, 10, &dom_id))
 		return -EINVAL;
+	dom = strim(dom);
 	list_for_each_entry(d, &r->domains, list) {
 		if (d->id == dom_id) {
 			if (r->parse_ctrlval(dom, r, d))
@@ -187,6 +188,17 @@ done:
 	return 0;
 }
 
+static int rdtgroup_parse_resource(char *resname, char *tok, int closid)
+{
+	struct rdt_resource *r;
+
+	for_each_enabled_rdt_resource(r) {
+		if (!strcmp(resname, r->name) && closid < r->num_closid)
+			return parse_line(tok, r);
+	}
+	return -EINVAL;
+}
+
 ssize_t rdtgroup_schemata_write(struct kernfs_open_file *of,
 				char *buf, size_t nbytes, loff_t off)
 {
@@ -209,29 +221,20 @@ ssize_t rdtgroup_schemata_write(struct kernfs_open_file *of,
 
 	closid = rdtgrp->closid;
 
-	for_each_enabled_rdt_resource(r)
+	for_each_enabled_rdt_resource(r) {
 		list_for_each_entry(dom, &r->domains, list)
 			dom->have_new_ctrl = false;
+	}
 
 	while ((tok = strsep(&buf, "\n")) != NULL) {
-		resname = strsep(&tok, ":");
+		resname = strim(strsep(&tok, ":"));
 		if (!tok) {
 			ret = -EINVAL;
 			goto out;
 		}
-		for_each_enabled_rdt_resource(r) {
-			if (!strcmp(resname, r->name) &&
-			    closid < r->num_closid) {
-				ret = parse_line(tok, r);
-				if (ret)
-					goto out;
-				break;
-			}
-		}
-		if (!r->name) {
-			ret = -EINVAL;
+		ret = rdtgroup_parse_resource(resname, tok, closid);
+		if (ret)
 			goto out;
-		}
 	}
 
 	for_each_enabled_rdt_resource(r) {

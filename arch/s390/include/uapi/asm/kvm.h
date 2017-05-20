@@ -119,6 +119,7 @@ struct kvm_s390_vm_cpu_machine {
 #define KVM_S390_VM_CPU_FEAT_CMMA	10
 #define KVM_S390_VM_CPU_FEAT_PFMFI	11
 #define KVM_S390_VM_CPU_FEAT_SIGPIF	12
+#define KVM_S390_VM_CPU_FEAT_KSS	13
 struct kvm_s390_vm_cpu_feat {
 	__u64 feat[16];
 };
@@ -140,7 +141,8 @@ struct kvm_s390_vm_cpu_subfunc {
 	__u8 kmo[16];		/* with MSA4 */
 	__u8 pcc[16];		/* with MSA4 */
 	__u8 ppno[16];		/* with MSA5 */
-	__u8 reserved[1824];
+	__u8 kma[16];		/* with MSA8 */
+	__u8 reserved[1808];
 };
 
 /* kvm attributes for crypto */

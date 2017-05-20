@@ -27,6 +27,13 @@
 #include "i40evf.h"
 #include "i40e_prototype.h"
 #include "i40evf_client.h"
+/* All i40evf tracepoints are defined by the include below, which must
+ * be included exactly once across the whole kernel with
+ * CREATE_TRACE_POINTS defined
+ */
+#define CREATE_TRACE_POINTS
+#include "i40e_trace.h"
+
 static int i40evf_setup_all_tx_resources(struct i40evf_adapter *adapter);
 static int i40evf_setup_all_rx_resources(struct i40evf_adapter *adapter);
 static int i40evf_close(struct net_device *netdev);
@@ -39,7 +46,7 @@ static const char i40evf_driver_string[] =
 
 #define DRV_VERSION_MAJOR 2
 #define DRV_VERSION_MINOR 1
-#define DRV_VERSION_BUILD 7
+#define DRV_VERSION_BUILD 14
 #define DRV_VERSION __stringify(DRV_VERSION_MAJOR) "." \
 	     __stringify(DRV_VERSION_MINOR) "." \
 	     __stringify(DRV_VERSION_BUILD) \
@@ -490,7 +497,7 @@ static void i40evf_netpoll(struct net_device *netdev)
 	int i;
 
 	/* if interface is down do nothing */
-	if (test_bit(__I40E_DOWN, &adapter->vsi.state))
+	if (test_bit(__I40E_VSI_DOWN, adapter->vsi.state))
 		return;
 
 	for (i = 0; i < q_vectors; i++)
@@ -687,13 +694,14 @@ static void i40evf_configure_tx(struct i40evf_adapter *adapter)
 static void i40evf_configure_rx(struct i40evf_adapter *adapter)
 {
 	unsigned int rx_buf_len = I40E_RXBUFFER_2048;
-	struct net_device *netdev = adapter->netdev;
 	struct i40e_hw *hw = &adapter->hw;
 	int i;
 
 	/* Legacy Rx will always default to a 2048 buffer size. */
 #if (PAGE_SIZE < 8192)
 	if (!(adapter->flags & I40EVF_FLAG_LEGACY_RX)) {
+		struct net_device *netdev = adapter->netdev;
+
 		/* For jumbo frames on systems with 4K pages we have to use
 		 * an order 1 page, so we might as well increase the size
 		 * of our Rx buffer to make better use of the available space
@@ -1080,7 +1088,7 @@ static void i40evf_configure(struct i40evf_adapter *adapter)
 static void i40evf_up_complete(struct i40evf_adapter *adapter)
 {
 	adapter->state = __I40EVF_RUNNING;
-	clear_bit(__I40E_DOWN, &adapter->vsi.state);
+	clear_bit(__I40E_VSI_DOWN, adapter->vsi.state);
 
 	i40evf_napi_enable_all(adapter);
 
@@ -1264,13 +1272,13 @@ static int i40evf_set_interrupt_capability(struct i40evf_adapter *adapter)
 	}
 	pairs = adapter->num_active_queues;
 
-	/* It's easy to be greedy for MSI-X vectors, but it really
-	 * doesn't do us much good if we have a lot more vectors
-	 * than CPU's.  So let's be conservative and only ask for
-	 * (roughly) twice the number of vectors as there are CPU's.
+	/* It's easy to be greedy for MSI-X vectors, but it really doesn't do
+	 * us much good if we have more vectors than CPUs. However, we already
+	 * limit the total number of queues by the number of CPUs so we do not
+	 * need any further limiting here.
 	 */
-	v_budget = min_t(int, pairs, (int)(num_online_cpus() * 2)) + NONQ_VECS;
-	v_budget = min_t(int, v_budget, (int)adapter->vf_res->max_vectors);
+	v_budget = min_t(int, pairs + NONQ_VECS,
+			 (int)adapter->vf_res->max_vectors);
 
 	adapter->msix_entries = kcalloc(v_budget,
 					sizeof(struct msix_entry), GFP_KERNEL);
@@ -1501,6 +1509,13 @@ int i40evf_init_interrupt_scheme(struct i40evf_adapter *adapter)
 {
 	int err;
 
+	err = i40evf_alloc_queues(adapter);
+	if (err) {
+		dev_err(&adapter->pdev->dev,
+			"Unable to allocate memory for queues\n");
+		goto err_alloc_queues;
+	}
+
 	rtnl_lock();
 	err = i40evf_set_interrupt_capability(adapter);
 	rtnl_unlock();
@@ -1517,23 +1532,16 @@ int i40evf_init_interrupt_scheme(struct i40evf_adapter *adapter)
 		goto err_alloc_q_vectors;
 	}
 
-	err = i40evf_alloc_queues(adapter);
-	if (err) {
-		dev_err(&adapter->pdev->dev,
-			"Unable to allocate memory for queues\n");
-		goto err_alloc_queues;
-	}
-
 	dev_info(&adapter->pdev->dev, "Multiqueue %s: Queue pair count = %u",
 		 (adapter->num_active_queues > 1) ? "Enabled" : "Disabled",
 		 adapter->num_active_queues);
 
 	return 0;
-err_alloc_queues:
-	i40evf_free_q_vectors(adapter);
 err_alloc_q_vectors:
 	i40evf_reset_interrupt_capability(adapter);
 err_set_interrupt:
+	i40evf_free_queues(adapter);
+err_alloc_queues:
 	return err;
 }
 
@@ -1746,7 +1754,7 @@ static void i40evf_disable_vf(struct i40evf_adapter *adapter)
 	adapter->flags |= I40EVF_FLAG_PF_COMMS_FAILED;
 
 	if (netif_running(adapter->netdev)) {
-		set_bit(__I40E_DOWN, &adapter->vsi.state);
+		set_bit(__I40E_VSI_DOWN, adapter->vsi.state);
 		netif_carrier_off(adapter->netdev);
 		netif_tx_disable(adapter->netdev);
 		adapter->link_up = false;
@@ -2226,7 +2234,7 @@ static int i40evf_close(struct net_device *netdev)
 		return 0;
 
 
-	set_bit(__I40E_DOWN, &adapter->vsi.state);
+	set_bit(__I40E_VSI_DOWN, adapter->vsi.state);
 	if (CLIENT_ENABLED(adapter))
 		adapter->flags |= I40EVF_FLAG_CLIENT_NEEDS_CLOSE;
 
@@ -2240,21 +2248,6 @@ static int i40evf_close(struct net_device *netdev)
 	 * driver that the rings have been stopped.
 	 */
 	return 0;
-}
-
-/**
- * i40evf_get_stats - Get System Network Statistics
- * @netdev: network interface device structure
- *
- * Returns the address of the device statistics structure.
- * The statistics are actually updated from the timer callback.
- **/
-static struct net_device_stats *i40evf_get_stats(struct net_device *netdev)
-{
-	struct i40evf_adapter *adapter = netdev_priv(netdev);
-
-	/* only return the current stats */
-	return &adapter->net_stats;
 }
 
 /**
@@ -2363,7 +2356,6 @@ static const struct net_device_ops i40evf_netdev_ops = {
 	.ndo_open		= i40evf_open,
 	.ndo_stop		= i40evf_close,
 	.ndo_start_xmit		= i40evf_xmit_frame,
-	.ndo_get_stats		= i40evf_get_stats,
 	.ndo_set_rx_mode	= i40evf_set_rx_mode,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_set_mac_address	= i40evf_set_mac,
@@ -2683,7 +2675,7 @@ static void i40evf_init_task(struct work_struct *work)
 		dev_info(&pdev->dev, "GRO is enabled\n");
 
 	adapter->state = __I40EVF_DOWN;
-	set_bit(__I40E_DOWN, &adapter->vsi.state);
+	set_bit(__I40E_VSI_DOWN, adapter->vsi.state);
 	i40evf_misc_irq_enable(adapter);
 
 	adapter->rss_key = kzalloc(adapter->rss_key_size, GFP_KERNEL);

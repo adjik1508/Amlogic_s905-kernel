@@ -445,7 +445,7 @@ static void esdhc_of_set_clock(struct sdhci_host *host, unsigned int clock)
 	struct sdhci_esdhc *esdhc = sdhci_pltfm_priv(pltfm_host);
 	int pre_div = 1;
 	int div = 1;
-	u32 timeout;
+	ktime_t timeout;
 	u32 temp;
 
 	host->mmc->actual_clock = 0;
@@ -456,6 +456,20 @@ static void esdhc_of_set_clock(struct sdhci_host *host, unsigned int clock)
 	/* Workaround to start pre_div at 2 for VNN < VENDOR_V_23 */
 	if (esdhc->vendor_ver < VENDOR_V_23)
 		pre_div = 2;
+
+	/*
+	 * Limit SD clock to 167MHz for ls1046a according to its datasheet
+	 */
+	if (clock > 167000000 &&
+	    of_find_compatible_node(NULL, NULL, "fsl,ls1046a-esdhc"))
+		clock = 167000000;
+
+	/*
+	 * Limit SD clock to 125MHz for ls1012a according to its datasheet
+	 */
+	if (clock > 125000000 &&
+	    of_find_compatible_node(NULL, NULL, "fsl,ls1012a-esdhc"))
+		clock = 125000000;
 
 	/* Workaround to reduce the clock frequency for p1010 esdhc */
 	if (of_find_compatible_node(NULL, NULL, "fsl,p1010-esdhc")) {
@@ -489,15 +503,14 @@ static void esdhc_of_set_clock(struct sdhci_host *host, unsigned int clock)
 	sdhci_writel(host, temp, ESDHC_SYSTEM_CONTROL);
 
 	/* Wait max 20 ms */
-	timeout = 20;
+	timeout = ktime_add_ms(ktime_get(), 20);
 	while (!(sdhci_readl(host, ESDHC_PRSSTAT) & ESDHC_CLOCK_STABLE)) {
-		if (timeout == 0) {
+		if (ktime_after(ktime_get(), timeout)) {
 			pr_err("%s: Internal clock never stabilised.\n",
 				mmc_hostname(host->mmc));
 			return;
 		}
-		timeout--;
-		mdelay(1);
+		udelay(10);
 	}
 
 	temp |= ESDHC_CLOCK_SDCLKEN;

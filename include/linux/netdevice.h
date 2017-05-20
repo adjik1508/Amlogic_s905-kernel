@@ -813,11 +813,16 @@ enum xdp_netdev_command {
 	XDP_QUERY_PROG,
 };
 
+struct netlink_ext_ack;
+
 struct netdev_xdp {
 	enum xdp_netdev_command command;
 	union {
 		/* XDP_SETUP_PROG */
-		struct bpf_prog *prog;
+		struct {
+			struct bpf_prog *prog;
+			struct netlink_ext_ack *extack;
+		};
 		/* XDP_QUERY_PROG */
 		bool prog_attached;
 	};
@@ -1428,13 +1433,14 @@ enum netdev_priv_flags {
 
 /**
  *	struct net_device - The DEVICE structure.
- *		Actually, this whole structure is a big mistake.  It mixes I/O
- *		data with strictly "high-level" data, and it has to know about
- *		almost every data structure used in the INET module.
+ *
+ *	Actually, this whole structure is a big mistake.  It mixes I/O
+ *	data with strictly "high-level" data, and it has to know about
+ *	almost every data structure used in the INET module.
  *
  *	@name:	This is the first field of the "visible" part of this structure
  *		(i.e. as seen by users in the "Space.c" file).  It is the name
- *	 	of the interface.
+ *		of the interface.
  *
  *	@name_hlist: 	Device name hash chain, please keep it close to name[]
  *	@ifalias:	SNMP alias
@@ -1790,6 +1796,7 @@ struct net_device {
 	unsigned int		real_num_rx_queues;
 #endif
 
+	struct bpf_prog __rcu	*xdp_prog;
 	unsigned long		gro_flush_timeout;
 	rx_handler_func_t __rcu	*rx_handler;
 	void __rcu		*rx_handler_data;
@@ -1818,7 +1825,7 @@ struct net_device {
 #ifdef CONFIG_NET_SCHED
 	DECLARE_HASHTABLE	(qdisc_hash, 4);
 #endif
-	unsigned long		tx_queue_len;
+	unsigned int		tx_queue_len;
 	spinlock_t		tx_global_lock;
 	int			watchdog_timeo;
 
@@ -1907,6 +1914,13 @@ struct net_device {
 	bool			proto_down;
 };
 #define to_net_dev(d) container_of(d, struct net_device, dev)
+
+static inline bool netif_elide_gro(const struct net_device *dev)
+{
+	if (!(dev->features & NETIF_F_GRO) || dev->xdp_prog)
+		return true;
+	return false;
+}
 
 #define	NETDEV_ALIGN		32
 
@@ -3283,10 +3297,15 @@ int dev_get_phys_port_id(struct net_device *dev,
 int dev_get_phys_port_name(struct net_device *dev,
 			   char *name, size_t len);
 int dev_change_proto_down(struct net_device *dev, bool proto_down);
-int dev_change_xdp_fd(struct net_device *dev, int fd, u32 flags);
 struct sk_buff *validate_xmit_skb_list(struct sk_buff *skb, struct net_device *dev);
 struct sk_buff *dev_hard_start_xmit(struct sk_buff *skb, struct net_device *dev,
 				    struct netdev_queue *txq, int *ret);
+
+typedef int (*xdp_op_t)(struct net_device *dev, struct netdev_xdp *xdp);
+int dev_change_xdp_fd(struct net_device *dev, struct netlink_ext_ack *extack,
+		      int fd, u32 flags);
+bool __dev_xdp_attached(struct net_device *dev, xdp_op_t xdp_op);
+
 int __dev_forward_skb(struct net_device *dev, struct sk_buff *skb);
 int dev_forward_skb(struct net_device *dev, struct sk_buff *skb);
 bool is_skb_forwardable(const struct net_device *dev,
@@ -3310,6 +3329,7 @@ static __always_inline int ____dev_forward_skb(struct net_device *dev,
 void dev_queue_xmit_nit(struct sk_buff *skb, struct net_device *dev);
 
 extern int		netdev_budget;
+extern unsigned int	netdev_budget_usecs;
 
 /* Called by rtnetlink.c:rtnl_unlock() */
 void netdev_run_todo(void);
@@ -3399,10 +3419,10 @@ static inline void netif_dormant_off(struct net_device *dev)
 }
 
 /**
- *	netif_dormant - test if carrier present
+ *	netif_dormant - test if device is dormant
  *	@dev: network device
  *
- * Check if carrier is present on device
+ * Check if device is dormant.
  */
 static inline bool netif_dormant(const struct net_device *dev)
 {

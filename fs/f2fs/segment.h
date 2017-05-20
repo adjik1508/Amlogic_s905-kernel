@@ -138,7 +138,10 @@ enum {
  */
 enum {
 	GC_CB = 0,
-	GC_GREEDY
+	GC_GREEDY,
+	ALLOC_NEXT,
+	FLUSH_DEVICE,
+	MAX_GC_POLICY,
 };
 
 /*
@@ -233,6 +236,8 @@ struct sit_info {
 	unsigned long long mounted_time;	/* mount time */
 	unsigned long long min_mtime;		/* min. modification time */
 	unsigned long long max_mtime;		/* max. modification time */
+
+	unsigned int last_victim[MAX_GC_POLICY]; /* last victim segment # */
 };
 
 struct free_segmap_info {
@@ -556,16 +561,14 @@ enum {
 	F2FS_IPU_UTIL,
 	F2FS_IPU_SSR_UTIL,
 	F2FS_IPU_FSYNC,
+	F2FS_IPU_ASYNC,
 };
 
-static inline bool need_inplace_update(struct inode *inode)
+static inline bool need_inplace_update_policy(struct inode *inode,
+				struct f2fs_io_info *fio)
 {
 	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
 	unsigned int policy = SM_I(sbi)->ipu_policy;
-
-	/* IPU can be done only for the user data */
-	if (S_ISDIR(inode->i_mode) || f2fs_is_atomic_file(inode))
-		return false;
 
 	if (test_opt(sbi, LFS))
 		return false;
@@ -579,6 +582,15 @@ static inline bool need_inplace_update(struct inode *inode)
 		return true;
 	if (policy & (0x1 << F2FS_IPU_SSR_UTIL) && need_SSR(sbi) &&
 			utilization(sbi) > SM_I(sbi)->min_ipu_util)
+		return true;
+
+	/*
+	 * IPU for rewrite async pages
+	 */
+	if (policy & (0x1 << F2FS_IPU_ASYNC) &&
+			fio && fio->op == REQ_OP_WRITE &&
+			!(fio->op_flags & REQ_SYNC) &&
+			!f2fs_encrypted_inode(inode))
 		return true;
 
 	/* this is only set during fdatasync */

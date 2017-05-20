@@ -821,10 +821,7 @@ static ssize_t mem_rw(struct file *file, char __user *buf,
 	if (!mmget_not_zero(mm))
 		goto free;
 
-	/* Maybe we should limit FOLL_FORCE to actual ptrace users? */
-	flags = FOLL_FORCE;
-	if (write)
-		flags |= FOLL_WRITE;
+	flags = write ? FOLL_WRITE : 0;
 
 	while (count > 0) {
 		int this_len = min_t(int, count, PAGE_SIZE);
@@ -1366,7 +1363,7 @@ static ssize_t proc_fail_nth_write(struct file *file, const char __user *buf,
 	int err;
 	unsigned int n;
 
-	err = kstrtoint_from_user(buf, count, 0, &n);
+	err = kstrtouint_from_user(buf, count, 0, &n);
 	if (err)
 		return err;
 

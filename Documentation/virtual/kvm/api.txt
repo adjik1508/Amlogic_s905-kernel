@@ -110,11 +110,7 @@ Type: system ioctl
 Parameters: machine type identifier (KVM_VM_*)
 Returns: a VM fd that can be used to control the new virtual machine.
 
-The new VM has no virtual cpus and no memory.  An mmap() of a VM fd
-will access the virtual machine's physical address space; offset zero
-corresponds to guest physical address zero.  Use of mmap() on a VM fd
-is discouraged if userspace memory allocation (KVM_CAP_USER_MEMORY) is
-available.
+The new VM has no virtual cpus and no memory.
 You probably want to use 0 as machine type.
 
 In order to create user controlled virtual machines on S390, check
@@ -4112,7 +4108,16 @@ reserved.
     Both registers and addresses are 64-bits wide.
     It will be possible to run 64-bit or 32-bit guest code.
 
-8.8 KVM_CAP_ARM_USER_IRQ
+8.8 KVM_CAP_X86_GUEST_MWAIT
+
+Architectures: x86
+
+This capability indicates that guest using memory monotoring instructions
+(MWAIT/MWAITX) to stop the virtual CPU will not cause a VM exit.  As such time
+spent while virtual CPU is halted in this way will then be accounted for as
+guest running time on the host (as opposed to e.g. HLT).
+
+8.9 KVM_CAP_ARM_USER_IRQ
 
 Architectures: arm, arm64
 This capability, if KVM_CHECK_EXTENSION indicates that it is available, means

@@ -16,6 +16,7 @@
  */
 #include <linux/debugfs.h>
 #include <linux/fs.h>
+#include <linux/hugetlb.h>
 #include <linux/io.h>
 #include <linux/mm.h>
 #include <linux/sched.h>
@@ -25,6 +26,10 @@
 #include <linux/const.h>
 #include <asm/page.h>
 #include <asm/pgalloc.h>
+
+#ifdef CONFIG_PPC32
+#define KERN_VIRT_START	0
+#endif
 
 /*
  * To visualise what is happening,
@@ -71,6 +76,7 @@ static struct addr_marker address_markers[] = {
 	{ 0,	"Start of kernel VM" },
 	{ 0,	"vmalloc() Area" },
 	{ 0,	"vmalloc() End" },
+#ifdef CONFIG_PPC64
 	{ 0,	"isa I/O start" },
 	{ 0,	"isa I/O end" },
 	{ 0,	"phb I/O start" },
@@ -78,6 +84,20 @@ static struct addr_marker address_markers[] = {
 	{ 0,	"I/O remap start" },
 	{ 0,	"I/O remap end" },
 	{ 0,	"vmemmap start" },
+#else
+	{ 0,	"Early I/O remap start" },
+	{ 0,	"Early I/O remap end" },
+#ifdef CONFIG_NOT_COHERENT_CACHE
+	{ 0,	"Consistent mem start" },
+	{ 0,	"Consistent mem end" },
+#endif
+#ifdef CONFIG_HIGHMEM
+	{ 0,	"Highmem PTEs start" },
+	{ 0,	"Highmem PTEs end" },
+#endif
+	{ 0,	"Fixmap start" },
+	{ 0,	"Fixmap end" },
+#endif
 	{ -1,	NULL },
 };
 
@@ -102,8 +122,13 @@ static const struct flag_info flag_array[] = {
 		.set	= "user",
 		.clear	= "    ",
 	}, {
+#if _PAGE_RO == 0
 		.mask	= _PAGE_RW,
 		.val	= _PAGE_RW,
+#else
+		.mask	= _PAGE_RO,
+		.val	= 0,
+#endif
 		.set	= "rw",
 		.clear	= "ro",
 	}, {
@@ -203,6 +228,10 @@ static const struct flag_info flag_array[] = {
 		.mask	= _PAGE_SPECIAL,
 		.val	= _PAGE_SPECIAL,
 		.set	= "special",
+	}, {
+		.mask	= _PAGE_SHARED,
+		.val	= _PAGE_SHARED,
+		.set	= "shared",
 	}
 };
 
@@ -267,8 +296,13 @@ static void dump_addr(struct pg_state *st, unsigned long addr)
 	const char *unit = units;
 	unsigned long delta;
 
+#ifdef CONFIG_PPC64
 	seq_printf(st->seq, "0x%016lx-0x%016lx ", st->start_address, addr-1);
 	seq_printf(st->seq, "0x%016lx ", st->start_pa);
+#else
+	seq_printf(st->seq, "0x%08lx-0x%08lx ", st->start_address, addr - 1);
+	seq_printf(st->seq, "0x%08lx ", st->start_pa);
+#endif
 
 	delta = (addr - st->start_address) >> 10;
 	/* Work out what appropriate unit to use */
@@ -358,7 +392,7 @@ static void walk_pmd(struct pg_state *st, pud_t *pud, unsigned long start)
 
 	for (i = 0; i < PTRS_PER_PMD; i++, pmd++) {
 		addr = start + i * PMD_SIZE;
-		if (!pmd_none(*pmd))
+		if (!pmd_none(*pmd) && !pmd_huge(*pmd))
 			/* pmd exists */
 			walk_pte(st, pmd, addr);
 		else
@@ -374,7 +408,7 @@ static void walk_pud(struct pg_state *st, pgd_t *pgd, unsigned long start)
 
 	for (i = 0; i < PTRS_PER_PUD; i++, pud++) {
 		addr = start + i * PUD_SIZE;
-		if (!pud_none(*pud))
+		if (!pud_none(*pud) && !pud_huge(*pud))
 			/* pud exists */
 			walk_pmd(st, pud, addr);
 		else
@@ -394,7 +428,7 @@ static void walk_pagetables(struct pg_state *st)
 	 */
 	for (i = 0; i < PTRS_PER_PGD; i++, pgd++) {
 		addr = KERN_VIRT_START + i * PGDIR_SIZE;
-		if (!pgd_none(*pgd))
+		if (!pgd_none(*pgd) && !pgd_huge(*pgd))
 			/* pgd exists */
 			walk_pud(st, pgd, addr);
 		else
@@ -404,20 +438,38 @@ static void walk_pagetables(struct pg_state *st)
 
 static void populate_markers(void)
 {
-	address_markers[0].start_address = PAGE_OFFSET;
-	address_markers[1].start_address = VMALLOC_START;
-	address_markers[2].start_address = VMALLOC_END;
-	address_markers[3].start_address = ISA_IO_BASE;
-	address_markers[4].start_address = ISA_IO_END;
-	address_markers[5].start_address = PHB_IO_BASE;
-	address_markers[6].start_address = PHB_IO_END;
-	address_markers[7].start_address = IOREMAP_BASE;
-	address_markers[8].start_address = IOREMAP_END;
+	int i = 0;
+
+	address_markers[i++].start_address = PAGE_OFFSET;
+	address_markers[i++].start_address = VMALLOC_START;
+	address_markers[i++].start_address = VMALLOC_END;
+#ifdef CONFIG_PPC64
+	address_markers[i++].start_address = ISA_IO_BASE;
+	address_markers[i++].start_address = ISA_IO_END;
+	address_markers[i++].start_address = PHB_IO_BASE;
+	address_markers[i++].start_address = PHB_IO_END;
+	address_markers[i++].start_address = IOREMAP_BASE;
+	address_markers[i++].start_address = IOREMAP_END;
 #ifdef CONFIG_PPC_STD_MMU_64
-	address_markers[9].start_address =  H_VMEMMAP_BASE;
+	address_markers[i++].start_address =  H_VMEMMAP_BASE;
 #else
-	address_markers[9].start_address =  VMEMMAP_BASE;
+	address_markers[i++].start_address =  VMEMMAP_BASE;
 #endif
+#else /* !CONFIG_PPC64 */
+	address_markers[i++].start_address = ioremap_bot;
+	address_markers[i++].start_address = IOREMAP_TOP;
+#ifdef CONFIG_NOT_COHERENT_CACHE
+	address_markers[i++].start_address = IOREMAP_TOP;
+	address_markers[i++].start_address = IOREMAP_TOP +
+					     CONFIG_CONSISTENT_SIZE;
+#endif
+#ifdef CONFIG_HIGHMEM
+	address_markers[i++].start_address = PKMAP_BASE;
+	address_markers[i++].start_address = PKMAP_ADDR(LAST_PKMAP);
+#endif
+	address_markers[i++].start_address = FIXADDR_START;
+	address_markers[i++].start_address = FIXADDR_TOP;
+#endif /* CONFIG_PPC64 */
 }
 
 static int ptdump_show(struct seq_file *m, void *v)
@@ -462,7 +514,7 @@ static int ptdump_init(void)
 
 	populate_markers();
 	build_pgtable_complete_mask();
-	debugfs_file = debugfs_create_file("kernel_pagetables", 0400, NULL,
+	debugfs_file = debugfs_create_file("kernel_page_tables", 0400, NULL,
 			NULL, &ptdump_fops);
 	return debugfs_file ? 0 : -ENOMEM;
 }

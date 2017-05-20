@@ -279,17 +279,34 @@ void _exception(int signr, struct pt_regs *regs, int code, unsigned long addr)
 
 void system_reset_exception(struct pt_regs *regs)
 {
+	/*
+	 * Avoid crashes in case of nested NMI exceptions. Recoverability
+	 * is determined by RI and in_nmi
+	 */
+	bool nested = in_nmi();
+	if (!nested)
+		nmi_enter();
+
 	/* See if any machine dependent calls */
 	if (ppc_md.system_reset_exception) {
 		if (ppc_md.system_reset_exception(regs))
-			return;
+			goto out;
 	}
 
 	die("System Reset", regs, SIGABRT);
 
+out:
+#ifdef CONFIG_PPC_BOOK3S_64
+	BUG_ON(get_paca()->in_nmi == 0);
+	if (get_paca()->in_nmi > 1)
+		panic("Unrecoverable nested System Reset");
+#endif
 	/* Must die if the interrupt is not recoverable */
 	if (!(regs->msr & MSR_RI))
 		panic("Unrecoverable System Reset");
+
+	if (!nested)
+		nmi_exit();
 
 	/* What should we do here? We could issue a shutdown or hard reset. */
 }
@@ -305,8 +322,6 @@ long machine_check_early(struct pt_regs *regs)
 	long handled = 0;
 
 	__this_cpu_inc(irq_stat.mce_exceptions);
-
-	add_taint(TAINT_MACHINE_CHECK, LOCKDEP_NOW_UNRELIABLE);
 
 	if (cur_cpu_spec && cur_cpu_spec->machine_check_early)
 		handled = cur_cpu_spec->machine_check_early(regs);
@@ -740,6 +755,8 @@ void machine_check_exception(struct pt_regs *regs)
 	int recover = 0;
 
 	__this_cpu_inc(irq_stat.mce_exceptions);
+
+	add_taint(TAINT_MACHINE_CHECK, LOCKDEP_NOW_UNRELIABLE);
 
 	/* See if any machine dependent calls. In theory, we would want
 	 * to call the CPU first, and call the ppc_md. one if the CPU

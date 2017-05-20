@@ -64,6 +64,7 @@ struct devfreq_cooling_device {
 	size_t freq_table_size;
 	struct devfreq_cooling_power *power_ops;
 	u32 res_util;
+	int capped_state;
 };
 
 /**
@@ -180,16 +181,22 @@ static unsigned long get_voltage(struct devfreq *df, unsigned long freq)
 	struct dev_pm_opp *opp;
 
 	opp = dev_pm_opp_find_freq_exact(dev, freq, true);
-	if (IS_ERR(opp) && (PTR_ERR(opp) == -ERANGE))
+	if (PTR_ERR(opp) == -ERANGE)
 		opp = dev_pm_opp_find_freq_exact(dev, freq, false);
+
+	if (IS_ERR(opp)) {
+		dev_err_ratelimited(dev, "Failed to find OPP for frequency %lu: %ld\n",
+				    freq, PTR_ERR(opp));
+		return 0;
+	}
 
 	voltage = dev_pm_opp_get_voltage(opp) / 1000; /* mV */
 	dev_pm_opp_put(opp);
 
 	if (voltage == 0) {
-		dev_warn_ratelimited(dev,
-				     "Failed to get voltage for frequency %lu: %ld\n",
-				     freq, IS_ERR(opp) ? PTR_ERR(opp) : 0);
+		dev_err_ratelimited(dev,
+				    "Failed to get voltage for frequency %lu\n",
+				    freq);
 	}
 
 	return voltage;
@@ -253,6 +260,16 @@ get_dynamic_power(struct devfreq_cooling_device *dfc, unsigned long freq,
 	return power;
 }
 
+
+static inline unsigned long get_total_power(struct devfreq_cooling_device *dfc,
+					    unsigned long freq,
+					    unsigned long voltage)
+{
+	return get_static_power(dfc, freq) + get_dynamic_power(dfc, freq,
+							       voltage);
+}
+
+
 static int devfreq_cooling_get_requested_power(struct thermal_cooling_device *cdev,
 					       struct thermal_zone_device *tz,
 					       u32 *power)
@@ -267,7 +284,6 @@ static int devfreq_cooling_get_requested_power(struct thermal_cooling_device *cd
 	u32 static_power = 0;
 	int res;
 
-	/* Get dynamic power for state */
 	state = freq_get_state(dfc, freq);
 	if (state == THERMAL_CSTATE_INVALID) {
 		res = -EAGAIN;
@@ -283,6 +299,7 @@ static int devfreq_cooling_get_requested_power(struct thermal_cooling_device *cd
 
 		res = dfc->power_ops->get_real_power(df, power, freq, voltage);
 		if (!res) {
+			state = dfc->capped_state;
 			dfc->res_util = dfc->power_table[state];
 			dfc->res_util *= SCALE_ERROR_MITIGATION;
 
@@ -370,6 +387,7 @@ static int devfreq_cooling_power2state(struct thermal_cooling_device *cdev,
 			break;
 
 	*state = i;
+	dfc->capped_state = i;
 	trace_thermal_power_devfreq_limit(cdev, freq, *state, power);
 	return 0;
 }
@@ -425,7 +443,7 @@ static int devfreq_cooling_gen_tables(struct devfreq_cooling_device *dfc)
 	}
 
 	for (i = 0, freq = ULONG_MAX; i < num_opps; i++, freq--) {
-		unsigned long power_dyn, voltage;
+		unsigned long power, voltage;
 		struct dev_pm_opp *opp;
 
 		opp = dev_pm_opp_find_freq_floor(dev, &freq);
@@ -438,12 +456,15 @@ static int devfreq_cooling_gen_tables(struct devfreq_cooling_device *dfc)
 		dev_pm_opp_put(opp);
 
 		if (dfc->power_ops) {
-			power_dyn = get_dynamic_power(dfc, freq, voltage);
+			if (dfc->power_ops->get_real_power)
+				power = get_total_power(dfc, freq, voltage);
+			else
+				power = get_dynamic_power(dfc, freq, voltage);
 
-			dev_dbg(dev, "Dynamic power table: %lu MHz @ %lu mV: %lu = %lu mW\n",
-				freq / 1000000, voltage, power_dyn, power_dyn);
+			dev_dbg(dev, "Power table: %lu MHz @ %lu mV: %lu = %lu mW\n",
+				freq / 1000000, voltage, power, power);
 
-			power_table[i] = power_dyn;
+			power_table[i] = power;
 		}
 
 		freq_table[i] = freq;

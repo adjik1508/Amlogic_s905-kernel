@@ -53,6 +53,7 @@
 #include <net/dst_metadata.h>
 #include <net/dst.h>
 #include <net/sock_reuseport.h>
+#include <net/busy_poll.h>
 
 /**
  *	sk_filter_trim_cap - run a packet through a socket filter
@@ -97,8 +98,8 @@ int sk_filter_trim_cap(struct sock *sk, struct sk_buff *skb, unsigned int cap)
 
 		skb->sk = sk;
 		pkt_len = bpf_prog_run_save_cb(filter->prog, skb);
-		err = pkt_len ? pskb_trim(skb, max(cap, pkt_len)) : -EPERM;
 		skb->sk = save_sk;
+		err = pkt_len ? pskb_trim(skb, max(cap, pkt_len)) : -EPERM;
 	}
 	rcu_read_unlock();
 
@@ -3201,6 +3202,19 @@ static u32 bpf_convert_ctx_access(enum bpf_access_type type,
 			*insn++ = BPF_MOV64_REG(si->dst_reg, si->dst_reg);
 		else
 			*insn++ = BPF_MOV64_IMM(si->dst_reg, 0);
+#endif
+		break;
+
+	case offsetof(struct __sk_buff, napi_id):
+#if defined(CONFIG_NET_RX_BUSY_POLL)
+		BUILD_BUG_ON(FIELD_SIZEOF(struct sk_buff, napi_id) != 4);
+
+		*insn++ = BPF_LDX_MEM(BPF_W, si->dst_reg, si->src_reg,
+				      offsetof(struct sk_buff, napi_id));
+		*insn++ = BPF_JMP_IMM(BPF_JGE, si->dst_reg, MIN_NAPI_ID, 1);
+		*insn++ = BPF_MOV64_IMM(si->dst_reg, 0);
+#else
+		*insn++ = BPF_MOV64_IMM(si->dst_reg, 0);
 #endif
 		break;
 	}

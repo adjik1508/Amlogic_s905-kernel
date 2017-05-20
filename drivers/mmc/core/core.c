@@ -239,8 +239,10 @@ static void __mmc_start_request(struct mmc_host *host, struct mmc_request *mrq)
 	/*
 	 * For sdio rw commands we must wait for card busy otherwise some
 	 * sdio devices won't work properly.
+	 * And bypass I/O abort, reset and bus suspend operations.
 	 */
-	if (mmc_is_io_op(mrq->cmd->opcode) && host->ops->card_busy) {
+	if (sdio_is_io_busy(mrq->cmd->opcode, mrq->cmd->arg) &&
+	    host->ops->card_busy) {
 		int tries = 500; /* Wait aprox 500ms at maximum */
 
 		while (host->ops->card_busy(host) && --tries)
@@ -2558,6 +2560,12 @@ unsigned int mmc_calc_max_discard(struct mmc_card *card)
 }
 EXPORT_SYMBOL(mmc_calc_max_discard);
 
+bool mmc_card_is_blockaddr(struct mmc_card *card)
+{
+	return card ? mmc_card_blockaddr(card) : false;
+}
+EXPORT_SYMBOL(mmc_card_is_blockaddr);
+
 int mmc_set_blocklen(struct mmc_card *card, unsigned int blocklen)
 {
 	struct mmc_command cmd = {};
@@ -2589,6 +2597,8 @@ EXPORT_SYMBOL(mmc_set_blockcount);
 
 static void mmc_hw_reset_for_init(struct mmc_host *host)
 {
+	mmc_pwrseq_reset(host);
+
 	if (!(host->caps & MMC_CAP_HW_RESET) || !host->ops->hw_reset)
 		return;
 	host->ops->hw_reset(host);

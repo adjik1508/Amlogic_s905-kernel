@@ -309,7 +309,7 @@ static void __f2fs_submit_merged_bio(struct f2fs_sb_info *sbi,
 	if (type >= META_FLUSH) {
 		io->fio.type = META_FLUSH;
 		io->fio.op = REQ_OP_WRITE;
-		io->fio.op_flags = REQ_META | REQ_PRIO;
+		io->fio.op_flags = REQ_META | REQ_PRIO | REQ_SYNC;
 		if (!test_opt(sbi, NOBARRIER))
 			io->fio.op_flags |= REQ_PREFLUSH | REQ_FUA;
 	}
@@ -1302,17 +1302,83 @@ static int f2fs_read_data_pages(struct file *file,
 	return f2fs_mpage_readpages(mapping, pages, NULL, nr_pages);
 }
 
+static int encrypt_one_page(struct f2fs_io_info *fio)
+{
+	struct inode *inode = fio->page->mapping->host;
+	gfp_t gfp_flags = GFP_NOFS;
+
+	if (!f2fs_encrypted_inode(inode) || !S_ISREG(inode->i_mode))
+		return 0;
+
+	/* wait for GCed encrypted page writeback */
+	f2fs_wait_on_encrypted_page_writeback(fio->sbi, fio->old_blkaddr);
+
+retry_encrypt:
+	fio->encrypted_page = fscrypt_encrypt_page(inode, fio->page,
+			PAGE_SIZE, 0, fio->page->index, gfp_flags);
+	if (!IS_ERR(fio->encrypted_page))
+		return 0;
+
+	/* flush pending IOs and wait for a while in the ENOMEM case */
+	if (PTR_ERR(fio->encrypted_page) == -ENOMEM) {
+		f2fs_flush_merged_bios(fio->sbi);
+		congestion_wait(BLK_RW_ASYNC, HZ/50);
+		gfp_flags |= __GFP_NOFAIL;
+		goto retry_encrypt;
+	}
+	return PTR_ERR(fio->encrypted_page);
+}
+
+static inline bool need_inplace_update(struct f2fs_io_info *fio)
+{
+	struct inode *inode = fio->page->mapping->host;
+
+	if (S_ISDIR(inode->i_mode) || f2fs_is_atomic_file(inode))
+		return false;
+	if (is_cold_data(fio->page))
+		return false;
+	if (IS_ATOMIC_WRITTEN_PAGE(fio->page))
+		return false;
+
+	return need_inplace_update_policy(inode, fio);
+}
+
+static inline bool valid_ipu_blkaddr(struct f2fs_io_info *fio)
+{
+	if (fio->old_blkaddr == NEW_ADDR)
+		return false;
+	if (fio->old_blkaddr == NULL_ADDR)
+		return false;
+	return true;
+}
+
 int do_write_data_page(struct f2fs_io_info *fio)
 {
 	struct page *page = fio->page;
 	struct inode *inode = page->mapping->host;
 	struct dnode_of_data dn;
+	struct extent_info ei = {0,0,0};
+	bool ipu_force = false;
 	int err = 0;
 
 	set_new_dnode(&dn, inode, NULL, NULL, 0);
+	if (need_inplace_update(fio) &&
+			f2fs_lookup_extent_cache(inode, page->index, &ei)) {
+		fio->old_blkaddr = ei.blk + page->index - ei.fofs;
+
+		if (valid_ipu_blkaddr(fio)) {
+			ipu_force = true;
+			fio->need_lock = false;
+			goto got_it;
+		}
+	}
+
+	if (fio->need_lock)
+		f2fs_lock_op(fio->sbi);
+
 	err = get_dnode_of_data(&dn, page->index, LOOKUP_NODE);
 	if (err)
-		return err;
+		goto out;
 
 	fio->old_blkaddr = dn.data_blkaddr;
 
@@ -1321,31 +1387,10 @@ int do_write_data_page(struct f2fs_io_info *fio)
 		ClearPageUptodate(page);
 		goto out_writepage;
 	}
-
-	if (f2fs_encrypted_inode(inode) && S_ISREG(inode->i_mode)) {
-		gfp_t gfp_flags = GFP_NOFS;
-
-		/* wait for GCed encrypted page writeback */
-		f2fs_wait_on_encrypted_page_writeback(F2FS_I_SB(inode),
-							fio->old_blkaddr);
-retry_encrypt:
-		fio->encrypted_page = fscrypt_encrypt_page(inode, fio->page,
-							PAGE_SIZE, 0,
-							fio->page->index,
-							gfp_flags);
-		if (IS_ERR(fio->encrypted_page)) {
-			err = PTR_ERR(fio->encrypted_page);
-			if (err == -ENOMEM) {
-				/* flush pending ios and wait for a while */
-				f2fs_flush_merged_bios(F2FS_I_SB(inode));
-				congestion_wait(BLK_RW_ASYNC, HZ/50);
-				gfp_flags |= __GFP_NOFAIL;
-				err = 0;
-				goto retry_encrypt;
-			}
-			goto out_writepage;
-		}
-	}
+got_it:
+	err = encrypt_one_page(fio);
+	if (err)
+		goto out_writepage;
 
 	set_page_writeback(page);
 
@@ -1353,22 +1398,27 @@ retry_encrypt:
 	 * If current allocation needs SSR,
 	 * it had better in-place writes for updated data.
 	 */
-	if (unlikely(fio->old_blkaddr != NEW_ADDR &&
-			!is_cold_data(page) &&
-			!IS_ATOMIC_WRITTEN_PAGE(page) &&
-			need_inplace_update(inode))) {
+	if (ipu_force || (valid_ipu_blkaddr(fio) && need_inplace_update(fio))) {
+		f2fs_put_dnode(&dn);
+		if (fio->need_lock)
+			f2fs_unlock_op(fio->sbi);
 		err = rewrite_data_page(fio);
+		trace_f2fs_do_write_data_page(fio->page, IPU);
 		set_inode_flag(inode, FI_UPDATE_WRITE);
-		trace_f2fs_do_write_data_page(page, IPU);
-	} else {
-		write_data_page(&dn, fio);
-		trace_f2fs_do_write_data_page(page, OPU);
-		set_inode_flag(inode, FI_APPEND_WRITE);
-		if (page->index == 0)
-			set_inode_flag(inode, FI_FIRST_BLOCK_WRITTEN);
+		return err;
 	}
+
+	/* LFS mode write path */
+	write_data_page(&dn, fio);
+	trace_f2fs_do_write_data_page(page, OPU);
+	set_inode_flag(inode, FI_APPEND_WRITE);
+	if (page->index == 0)
+		set_inode_flag(inode, FI_FIRST_BLOCK_WRITTEN);
 out_writepage:
 	f2fs_put_dnode(&dn);
+out:
+	if (fio->need_lock)
+		f2fs_unlock_op(fio->sbi);
 	return err;
 }
 
@@ -1389,9 +1439,11 @@ static int __write_data_page(struct page *page, bool *submitted,
 		.type = DATA,
 		.op = REQ_OP_WRITE,
 		.op_flags = wbc_to_write_flags(wbc),
+		.old_blkaddr = NULL_ADDR,
 		.page = page,
 		.encrypted_page = NULL,
 		.submitted = false,
+		.need_lock = true,
 	};
 
 	trace_f2fs_writepage(page, DATA);
@@ -1427,6 +1479,7 @@ write:
 
 	/* Dentry blocks are controlled by checkpoint */
 	if (S_ISDIR(inode->i_mode)) {
+		fio.need_lock = false;
 		err = do_write_data_page(&fio);
 		goto done;
 	}
@@ -1444,12 +1497,12 @@ write:
 		if (!err)
 			goto out;
 	}
-	f2fs_lock_op(sbi);
+
 	if (err == -EAGAIN)
 		err = do_write_data_page(&fio);
 	if (F2FS_I(inode)->last_disk_size < psize)
 		F2FS_I(inode)->last_disk_size = psize;
-	f2fs_unlock_op(sbi);
+
 done:
 	if (err && err != -ENOENT)
 		goto redirty_out;
@@ -1468,7 +1521,8 @@ out:
 	}
 
 	unlock_page(page);
-	f2fs_balance_fs(sbi, need_balance_fs);
+	if (!S_ISDIR(inode->i_mode))
+		f2fs_balance_fs(sbi, need_balance_fs);
 
 	if (unlikely(f2fs_cp_error(sbi))) {
 		f2fs_submit_merged_bio(sbi, DATA, WRITE);

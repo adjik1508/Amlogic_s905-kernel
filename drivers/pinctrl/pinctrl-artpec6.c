@@ -12,7 +12,6 @@
 #include <linux/err.h>
 #include <linux/init.h>
 #include <linux/io.h>
-#include <linux/module.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/pinctrl/pinctrl.h>
@@ -938,9 +937,9 @@ static int artpec6_pmx_probe(struct platform_device *pdev)
 	pmx->num_pin_groups = ARRAY_SIZE(artpec6_pin_groups);
 	pmx->pctl	    = pinctrl_register(&artpec6_desc, &pdev->dev, pmx);
 
-	if (!pmx->pctl) {
+	if (IS_ERR(pmx->pctl)) {
 		dev_err(&pdev->dev, "could not register pinctrl driver\n");
-		return -EINVAL;
+		return PTR_ERR(pmx->pctl);
 	}
 
 	platform_set_drvdata(pdev, pmx);
@@ -967,7 +966,6 @@ static const struct of_device_id artpec6_pinctrl_match[] = {
 static struct platform_driver artpec6_pmx_driver = {
 	.driver = {
 		.name = "artpec6-pinctrl",
-		.owner = THIS_MODULE,
 		.of_match_table = artpec6_pinctrl_match,
 	},
 	.probe = artpec6_pmx_probe,
@@ -979,14 +977,3 @@ static int __init artpec6_pmx_init(void)
 	return platform_driver_register(&artpec6_pmx_driver);
 }
 arch_initcall(artpec6_pmx_init);
-
-static void __exit artpec6_pmx_exit(void)
-{
-	platform_driver_unregister(&artpec6_pmx_driver);
-}
-module_exit(artpec6_pmx_exit);
-
-MODULE_AUTHOR("Chris Paterson <chris.paterson@linux.pieboy.co.uk>");
-MODULE_DESCRIPTION("Axis ARTPEC-6 pin control driver");
-MODULE_LICENSE("GPL v2");
-MODULE_DEVICE_TABLE(of, artpec6_pinctrl_match);

@@ -225,7 +225,7 @@ static struct scatterlist *crypt_get_sg_data(struct crypt_config *cc,
 					     struct scatterlist *sg);
 
 /*
- * Use this to access cipher attributes that are the same for each CPU.
+ * Use this to access cipher attributes that are independent of the key.
  */
 static struct crypto_skcipher *any_tfm(struct crypt_config *cc)
 {
@@ -349,10 +349,11 @@ static int crypt_iv_essiv_wipe(struct crypt_config *cc)
 	return err;
 }
 
-/* Set up per cpu cipher state */
-static struct crypto_cipher *setup_essiv_cpu(struct crypt_config *cc,
-					     struct dm_target *ti,
-					     u8 *salt, unsigned saltsize)
+/* Allocate the cipher for ESSIV */
+static struct crypto_cipher *alloc_essiv_cipher(struct crypt_config *cc,
+						struct dm_target *ti,
+						const u8 *salt,
+						unsigned int saltsize)
 {
 	struct crypto_cipher *essiv_tfm;
 	int err;
@@ -431,9 +432,8 @@ static int crypt_iv_essiv_ctr(struct crypt_config *cc, struct dm_target *ti,
 	cc->iv_gen_private.essiv.salt = salt;
 	cc->iv_gen_private.essiv.hash_tfm = hash_tfm;
 
-	essiv_tfm = setup_essiv_cpu(cc, ti, salt,
-				crypto_ahash_digestsize(hash_tfm));
-
+	essiv_tfm = alloc_essiv_cipher(cc, ti, salt,
+				       crypto_ahash_digestsize(hash_tfm));
 	if (IS_ERR(essiv_tfm)) {
 		crypt_iv_essiv_dtr(cc);
 		return PTR_ERR(essiv_tfm);
@@ -938,8 +938,13 @@ static int crypt_integrity_ctr(struct crypt_config *cc, struct dm_target *ti)
 		return -EINVAL;
 	}
 
-	if (bi->tag_size != cc->on_disk_tag_size) {
+	if (bi->tag_size != cc->on_disk_tag_size ||
+	    bi->tuple_size != cc->on_disk_tag_size) {
 		ti->error = "Integrity profile tag size mismatch.";
+		return -EINVAL;
+	}
+	if (1 << bi->interval_exp != cc->sector_size) {
+		ti->error = "Integrity profile sector size mismatch.";
 		return -EINVAL;
 	}
 
@@ -1322,7 +1327,7 @@ static int crypt_convert(struct crypt_config *cc,
 		case -EINPROGRESS:
 			ctx->r.req = NULL;
 			ctx->cc_sector += sector_step;
-			tag_offset += sector_step;
+			tag_offset++;
 			continue;
 		/*
 		 * The request was already processed (synchronously).
@@ -1330,7 +1335,7 @@ static int crypt_convert(struct crypt_config *cc,
 		case 0:
 			atomic_dec(&ctx->cc_pending);
 			ctx->cc_sector += sector_step;
-			tag_offset += sector_step;
+			tag_offset++;
 			cond_resched();
 			continue;
 		/*
@@ -1809,30 +1814,6 @@ static void kcryptd_queue_crypt(struct dm_crypt_io *io)
 	queue_work(cc->crypt_queue, &io->work);
 }
 
-/*
- * Decode key from its hex representation
- */
-static int crypt_decode_key(u8 *key, char *hex, unsigned int size)
-{
-	char buffer[3];
-	unsigned int i;
-
-	buffer[2] = '\0';
-
-	for (i = 0; i < size; i++) {
-		buffer[0] = *hex++;
-		buffer[1] = *hex++;
-
-		if (kstrtou8(buffer, 16, &key[i]))
-			return -EINVAL;
-	}
-
-	if (*hex != '\0')
-		return -EINVAL;
-
-	return 0;
-}
-
 static void crypt_free_tfms_aead(struct crypt_config *cc)
 {
 	if (!cc->cipher_tfm.tfms_aead)
@@ -2131,7 +2112,8 @@ static int crypt_set_key(struct crypt_config *cc, char *key)
 	kzfree(cc->key_string);
 	cc->key_string = NULL;
 
-	if (cc->key_size && crypt_decode_key(cc->key, key, cc->key_size) < 0)
+	/* Decode key from its hex representation. */
+	if (cc->key_size && hex2bin(cc->key, key, cc->key_size) < 0)
 		goto out;
 
 	r = crypt_setkey(cc);
@@ -2147,12 +2129,16 @@ out:
 
 static int crypt_wipe_key(struct crypt_config *cc)
 {
+	int r;
+
 	clear_bit(DM_CRYPT_KEY_VALID, &cc->flags);
-	memset(&cc->key, 0, cc->key_size * sizeof(u8));
+	get_random_bytes(&cc->key, cc->key_size);
 	kzfree(cc->key_string);
 	cc->key_string = NULL;
+	r = crypt_setkey(cc);
+	memset(&cc->key, 0, cc->key_size * sizeof(u8));
 
-	return crypt_setkey(cc);
+	return r;
 }
 
 static void crypt_dtr(struct dm_target *ti)
@@ -2735,19 +2721,22 @@ static int crypt_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 			ti->error = "Cannot allocate integrity tags mempool";
 			goto bad;
 		}
+
+		cc->tag_pool_max_sectors <<= cc->sector_shift;
 	}
 
 	ret = -ENOMEM;
-	cc->io_queue = alloc_workqueue("kcryptd_io", WQ_MEM_RECLAIM, 1);
+	cc->io_queue = alloc_workqueue("kcryptd_io", WQ_HIGHPRI | WQ_CPU_INTENSIVE | WQ_MEM_RECLAIM, 1);
 	if (!cc->io_queue) {
 		ti->error = "Couldn't create kcryptd io queue";
 		goto bad;
 	}
 
 	if (test_bit(DM_CRYPT_SAME_CPU, &cc->flags))
-		cc->crypt_queue = alloc_workqueue("kcryptd", WQ_CPU_INTENSIVE | WQ_MEM_RECLAIM, 1);
+		cc->crypt_queue = alloc_workqueue("kcryptd", WQ_HIGHPRI | WQ_CPU_INTENSIVE | WQ_MEM_RECLAIM, 1);
 	else
-		cc->crypt_queue = alloc_workqueue("kcryptd", WQ_CPU_INTENSIVE | WQ_MEM_RECLAIM | WQ_UNBOUND,
+		cc->crypt_queue = alloc_workqueue("kcryptd",
+						  WQ_HIGHPRI | WQ_CPU_INTENSIVE | WQ_MEM_RECLAIM | WQ_UNBOUND,
 						  num_online_cpus());
 	if (!cc->crypt_queue) {
 		ti->error = "Couldn't create kcryptd queue";
@@ -2815,16 +2804,15 @@ static int crypt_map(struct dm_target *ti, struct bio *bio)
 	crypt_io_init(io, cc, bio, dm_target_offset(ti, bio->bi_iter.bi_sector));
 
 	if (cc->on_disk_tag_size) {
-		unsigned tag_len = cc->on_disk_tag_size * bio_sectors(bio);
+		unsigned tag_len = cc->on_disk_tag_size * (bio_sectors(bio) >> cc->sector_shift);
 
 		if (unlikely(tag_len > KMALLOC_MAX_SIZE) ||
-		    unlikely(!(io->integrity_metadata = kzalloc(tag_len,
+		    unlikely(!(io->integrity_metadata = kmalloc(tag_len,
 				GFP_NOIO | __GFP_NORETRY | __GFP_NOMEMALLOC | __GFP_NOWARN)))) {
 			if (bio_sectors(bio) > cc->tag_pool_max_sectors)
 				dm_accept_partial_bio(bio, cc->tag_pool_max_sectors);
 			io->integrity_metadata = mempool_alloc(cc->tag_pool, GFP_NOIO);
 			io->integrity_metadata_from_pool = true;
-			memset(io->integrity_metadata, 0, cc->tag_pool_max_sectors * (1 << SECTOR_SHIFT));
 		}
 	}
 

@@ -15,6 +15,23 @@ menuconfig THERMAL
 
 if THERMAL
 
+config THERMAL_EMERGENCY_POWEROFF_DELAY_MS
+	int "Emergency poweroff delay in milli-seconds"
+	depends on THERMAL
+	default 0
+	help
+	  Thermal subsystem will issue a graceful shutdown when
+	  critical temperatures are reached using orderly_poweroff(). In
+	  case of failure of an orderly_poweroff(), the thermal emergency
+	  poweroff kicks in after a delay has elapsed and shuts down the system.
+	  This config is number of milliseconds to delay before emergency
+	  poweroff kicks in. Similarly to the critical trip point,
+	  the delay should be carefully profiled so as to give adequate
+	  time for orderly_poweroff() to finish on regular execution.
+	  If set to 0 emergency poweroff will not be supported.
+
+	  In doubt, leave as 0.
+
 config THERMAL_HWMON
 	bool
 	prompt "Expose thermal sensors as hwmon device"
@@ -363,7 +380,7 @@ endmenu
 
 config INTEL_BXT_PMIC_THERMAL
 	tristate "Intel Broxton PMIC thermal driver"
-	depends on X86 && INTEL_SOC_PMIC && REGMAP
+	depends on X86 && INTEL_SOC_PMIC_BXTWC && REGMAP
 	help
 	  Select this driver for Intel Broxton PMIC with ADC channels monitoring
 	  system temperature measurements and alerts.
@@ -455,13 +472,5 @@ config ZX2967_THERMAL
 	  Enable the zx2967 thermal sensors driver, which supports
 	  the primitive temperature sensor embedded in zx2967 SoCs.
 	  This sensor generates the real time die temperature.
-
-config BCM2835_THERMAL
-	tristate "Thermal sensors on bcm2835 SoC"
-	depends on ARCH_BCM2835 || COMPILE_TEST
-	depends on HAS_IOMEM
-	depends on THERMAL_OF
-	help
-	  Support for thermal sensors on Broadcom bcm2835 SoCs.
 
 endif

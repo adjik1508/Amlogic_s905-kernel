@@ -34,7 +34,7 @@
 #include <linux/proc_fs.h>
 #include <linux/if_arp.h>
 #include <linux/random.h>
-#include <asm/io.h>
+#include <linux/io.h>
 #include "ieee80211/ieee80211.h"
 
 #define RTL8192U
@@ -1041,10 +1041,10 @@ typedef struct r8192_priv {
 	u8 rfc_txpowertrackingindex;
 	u8 rfc_txpowertrackingindex_real;
 
-	s8 cck_present_attentuation;
-	u8 cck_present_attentuation_20Mdefault;
-	u8 cck_present_attentuation_40Mdefault;
-	s8 cck_present_attentuation_difference;
+	s8 cck_present_attenuation;
+	u8 cck_present_attenuation_20Mdefault;
+	u8 cck_present_attenuation_40Mdefault;
+	s8 cck_present_attenuation_difference;
 	bool btxpower_tracking;
 	bool bcck_in_ch14;
 	bool btxpowerdata_readfromEEPORM;

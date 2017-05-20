@@ -108,6 +108,7 @@
 
 #define XENON_EMMC_5_0_PHY_LOGIC_TIMING_ADJUST	\
 	(XENON_EMMC_5_0_PHY_REG_BASE + 0x14)
+#define XENON_EMMC_5_0_PHY_LOGIC_TIMING_VALUE	0x5A54
 #define XENON_EMMC_PHY_LOGIC_TIMING_ADJUST	(XENON_EMMC_PHY_REG_BASE + 0x18)
 #define XENON_LOGIC_TIMING_VALUE		0x00AA8977
 
@@ -130,6 +131,8 @@ struct xenon_emmc_phy_regs {
 	u16 logic_timing_adj;
 	/* DLL Update Enable bit */
 	u32 dll_update;
+	/* value in Logic Timing Adjustment register */
+	u32 logic_timing_val;
 };
 
 static const char * const phy_types[] = {
@@ -166,6 +169,7 @@ static struct xenon_emmc_phy_regs xenon_emmc_5_0_phy_regs = {
 	.dll_ctrl	= XENON_EMMC_5_0_PHY_DLL_CONTROL,
 	.logic_timing_adj = XENON_EMMC_5_0_PHY_LOGIC_TIMING_ADJUST,
 	.dll_update	= XENON_DLL_UPDATE_STROBE_5_0,
+	.logic_timing_val = XENON_EMMC_5_0_PHY_LOGIC_TIMING_VALUE,
 };
 
 static struct xenon_emmc_phy_regs xenon_emmc_5_1_phy_regs = {
@@ -176,6 +180,7 @@ static struct xenon_emmc_phy_regs xenon_emmc_5_1_phy_regs = {
 	.dll_ctrl	= XENON_EMMC_PHY_DLL_CONTROL,
 	.logic_timing_adj = XENON_EMMC_PHY_LOGIC_TIMING_ADJUST,
 	.dll_update	= XENON_DLL_UPDATE,
+	.logic_timing_val = XENON_LOGIC_TIMING_VALUE,
 };
 
 /*
@@ -607,7 +612,7 @@ static void xenon_emmc_phy_set(struct sdhci_host *host,
 
 	if (timing == MMC_TIMING_MMC_HS400)
 		/* Hardware team recommend a value for HS400 */
-		sdhci_writel(host, XENON_LOGIC_TIMING_VALUE,
+		sdhci_writel(host, phy_regs->logic_timing_val,
 			     phy_regs->logic_timing_adj);
 	else
 		xenon_emmc_phy_disable_data_strobe(host);
@@ -639,11 +644,8 @@ static int get_dt_pad_ctrl_data(struct sdhci_host *host,
 
 	params->pad_ctrl.reg = devm_ioremap_resource(mmc_dev(host->mmc),
 						     &iomem);
-	if (IS_ERR(params->pad_ctrl.reg)) {
-		dev_err(mmc_dev(host->mmc), "Unable to get SoC PHY PAD ctrl register for %s\n",
-			np->name);
+	if (IS_ERR(params->pad_ctrl.reg))
 		return PTR_ERR(params->pad_ctrl.reg);
-	}
 
 	ret = of_property_read_string(np, "marvell,pad-type", &name);
 	if (ret) {

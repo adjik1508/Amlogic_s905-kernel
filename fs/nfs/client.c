@@ -218,6 +218,7 @@ static void nfs_cb_idr_remove_locked(struct nfs_client *clp)
 static void pnfs_init_server(struct nfs_server *server)
 {
 	rpc_init_wait_queue(&server->roc_rpcwaitq, "pNFS ROC");
+	rpc_init_wait_queue(&server->uoc_rpcwaitq, "NFS UOC");
 }
 
 #else
@@ -545,6 +546,7 @@ static int nfs_start_lockd(struct nfs_server *server)
 		.noresvport	= server->flags & NFS_MOUNT_NORESVPORT ?
 					1 : 0,
 		.net		= clp->cl_net,
+		.nlmclnt_ops 	= clp->cl_nfs_mod->rpc_ops->nlmclnt_ops,
 	};
 
 	if (nlm_init.nfs_version > 3)

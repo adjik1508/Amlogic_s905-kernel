@@ -17,12 +17,17 @@
 #include <subcmd/parse-options.h>
 #include "util/bpf-loader.h"
 #include "util/debug.h"
+#include "util/event.h"
 #include <api/fs/fs.h>
 #include <api/fs/tracing_path.h>
 #include <errno.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <time.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <linux/kernel.h>
 
 const char perf_usage_string[] =
@@ -90,7 +95,7 @@ static int pager_command_config(const char *var, const char *value, void *data)
 }
 
 /* returns 0 for "no pager", 1 for "use pager", and -1 for "not specified" */
-int check_pager_config(const char *cmd)
+static int check_pager_config(const char *cmd)
 {
 	int err;
 	struct pager_config c;

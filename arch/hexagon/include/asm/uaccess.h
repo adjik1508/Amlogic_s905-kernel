@@ -97,10 +97,14 @@ static inline long hexagon_strncpy_from_user(char *dst, const char __user *src,
 		return -EFAULT;
 
 	if (res > n) {
-		copy_from_user(dst, src, n);
+		long left = raw_copy_from_user(dst, src, n);
+		if (unlikely(left))
+			memset(dst + (n - left), 0, left);
 		return n;
 	} else {
-		copy_from_user(dst, src, res);
+		long left = raw_copy_from_user(dst, src, res);
+		if (unlikely(left))
+			memset(dst + (res - left), 0, left);
 		return res-1;
 	}
 }

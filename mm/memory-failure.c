@@ -220,6 +220,9 @@ static int kill_proc(struct task_struct *t, unsigned long addr, int trapno,
  */
 void shake_page(struct page *p, int access)
 {
+	if (PageHuge(p))
+		return;
+
 	if (!PageSlab(p)) {
 		lru_add_drain_all();
 		if (PageLRU(p))
@@ -536,6 +539,13 @@ static int delete_from_lru_cache(struct page *p)
 		 */
 		ClearPageActive(p);
 		ClearPageUnevictable(p);
+
+		/*
+		 * Poisoned page might never drop its ref count to 0 so we have
+		 * to uncharge it manually from its memcg.
+		 */
+		mem_cgroup_uncharge(p);
+
 		/*
 		 * drop the page count elevated by isolate_lru_page()
 		 */
@@ -913,6 +923,7 @@ static bool hwpoison_user_mappings(struct page *p, unsigned long pfn,
 	bool unmap_success;
 	int kill = 1, forcekill;
 	struct page *hpage = *hpagep;
+	bool mlocked = PageMlocked(hpage);
 
 	/*
 	 * Here we are interested only in user-mapped pages, so skip any
@@ -975,6 +986,13 @@ static bool hwpoison_user_mappings(struct page *p, unsigned long pfn,
 	if (!unmap_success)
 		pr_err("Memory failure: %#lx: failed to unmap page (mapcount=%d)\n",
 		       pfn, page_mapcount(hpage));
+
+	/*
+	 * try_to_unmap() might put mlocked page in lru cache, so call
+	 * shake_page() again to ensure that it's flushed.
+	 */
+	if (mlocked)
+		shake_page(hpage, 0);
 
 	/*
 	 * Now that the dirty bit has been propagated to the
@@ -1137,22 +1155,14 @@ int memory_failure(unsigned long pfn, int trapno, int flags)
 	 * The check (unnecessarily) ignores LRU pages being isolated and
 	 * walked by the page reclaim code, however that's not a big loss.
 	 */
-	if (!PageHuge(p)) {
-		if (!PageLRU(p))
-			shake_page(p, 0);
-		if (!PageLRU(p)) {
-			/*
-			 * shake_page could have turned it free.
-			 */
-			if (is_free_buddy_page(p)) {
-				if (flags & MF_COUNT_INCREASED)
-					action_result(pfn, MF_MSG_BUDDY, MF_DELAYED);
-				else
-					action_result(pfn, MF_MSG_BUDDY_2ND,
-						      MF_DELAYED);
-				return 0;
-			}
-		}
+	shake_page(p, 0);
+	/* shake_page could have turned it free. */
+	if (!PageLRU(p) && is_free_buddy_page(p)) {
+		if (flags & MF_COUNT_INCREASED)
+			action_result(pfn, MF_MSG_BUDDY, MF_DELAYED);
+		else
+			action_result(pfn, MF_MSG_BUDDY_2ND, MF_DELAYED);
+		return 0;
 	}
 
 	lock_page(hpage);
@@ -1479,11 +1489,16 @@ EXPORT_SYMBOL(unpoison_memory);
 static struct page *new_page(struct page *p, unsigned long private, int **x)
 {
 	int nid = page_to_nid(p);
-	if (PageHuge(p))
-		return alloc_huge_page_node(page_hstate(compound_head(p)),
-						   nid);
-	else
+	if (PageHuge(p)) {
+		struct hstate *hstate = page_hstate(compound_head(p));
+
+		if (hstate_is_gigantic(hstate))
+			return alloc_huge_page_node(hstate, NUMA_NO_NODE);
+
+		return alloc_huge_page_node(hstate, nid);
+	} else {
 		return __alloc_pages_node(nid, GFP_HIGHUSER_MOVABLE, 0);
+	}
 }
 
 /*

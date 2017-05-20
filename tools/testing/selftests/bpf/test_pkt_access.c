@@ -5,6 +5,7 @@
  * License as published by the Free Software Foundation.
  */
 #include <stddef.h>
+#include <string.h>
 #include <linux/bpf.h>
 #include <linux/if_ether.h>
 #include <linux/if_packet.h>
@@ -14,8 +15,8 @@
 #include <linux/tcp.h>
 #include <linux/pkt_cls.h>
 #include "bpf_helpers.h"
+#include "bpf_endian.h"
 
-#define _htons __builtin_bswap16
 #define barrier() __asm__ __volatile__("": : :"memory")
 int _version SEC("version") = 1;
 
@@ -32,7 +33,7 @@ int process(struct __sk_buff *skb)
 	if (eth + 1 > data_end)
 		return TC_ACT_SHOT;
 
-	if (eth->h_proto == _htons(ETH_P_IP)) {
+	if (eth->h_proto == bpf_htons(ETH_P_IP)) {
 		struct iphdr *iph = (struct iphdr *)(eth + 1);
 
 		if (iph + 1 > data_end)
@@ -40,7 +41,7 @@ int process(struct __sk_buff *skb)
 		ihl_len = iph->ihl * 4;
 		proto = iph->protocol;
 		tcp = (struct tcphdr *)((void *)(iph) + ihl_len);
-	} else if (eth->h_proto == _htons(ETH_P_IPV6)) {
+	} else if (eth->h_proto == bpf_htons(ETH_P_IPV6)) {
 		struct ipv6hdr *ip6h = (struct ipv6hdr *)(eth + 1);
 
 		if (ip6h + 1 > data_end)

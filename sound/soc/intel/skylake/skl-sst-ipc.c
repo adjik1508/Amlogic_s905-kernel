@@ -427,6 +427,7 @@ static void skl_ipc_process_reply(struct sst_generic_ipc *ipc,
 		sst_dsp_inbox_read(ipc->dsp, msg->rx_data, msg->rx_size);
 		switch (IPC_GLB_NOTIFY_MSG_TYPE(header.primary)) {
 		case IPC_GLB_LOAD_MULTIPLE_MODS:
+		case IPC_GLB_LOAD_LIBRARY:
 			skl->mod_load_complete = true;
 			skl->mod_load_status = true;
 			wake_up(&skl->mod_load_wait);
@@ -443,6 +444,7 @@ static void skl_ipc_process_reply(struct sst_generic_ipc *ipc,
 			ipc->dsp->fw_ops.get_fw_errcode(ipc->dsp));
 		switch (IPC_GLB_NOTIFY_MSG_TYPE(header.primary)) {
 		case IPC_GLB_LOAD_MULTIPLE_MODS:
+		case IPC_GLB_LOAD_LIBRARY:
 			skl->mod_load_complete = true;
 			skl->mod_load_status = false;
 			wake_up(&skl->mod_load_wait);
@@ -971,7 +973,7 @@ int skl_ipc_get_large_config(struct sst_generic_ipc *ipc,
 EXPORT_SYMBOL_GPL(skl_ipc_get_large_config);
 
 int skl_sst_ipc_load_library(struct sst_generic_ipc *ipc,
-				u8 dma_id, u8 table_id)
+				u8 dma_id, u8 table_id, bool wait)
 {
 	struct skl_ipc_header header = {0};
 	u64 *ipc_header = (u64 *)(&header);
@@ -983,7 +985,11 @@ int skl_sst_ipc_load_library(struct sst_generic_ipc *ipc,
 	header.primary |= IPC_MOD_INSTANCE_ID(table_id);
 	header.primary |= IPC_MOD_ID(dma_id);
 
-	ret = sst_ipc_tx_message_wait(ipc, *ipc_header, NULL, 0, NULL, 0);
+	if (wait)
+		ret = sst_ipc_tx_message_wait(ipc, *ipc_header,
+					NULL, 0, NULL, 0);
+	else
+		ret = sst_ipc_tx_message_nowait(ipc, *ipc_header, NULL, 0);
 
 	if (ret < 0)
 		dev_err(ipc->dev, "ipc: load lib failed\n");

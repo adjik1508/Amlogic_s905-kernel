@@ -22,9 +22,9 @@
 #include <linux/sched.h>
 #include <linux/timer.h>
 #include <linux/kthread.h>
+#include <linux/serial_reg.h>	/* for UART_MCR* constants */
 
 #include "spk_priv.h"
-#include "serialio.h"
 #include "speakup.h"
 
 #define DRV_VERSION "2.21"
@@ -108,10 +108,10 @@ static struct spk_synth synth_apollo = {
 	.startup = SYNTH_START,
 	.checkval = SYNTH_CHECK,
 	.vars = vars,
-	.io_ops = &spk_serial_io_ops,
-	.probe = spk_serial_synth_probe,
-	.release = spk_serial_release,
-	.synth_immediate = spk_serial_synth_immediate,
+	.io_ops = &spk_ttyio_ops,
+	.probe = spk_ttyio_synth_probe,
+	.release = spk_ttyio_release,
+	.synth_immediate = spk_ttyio_synth_immediate,
 	.catch_up = do_catch_up,
 	.flush = spk_synth_flush,
 	.is_alive = spk_synth_is_alive_restart,
@@ -171,9 +171,8 @@ static void do_catch_up(struct spk_synth *synth)
 		full_time_val = full_time->u.n.value;
 		spin_unlock_irqrestore(&speakup_info.spinlock, flags);
 		if (!synth->io_ops->synth_out(synth, ch)) {
-			outb(UART_MCR_DTR, speakup_info.port_tts + UART_MCR);
-			outb(UART_MCR_DTR | UART_MCR_RTS,
-			     speakup_info.port_tts + UART_MCR);
+			synth->io_ops->tiocmset(0, UART_MCR_RTS);
+			synth->io_ops->tiocmset(UART_MCR_RTS, 0);
 			schedule_timeout(msecs_to_jiffies(full_time_val));
 			continue;
 		}

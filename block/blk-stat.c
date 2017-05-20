@@ -19,12 +19,6 @@ struct blk_queue_stats {
 	bool enable_accounting;
 };
 
-int blk_stat_rq_ddir(const struct request *rq)
-{
-	return rq_data_dir(rq);
-}
-EXPORT_SYMBOL_GPL(blk_stat_rq_ddir);
-
 static void blk_stat_init(struct blk_rq_stat *stat)
 {
 	stat->min = -1ULL;
@@ -102,13 +96,16 @@ void blk_stat_add(struct request *rq)
 
 	rcu_read_lock();
 	list_for_each_entry_rcu(cb, &q->stats->callbacks, list) {
-		if (blk_stat_is_active(cb)) {
-			bucket = cb->bucket_fn(rq);
-			if (bucket < 0)
-				continue;
-			stat = &this_cpu_ptr(cb->cpu_stat)[bucket];
-			__blk_stat_add(stat, value);
-		}
+		if (!blk_stat_is_active(cb))
+			continue;
+
+		bucket = cb->bucket_fn(rq);
+		if (bucket < 0)
+			continue;
+
+		stat = &get_cpu_ptr(cb->cpu_stat)[bucket];
+		__blk_stat_add(stat, value);
+		put_cpu_ptr(cb->cpu_stat);
 	}
 	rcu_read_unlock();
 }

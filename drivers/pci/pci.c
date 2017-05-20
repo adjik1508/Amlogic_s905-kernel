@@ -3386,6 +3386,7 @@ int pci_remap_iospace(const struct resource *res, phys_addr_t phys_addr)
 	return -ENODEV;
 #endif
 }
+EXPORT_SYMBOL(pci_remap_iospace);
 
 /**
  *	pci_unmap_iospace - Unmap the memory mapped I/O space
@@ -3403,6 +3404,7 @@ void pci_unmap_iospace(struct resource *res)
 	unmap_kernel_range(vaddr, resource_size(res));
 #endif
 }
+EXPORT_SYMBOL(pci_unmap_iospace);
 
 /**
  * devm_pci_remap_cfgspace - Managed pci_remap_cfgspace()

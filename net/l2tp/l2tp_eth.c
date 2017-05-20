@@ -130,8 +130,13 @@ static const struct net_device_ops l2tp_eth_netdev_ops = {
 	.ndo_set_mac_address	= eth_mac_addr,
 };
 
+static struct device_type l2tpeth_type = {
+	.name = "l2tpeth",
+};
+
 static void l2tp_eth_dev_setup(struct net_device *dev)
 {
+	SET_NETDEV_DEVTYPE(dev, &l2tpeth_type);
 	ether_setup(dev);
 	dev->priv_flags		&= ~IFF_TX_SKB_SHARING;
 	dev->features		|= NETIF_F_LLTX;
@@ -258,6 +263,7 @@ static void l2tp_eth_adjust_mtu(struct l2tp_tunnel *tunnel,
 
 static int l2tp_eth_create(struct net *net, u32 tunnel_id, u32 session_id, u32 peer_session_id, struct l2tp_session_cfg *cfg)
 {
+	unsigned char name_assign_type;
 	struct net_device *dev;
 	char name[IFNAMSIZ];
 	struct l2tp_tunnel *tunnel;
@@ -274,15 +280,12 @@ static int l2tp_eth_create(struct net *net, u32 tunnel_id, u32 session_id, u32 p
 	}
 
 	if (cfg->ifname) {
-		dev = dev_get_by_name(net, cfg->ifname);
-		if (dev) {
-			dev_put(dev);
-			rc = -EEXIST;
-			goto out;
-		}
 		strlcpy(name, cfg->ifname, IFNAMSIZ);
-	} else
+		name_assign_type = NET_NAME_USER;
+	} else {
 		strcpy(name, L2TP_ETH_DEV_NAME);
+		name_assign_type = NET_NAME_ENUM;
+	}
 
 	session = l2tp_session_create(sizeof(*spriv), tunnel, session_id,
 				      peer_session_id, cfg);
@@ -291,7 +294,7 @@ static int l2tp_eth_create(struct net *net, u32 tunnel_id, u32 session_id, u32 p
 		goto out;
 	}
 
-	dev = alloc_netdev(sizeof(*priv), name, NET_NAME_UNKNOWN,
+	dev = alloc_netdev(sizeof(*priv), name, name_assign_type,
 			   l2tp_eth_dev_setup);
 	if (!dev) {
 		rc = -ENOMEM;

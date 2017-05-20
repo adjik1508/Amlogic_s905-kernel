@@ -49,6 +49,13 @@
 #define DEFAULT_DEBUG_LEVEL_SHIFT 3
 #define PFX "i40evf: "
 
+/* VSI state flags shared with common code */
+enum i40evf_vsi_state_t {
+	__I40E_VSI_DOWN,
+	/* This must be last as it determines the size of the BITMAP */
+	__I40E_VSI_STATE_SIZE__,
+};
+
 /* dummy struct to make common code less painful */
 struct i40e_vsi {
 	struct i40evf_adapter *back;
@@ -56,7 +63,7 @@ struct i40e_vsi {
 	unsigned long active_vlans[BITS_TO_LONGS(VLAN_N_VID)];
 	u16 seid;
 	u16 id;
-	unsigned long state;
+	DECLARE_BITMAP(state, __I40E_VSI_STATE_SIZE__);
 	int base_vector;
 	u16 work_limit;
 	u16 qs_handle;
@@ -168,8 +175,6 @@ enum i40evf_critical_section_t {
 	__I40EVF_IN_CRITICAL_TASK,	/* cannot be interrupted */
 	__I40EVF_IN_CLIENT_TASK,
 };
-/* make common code happy */
-#define __I40E_DOWN __I40EVF_DOWN
 
 /* board specific private data structure */
 struct i40evf_adapter {
@@ -202,7 +207,6 @@ struct i40evf_adapter {
 
 	u32 flags;
 #define I40EVF_FLAG_RX_CSUM_ENABLED		BIT(0)
-#define I40EVF_FLAG_IN_NETPOLL			BIT(4)
 #define I40EVF_FLAG_IMIR_ENABLED		BIT(5)
 #define I40EVF_FLAG_MQ_CAPABLE			BIT(6)
 #define I40EVF_FLAG_PF_COMMS_FAILED		BIT(8)
@@ -219,9 +223,7 @@ struct i40evf_adapter {
 #define I40EVF_FLAG_ALLMULTI_ON			BIT(19)
 #define I40EVF_FLAG_LEGACY_RX			BIT(20)
 /* duplicates for common code */
-#define I40E_FLAG_FDIR_ATR_ENABLED		0
 #define I40E_FLAG_DCB_ENABLED			0
-#define I40E_FLAG_IN_NETPOLL			I40EVF_FLAG_IN_NETPOLL
 #define I40E_FLAG_RX_CSUM_ENABLED		I40EVF_FLAG_RX_CSUM_ENABLED
 #define I40E_FLAG_WB_ON_ITR_CAPABLE		I40EVF_FLAG_WB_ON_ITR_CAPABLE
 #define I40E_FLAG_OUTER_UDP_CSUM_CAPABLE	I40EVF_FLAG_OUTER_UDP_CSUM_CAPABLE
@@ -252,7 +254,6 @@ struct i40evf_adapter {
 	/* OS defined structs */
 	struct net_device *netdev;
 	struct pci_dev *pdev;
-	struct net_device_stats net_stats;
 
 	struct i40e_hw hw; /* defined in i40e_type.h */
 

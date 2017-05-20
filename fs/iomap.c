@@ -108,7 +108,7 @@ iomap_write_failed(struct inode *inode, loff_t pos, unsigned len)
 
 static int
 iomap_write_begin(struct inode *inode, loff_t pos, unsigned len, unsigned flags,
-		struct page **pagep, const struct iomap *iomap)
+		struct page **pagep, struct iomap *iomap)
 {
 	pgoff_t index = pos >> PAGE_SHIFT;
 	struct page *page;
@@ -151,7 +151,7 @@ iomap_write_end(struct inode *inode, loff_t pos, unsigned len,
 
 static loff_t
 iomap_write_actor(struct inode *inode, loff_t pos, loff_t length, void *data,
-		  const struct iomap *iomap)
+		struct iomap *iomap)
 {
 	struct iov_iter *i = data;
 	long status = 0;
@@ -267,7 +267,7 @@ __iomap_read_page(struct inode *inode, loff_t offset)
 
 static loff_t
 iomap_dirty_actor(struct inode *inode, loff_t pos, loff_t length, void *data,
-		const struct iomap *iomap)
+		struct iomap *iomap)
 {
 	long status = 0;
 	ssize_t written = 0;
@@ -331,7 +331,7 @@ iomap_file_dirty(struct inode *inode, loff_t pos, loff_t len,
 EXPORT_SYMBOL_GPL(iomap_file_dirty);
 
 static int iomap_zero(struct inode *inode, loff_t pos, unsigned offset,
-		unsigned bytes, const struct iomap *iomap)
+		unsigned bytes, struct iomap *iomap)
 {
 	struct page *page;
 	int status;
@@ -348,17 +348,18 @@ static int iomap_zero(struct inode *inode, loff_t pos, unsigned offset,
 }
 
 static int iomap_dax_zero(loff_t pos, unsigned offset, unsigned bytes,
-		const struct iomap *iomap)
+		struct iomap *iomap)
 {
 	sector_t sector = iomap->blkno +
 		(((pos & ~(PAGE_SIZE - 1)) - iomap->offset) >> 9);
 
-	return __dax_zero_page_range(iomap->bdev, sector, offset, bytes);
+	return __dax_zero_page_range(iomap->bdev, iomap->dax_dev, sector,
+			offset, bytes);
 }
 
 static loff_t
 iomap_zero_range_actor(struct inode *inode, loff_t pos, loff_t count,
-		void *data, const struct iomap *iomap)
+		void *data, struct iomap *iomap)
 {
 	bool *did_zero = data;
 	loff_t written = 0;
@@ -427,7 +428,7 @@ EXPORT_SYMBOL_GPL(iomap_truncate_page);
 
 static loff_t
 iomap_page_mkwrite_actor(struct inode *inode, loff_t pos, loff_t length,
-		void *data, const struct iomap *iomap)
+		void *data, struct iomap *iomap)
 {
 	struct page *page = data;
 	int ret;
@@ -518,7 +519,7 @@ static int iomap_to_fiemap(struct fiemap_extent_info *fi,
 
 static loff_t
 iomap_fiemap_actor(struct inode *inode, loff_t pos, loff_t length, void *data,
-		const struct iomap *iomap)
+		struct iomap *iomap)
 {
 	struct fiemap_ctx *ctx = data;
 	loff_t ret = length;
@@ -703,7 +704,7 @@ static void iomap_dio_bio_end_io(struct bio *bio)
 }
 
 static blk_qc_t
-iomap_dio_zero(struct iomap_dio *dio, const struct iomap *iomap, loff_t pos,
+iomap_dio_zero(struct iomap_dio *dio, struct iomap *iomap, loff_t pos,
 		unsigned len)
 {
 	struct page *page = ZERO_PAGE(0);
@@ -727,7 +728,7 @@ iomap_dio_zero(struct iomap_dio *dio, const struct iomap *iomap, loff_t pos,
 
 static loff_t
 iomap_dio_actor(struct inode *inode, loff_t pos, loff_t length,
-		void *data, const struct iomap *iomap)
+		void *data, struct iomap *iomap)
 {
 	struct iomap_dio *dio = data;
 	unsigned int blkbits = blksize_bits(bdev_logical_block_size(iomap->bdev));
@@ -880,16 +881,14 @@ iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 		flags |= IOMAP_WRITE;
 	}
 
-	if (mapping->nrpages) {
-		ret = filemap_write_and_wait_range(mapping, start, end);
-		if (ret)
-			goto out_free_dio;
+	ret = filemap_write_and_wait_range(mapping, start, end);
+	if (ret)
+		goto out_free_dio;
 
-		ret = invalidate_inode_pages2_range(mapping,
-				start >> PAGE_SHIFT, end >> PAGE_SHIFT);
-		WARN_ON_ONCE(ret);
-		ret = 0;
-	}
+	ret = invalidate_inode_pages2_range(mapping,
+			start >> PAGE_SHIFT, end >> PAGE_SHIFT);
+	WARN_ON_ONCE(ret);
+	ret = 0;
 
 	inode_dio_begin(inode);
 
@@ -904,6 +903,9 @@ iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 			break;
 		}
 		pos += ret;
+
+		if (iov_iter_rw(iter) == READ && pos >= dio->i_size)
+			break;
 	} while ((count = iov_iter_count(iter)) > 0);
 	blk_finish_plug(&plug);
 
@@ -944,7 +946,7 @@ iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
 	 * one is a pretty crazy thing to do, so we don't support it 100%.  If
 	 * this invalidation fails, tough, the write still worked...
 	 */
-	if (iov_iter_rw(iter) == WRITE && mapping->nrpages) {
+	if (iov_iter_rw(iter) == WRITE) {
 		int err = invalidate_inode_pages2_range(mapping,
 				start >> PAGE_SHIFT, end >> PAGE_SHIFT);
 		WARN_ON_ONCE(err);

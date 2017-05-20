@@ -1744,7 +1744,6 @@ atmel_hsmc_nand_controller_legacy_init(struct atmel_hsmc_nand_controller *nc)
 		.reg_bits = 32,
 		.val_bits = 32,
 		.reg_stride = 4,
-		.val_bits = 32,
 	};
 
 	struct device *dev = nc->base.dev;
@@ -1979,7 +1978,7 @@ err:
 	return ret;
 }
 
-const struct atmel_nand_controller_ops atmel_hsmc_nc_ops = {
+static const struct atmel_nand_controller_ops atmel_hsmc_nc_ops = {
 	.probe = atmel_hsmc_nand_controller_probe,
 	.remove = atmel_hsmc_nand_controller_remove,
 	.ecc_init = atmel_hsmc_nand_ecc_init,
@@ -2038,7 +2037,7 @@ atmel_smc_nand_controller_remove(struct atmel_nand_controller *nc)
 	return 0;
 }
 
-const struct atmel_nand_controller_ops atmel_smc_nc_ops = {
+static const struct atmel_nand_controller_ops atmel_smc_nc_ops = {
 	.probe = atmel_smc_nand_controller_probe,
 	.remove = atmel_smc_nand_controller_remove,
 	.ecc_init = atmel_nand_ecc_init,

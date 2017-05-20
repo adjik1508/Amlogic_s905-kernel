@@ -106,7 +106,7 @@ fi
 echo "---------------------------"
 echo "running userfaultfd_hugetlb"
 echo "---------------------------"
-# 258MB total huge pages == 128MB src and 128MB dst
+# 256MB total huge pages == 128MB src and 128MB dst
 ./userfaultfd hugetlb 128 32 $mnt/ufd_test_file
 if [ $? -ne 0 ]; then
 	echo "[FAIL]"
@@ -158,6 +158,17 @@ echo "--------------------"
 echo "running mlock2-tests"
 echo "--------------------"
 ./mlock2-tests
+if [ $? -ne 0 ]; then
+	echo "[FAIL]"
+	exitcode=1
+else
+	echo "[PASS]"
+fi
+
+echo "-----------------------------"
+echo "running virtual_address_range"
+echo "-----------------------------"
+./virtual_address_range
 if [ $? -ne 0 ]; then
 	echo "[FAIL]"
 	exitcode=1

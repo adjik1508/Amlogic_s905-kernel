@@ -21,6 +21,7 @@
 #include "builtin.h"
 #include "util/color.h"
 #include "util/debug.h"
+#include "util/event.h"
 #include "util/evlist.h"
 #include <subcmd/exec-cmd.h>
 #include "util/machine.h"
@@ -45,6 +46,8 @@
 #include <errno.h>
 #include <inttypes.h>
 #include <libaudit.h> /* FIXME: Still needed for audit_errno_to_name */
+#include <poll.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <linux/err.h>

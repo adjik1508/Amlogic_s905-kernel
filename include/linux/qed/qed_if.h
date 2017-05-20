@@ -144,6 +144,7 @@ struct qed_dcbx_operational_params {
 	bool enabled;
 	bool ieee;
 	bool cee;
+	bool local;
 	u32 err;
 };
 
@@ -337,6 +338,11 @@ struct qed_dev_info {
 	bool wol_support;
 
 	enum qed_dev_type dev_type;
+
+	/* Output parameters for qede */
+	bool		vxlan_enable;
+	bool		gre_enable;
+	bool		geneve_enable;
 };
 
 enum qed_sb_type {
@@ -629,7 +635,7 @@ struct qed_common_ops {
  * @return 0 on success, error otherwise.
  */
 	int (*set_coalesce)(struct qed_dev *cdev, u16 rx_coal, u16 tx_coal,
-			    u8 qid, u16 sb_id);
+			    u16 qid, u16 sb_id);
 
 /**
  * @brief set_led - Configure LED mode

@@ -2,7 +2,11 @@
 #include <linux/kernel.h>
 #include <sys/time.h>
 #include <sys/resource.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <errno.h>
+#include "compress.h"
 #include "path.h"
 #include "symbol.h"
 #include "dso.h"

@@ -324,14 +324,14 @@ static void erratum_set_next_event_tval_generic(const int access, unsigned long 
 	arch_timer_reg_write(access, ARCH_TIMER_REG_CTRL, ctrl, clk);
 }
 
-static int erratum_set_next_event_tval_virt(unsigned long evt,
+static __maybe_unused int erratum_set_next_event_tval_virt(unsigned long evt,
 					    struct clock_event_device *clk)
 {
 	erratum_set_next_event_tval_generic(ARCH_TIMER_VIRT_ACCESS, evt, clk);
 	return 0;
 }
 
-static int erratum_set_next_event_tval_phys(unsigned long evt,
+static __maybe_unused int erratum_set_next_event_tval_phys(unsigned long evt,
 					    struct clock_event_device *clk)
 {
 	erratum_set_next_event_tval_generic(ARCH_TIMER_PHYS_ACCESS, evt, clk);
@@ -1268,7 +1268,7 @@ arch_timer_mem_find_best_frame(struct arch_timer_mem *timer_mem)
 		pr_err("Unable to find a suitable frame in timer @ %pa\n",
 			&timer_mem->cntctlbase);
 
-	return frame;
+	return best_frame;
 }
 
 static int __init

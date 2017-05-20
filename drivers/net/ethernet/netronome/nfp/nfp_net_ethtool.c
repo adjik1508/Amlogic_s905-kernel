@@ -211,10 +211,15 @@ nfp_net_get_link_ksettings(struct net_device *netdev,
 		return 0;
 
 	/* Use link speed from ETH table if available, otherwise try the BAR */
-	if (nn->eth_port && nfp_net_link_changed_read_clear(nn))
-		nfp_net_refresh_port_config(nn);
-	/* Separate if - on FW error the port could've disappeared from table */
 	if (nn->eth_port) {
+		int err;
+
+		if (nfp_net_link_changed_read_clear(nn)) {
+			err = nfp_net_refresh_eth_port(nn);
+			if (err)
+				return err;
+		}
+
 		cmd->base.port = nn->eth_port->port_type;
 		cmd->base.speed = nn->eth_port->speed;
 		cmd->base.duplex = DUPLEX_FULL;
@@ -273,7 +278,7 @@ nfp_net_set_link_ksettings(struct net_device *netdev,
 	if (err > 0)
 		return 0; /* no change */
 
-	nfp_net_refresh_port_config(nn);
+	nfp_net_refresh_port_table(nn);
 
 	return err;
 
@@ -304,7 +309,7 @@ static int nfp_net_set_ring_size(struct nfp_net *nn, u32 rxd_cnt, u32 txd_cnt)
 	dp->rxd_cnt = rxd_cnt;
 	dp->txd_cnt = txd_cnt;
 
-	return nfp_net_ring_reconfig(nn, dp);
+	return nfp_net_ring_reconfig(nn, dp, NULL);
 }
 
 static int nfp_net_set_ringparam(struct net_device *netdev,
@@ -491,7 +496,7 @@ static int nfp_net_get_rss_hash_opts(struct nfp_net *nn,
 
 	cmd->data = 0;
 
-	if (!(nn->cap & NFP_NET_CFG_CTRL_RSS))
+	if (!(nn->cap & NFP_NET_CFG_CTRL_RSS_ANY))
 		return -EOPNOTSUPP;
 
 	nfp_rss_flag = ethtool_flow_to_nfp_flag(cmd->flow_type);
@@ -528,7 +533,7 @@ static int nfp_net_set_rss_hash_opt(struct nfp_net *nn,
 	u32 nfp_rss_flag;
 	int err;
 
-	if (!(nn->cap & NFP_NET_CFG_CTRL_RSS))
+	if (!(nn->cap & NFP_NET_CFG_CTRL_RSS_ANY))
 		return -EOPNOTSUPP;
 
 	/* RSS only supports IP SA/DA and L4 src/dst ports  */
@@ -590,7 +595,7 @@ static u32 nfp_net_get_rxfh_indir_size(struct net_device *netdev)
 {
 	struct nfp_net *nn = netdev_priv(netdev);
 
-	if (!(nn->cap & NFP_NET_CFG_CTRL_RSS))
+	if (!(nn->cap & NFP_NET_CFG_CTRL_RSS_ANY))
 		return 0;
 
 	return ARRAY_SIZE(nn->rss_itbl);
@@ -600,7 +605,7 @@ static u32 nfp_net_get_rxfh_key_size(struct net_device *netdev)
 {
 	struct nfp_net *nn = netdev_priv(netdev);
 
-	if (!(nn->cap & NFP_NET_CFG_CTRL_RSS))
+	if (!(nn->cap & NFP_NET_CFG_CTRL_RSS_ANY))
 		return -EOPNOTSUPP;
 
 	return nfp_net_rss_key_sz(nn);
@@ -612,7 +617,7 @@ static int nfp_net_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key,
 	struct nfp_net *nn = netdev_priv(netdev);
 	int i;
 
-	if (!(nn->cap & NFP_NET_CFG_CTRL_RSS))
+	if (!(nn->cap & NFP_NET_CFG_CTRL_RSS_ANY))
 		return -EOPNOTSUPP;
 
 	if (indir)
@@ -636,7 +641,7 @@ static int nfp_net_set_rxfh(struct net_device *netdev,
 	struct nfp_net *nn = netdev_priv(netdev);
 	int i;
 
-	if (!(nn->cap & NFP_NET_CFG_CTRL_RSS) ||
+	if (!(nn->cap & NFP_NET_CFG_CTRL_RSS_ANY) ||
 	    !(hfunc == ETH_RSS_HASH_NO_CHANGE || hfunc == nn->rss_hfunc))
 		return -EOPNOTSUPP;
 
@@ -786,7 +791,7 @@ static int nfp_net_set_coalesce(struct net_device *netdev,
 	    ec->tx_coalesce_usecs_high ||
 	    ec->tx_max_coalesced_frames_high ||
 	    ec->rate_sample_interval)
-		return -ENOTSUPP;
+		return -EOPNOTSUPP;
 
 	/* Compute factor used to convert coalesce '_usecs' parameters to
 	 * ME timestamp ticks.  There are 16 ME clock cycles for each timestamp
@@ -875,7 +880,7 @@ static int nfp_net_set_num_rings(struct nfp_net *nn, unsigned int total_rx,
 	if (dp->xdp_prog)
 		dp->num_tx_rings += total_rx;
 
-	return nfp_net_ring_reconfig(nn, dp);
+	return nfp_net_ring_reconfig(nn, dp, NULL);
 }
 
 static int nfp_net_set_channels(struct net_device *netdev,

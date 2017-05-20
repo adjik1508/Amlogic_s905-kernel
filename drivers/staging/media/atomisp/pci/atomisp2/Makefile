@@ -157,17 +157,6 @@ atomisp-objs += \
 	hrt/hive_isp_css_mm_hrt.o \
 	atomisp_v4l2.o
 	
-extra= \
-	hrt/hive_isp_css_mm_hrt.o \
-	hrt/memory_access.o \
-	hrt/device_access.o \
-	hmm/hmm_dynamic_pool.o \
-	hmm/hmm_vm.o \
-	hmm/hmm_reserved_pool.o \
-	hmm/hmm_bo_dev.o \
-	hmm/hmm.o \
-	hmm/hmm_bo.o
-
 # These will be needed when clean merge CHT support nicely into the driver
 # Keep them here handy for when we get to that point
 #
@@ -301,7 +290,6 @@ INCLUDES += \
 	-I$(atomisp)/css2400/isp/kernels/s3a/ \
 	-I$(atomisp)/css2400/isp/kernels/s3a/s3a_1.0/ \
 	-I$(atomisp)/css2400/isp/kernels/s3a_stat_ls/ \
-	-I$(atomisp)/css2400/isp/kernels/satm/ \
 	-I$(atomisp)/css2400/isp/kernels/scale/ \
 	-I$(atomisp)/css2400/isp/kernels/scale/scale_1.0/ \
 	-I$(atomisp)/css2400/isp/kernels/sc/ \
@@ -363,5 +351,5 @@ DEFINES := -DHRT_HW -DHRT_ISP_CSS_CUSTOM_HOST -DHRT_USE_VIR_ADDRS -D__HOST__
 DEFINES += -DATOMISP_POSTFIX=\"css2400b0_v21\" -DISP2400B0
 DEFINES += -DSYSTEM_hive_isp_css_2400_system -DISP2400
 
-ccflags-y += $(INCLUDES) $(DEFINES) -fno-common -Werror
+ccflags-y += $(INCLUDES) $(DEFINES) -fno-common
 
