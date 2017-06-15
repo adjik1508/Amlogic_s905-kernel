@@ -4,6 +4,7 @@
 
 # Each configuration option enables a list of files.
 
+obj-y 				  += fbtft/
 obj-$(CONFIG_VGASTATE)            += vgastate.o
 obj-$(CONFIG_HDMI)                += hdmi.o
 obj-y                             += fb_notify.o

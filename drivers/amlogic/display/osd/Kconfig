@@ -46,4 +46,12 @@ config FB_OSD2_CURSOR
 	default n
 	help
 		Select to enable OSD2 cursor.
+
+config FB_SOFT_CURSOR
+	boolean "Framebuffer Soft Cursor Fallback"
+	depends on !FB_OSD2_CURSOR
+	default y
+	help
+		Select to enable soft cursor.
+
 endmenu

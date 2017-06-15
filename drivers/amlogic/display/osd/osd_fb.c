@@ -1131,6 +1131,13 @@ static int osd_cursor(struct fb_info *fbi, struct fb_cursor *var)
 }
 #endif
 
+#if defined(CONFIG_FB_SOFT_CURSOR)
+static int osd_soft_cursor(struct fb_info *fbi, struct fb_cursor *var)
+{
+	return -EINVAL;	/* just to force soft_cursor() call */
+}
+#endif
+
 static int osd_sync(struct fb_info *info)
 {
 	return 0;
@@ -1148,7 +1155,7 @@ static struct fb_ops osd_ops = {
 	.fb_copyarea    = cfb_copyarea,
 	.fb_imageblit   = cfb_imageblit,
 #ifdef CONFIG_FB_SOFT_CURSOR
-	.fb_cursor      = soft_cursor,
+	.fb_cursor      = osd_soft_cursor,
 #elif defined(CONFIG_FB_OSD2_CURSOR)
 	.fb_cursor      = osd_cursor,
 #endif
