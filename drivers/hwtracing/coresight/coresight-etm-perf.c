@@ -201,7 +201,6 @@ static void *etm_setup_aux(int event_cpu, void **pages,
 	event_data = alloc_event_data(event_cpu);
 	if (!event_data)
 		return NULL;
-	INIT_WORK(&event_data->work, free_event_data);
 
 	/*
 	 * In theory nothing prevent tracers in a trace session from being
@@ -217,6 +216,8 @@ static void *etm_setup_aux(int event_cpu, void **pages,
 	sink = coresight_get_enabled_sink(true);
 	if (!sink)
 		goto err;
+
+	INIT_WORK(&event_data->work, free_event_data);
 
 	mask = &event_data->mask;
 

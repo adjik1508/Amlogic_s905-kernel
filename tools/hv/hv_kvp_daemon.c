@@ -39,7 +39,6 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <net/if.h>
-#include <limits.h>
 #include <getopt.h>
 
 /*
@@ -97,8 +96,6 @@ static struct utsname uts_buf;
 #ifndef KVP_SCRIPTS_PATH
 #define KVP_SCRIPTS_PATH "/usr/libexec/hypervkvpd/"
 #endif
-
-#define KVP_NET_DIR "/sys/class/net/"
 
 #define MAX_FILE_NAME 100
 #define ENTRIES_PER_BLOCK 50
@@ -599,21 +596,26 @@ static char *kvp_get_if_name(char *guid)
 	DIR *dir;
 	struct dirent *entry;
 	FILE    *file;
-	char    *p, *x;
+	char    *p, *q, *x;
 	char    *if_name = NULL;
 	char    buf[256];
-	char dev_id[PATH_MAX];
+	char *kvp_net_dir = "/sys/class/net/";
+	char dev_id[256];
 
-	dir = opendir(KVP_NET_DIR);
+	dir = opendir(kvp_net_dir);
 	if (dir == NULL)
 		return NULL;
+
+	snprintf(dev_id, sizeof(dev_id), "%s", kvp_net_dir);
+	q = dev_id + strlen(kvp_net_dir);
 
 	while ((entry = readdir(dir)) != NULL) {
 		/*
 		 * Set the state for the next pass.
 		 */
-		snprintf(dev_id, sizeof(dev_id), "%s%s/device/device_id",
-			 KVP_NET_DIR, entry->d_name);
+		*q = '\0';
+		strcat(dev_id, entry->d_name);
+		strcat(dev_id, "/device/device_id");
 
 		file = fopen(dev_id, "r");
 		if (file == NULL)
@@ -651,12 +653,12 @@ static char *kvp_if_name_to_mac(char *if_name)
 	FILE    *file;
 	char    *p, *x;
 	char    buf[256];
-	char addr_file[PATH_MAX];
+	char addr_file[256];
 	unsigned int i;
 	char *mac_addr = NULL;
 
-	snprintf(addr_file, sizeof(addr_file), "%s%s%s", KVP_NET_DIR,
-		 if_name, "/address");
+	snprintf(addr_file, sizeof(addr_file), "%s%s%s", "/sys/class/net/",
+		if_name, "/address");
 
 	file = fopen(addr_file, "r");
 	if (file == NULL)
@@ -686,22 +688,28 @@ static char *kvp_mac_to_if_name(char *mac)
 	DIR *dir;
 	struct dirent *entry;
 	FILE    *file;
-	char    *p, *x;
+	char    *p, *q, *x;
 	char    *if_name = NULL;
 	char    buf[256];
-	char dev_id[PATH_MAX];
+	char *kvp_net_dir = "/sys/class/net/";
+	char dev_id[256];
 	unsigned int i;
 
-	dir = opendir(KVP_NET_DIR);
+	dir = opendir(kvp_net_dir);
 	if (dir == NULL)
 		return NULL;
+
+	snprintf(dev_id, sizeof(dev_id), "%s", kvp_net_dir);
+	q = dev_id + strlen(kvp_net_dir);
 
 	while ((entry = readdir(dir)) != NULL) {
 		/*
 		 * Set the state for the next pass.
 		 */
-		snprintf(dev_id, sizeof(dev_id), "%s%s/address", KVP_NET_DIR,
-			 entry->d_name);
+		*q = '\0';
+
+		strcat(dev_id, entry->d_name);
+		strcat(dev_id, "/address");
 
 		file = fopen(dev_id, "r");
 		if (file == NULL)
@@ -1210,9 +1218,9 @@ static int process_ip_string(FILE *f, char *ip_string, int type)
 static int kvp_set_ip_info(char *if_name, struct hv_kvp_ipaddr_value *new_val)
 {
 	int error = 0;
-	char if_file[PATH_MAX];
+	char if_file[128];
 	FILE *file;
-	char cmd[PATH_MAX];
+	char cmd[512];
 	char *mac_addr;
 
 	/*

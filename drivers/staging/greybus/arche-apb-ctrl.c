@@ -22,8 +22,6 @@
 #include "arche_platform.h"
 
 
-static void apb_bootret_deassert(struct device *dev);
-
 struct arche_apb_ctrl_drvdata {
 	/* Control GPIO signals to and from AP <=> AP Bridges */
 	int resetn_gpio;
@@ -224,7 +222,14 @@ static void poweroff_seq(struct platform_device *pdev)
 	/* TODO: May have to send an event to SVC about this exit */
 }
 
-static void apb_bootret_deassert(struct device *dev)
+void apb_bootret_assert(struct device *dev)
+{
+	struct arche_apb_ctrl_drvdata *apb = dev_get_drvdata(dev);
+
+	gpio_set_value(apb->boot_ret_gpio, 1);
+}
+
+void apb_bootret_deassert(struct device *dev)
 {
 	struct arche_apb_ctrl_drvdata *apb = dev_get_drvdata(dev);
 

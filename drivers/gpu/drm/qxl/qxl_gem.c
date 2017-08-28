@@ -23,9 +23,8 @@
  *          Alon Levy
  */
 
-#include <drm/drmP.h>
-#include <drm/drm.h>
-
+#include "drmP.h"
+#include "drm/drm.h"
 #include "qxl_drv.h"
 #include "qxl_object.h"
 

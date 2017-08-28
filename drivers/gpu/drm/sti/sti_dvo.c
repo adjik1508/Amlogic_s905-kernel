@@ -186,7 +186,8 @@ static int dvo_dbg_show(struct seq_file *s, void *data)
 	DBGFS_DUMP(DVO_LUT_PROG_MID);
 	DBGFS_DUMP(DVO_LUT_PROG_HIGH);
 	dvo_dbg_awg_microcode(s, dvo->regs + DVO_DIGSYNC_INSTR_I);
-	seq_putc(s, '\n');
+	seq_puts(s, "\n");
+
 	return 0;
 }
 

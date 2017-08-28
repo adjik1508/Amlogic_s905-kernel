@@ -2822,13 +2822,6 @@ static void mwifiex_pcie_device_dump_work(struct mwifiex_adapter *adapter)
 	mwifiex_upload_device_dump(adapter, drv_info, drv_info_size);
 }
 
-static void mwifiex_pcie_card_reset_work(struct mwifiex_adapter *adapter)
-{
-	struct pcie_service_card *card = adapter->card;
-
-	pci_reset_function(card->dev);
-}
-
 static void mwifiex_pcie_work(struct work_struct *work)
 {
 	struct pcie_service_card *card =
@@ -2837,9 +2830,6 @@ static void mwifiex_pcie_work(struct work_struct *work)
 	if (test_and_clear_bit(MWIFIEX_IFACE_WORK_DEVICE_DUMP,
 			       &card->work_flags))
 		mwifiex_pcie_device_dump_work(card->adapter);
-	if (test_and_clear_bit(MWIFIEX_IFACE_WORK_CARD_RESET,
-			       &card->work_flags))
-		mwifiex_pcie_card_reset_work(card->adapter);
 }
 
 /* This function dumps FW information */
@@ -2847,17 +2837,12 @@ static void mwifiex_pcie_device_dump(struct mwifiex_adapter *adapter)
 {
 	struct pcie_service_card *card = adapter->card;
 
-	if (!test_and_set_bit(MWIFIEX_IFACE_WORK_DEVICE_DUMP,
-			      &card->work_flags))
-		schedule_work(&card->work);
-}
+	if (test_bit(MWIFIEX_IFACE_WORK_DEVICE_DUMP, &card->work_flags))
+		return;
 
-static void mwifiex_pcie_card_reset(struct mwifiex_adapter *adapter)
-{
-	struct pcie_service_card *card = adapter->card;
+	set_bit(MWIFIEX_IFACE_WORK_DEVICE_DUMP, &card->work_flags);
 
-	if (!test_and_set_bit(MWIFIEX_IFACE_WORK_CARD_RESET, &card->work_flags))
-		schedule_work(&card->work);
+	schedule_work(&card->work);
 }
 
 static void mwifiex_pcie_free_buffers(struct mwifiex_adapter *adapter)
@@ -3289,7 +3274,6 @@ static struct mwifiex_if_ops pcie_ops = {
 	.cleanup_mpa_buf =		NULL,
 	.init_fw_port =			mwifiex_pcie_init_fw_port,
 	.clean_pcie_ring =		mwifiex_clean_pcie_ring_buf,
-	.card_reset =			mwifiex_pcie_card_reset,
 	.reg_dump =			mwifiex_pcie_reg_dump,
 	.device_dump =			mwifiex_pcie_device_dump,
 	.down_dev =			mwifiex_pcie_down_dev,

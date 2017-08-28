@@ -139,7 +139,9 @@ static const struct reg_default ak4613_reg[] = {
 #define AUDIO_IFACE(b, fmt) { b, SND_SOC_DAIFMT_##fmt }
 static const struct ak4613_interface ak4613_iface[] = {
 	/* capture */				/* playback */
-	/* [0] - [2] are not supported */
+	[0] = {	AUDIO_IFACE(24, LEFT_J),	AUDIO_IFACE(16, RIGHT_J) },
+	[1] = {	AUDIO_IFACE(24, LEFT_J),	AUDIO_IFACE(20, RIGHT_J) },
+	[2] = {	AUDIO_IFACE(24, LEFT_J),	AUDIO_IFACE(24, RIGHT_J) },
 	[3] = {	AUDIO_IFACE(24, LEFT_J),	AUDIO_IFACE(24, LEFT_J) },
 	[4] = {	AUDIO_IFACE(24, I2S),		AUDIO_IFACE(24, I2S) },
 };
@@ -260,9 +262,11 @@ static int ak4613_dai_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 	fmt &= SND_SOC_DAIFMT_FORMAT_MASK;
 
 	switch (fmt) {
+	case SND_SOC_DAIFMT_RIGHT_J:
 	case SND_SOC_DAIFMT_LEFT_J:
 	case SND_SOC_DAIFMT_I2S:
 		priv->fmt = fmt;
+
 		break;
 	default:
 		return -EINVAL;
@@ -282,8 +286,13 @@ static bool ak4613_dai_fmt_matching(const struct ak4613_interface *iface,
 	if (fmts->fmt != fmt)
 		return false;
 
-	if (fmts->width != width)
-		return false;
+	if (fmt == SND_SOC_DAIFMT_RIGHT_J) {
+		if (fmts->width != width)
+			return false;
+	} else {
+		if (fmts->width < width)
+			return false;
+	}
 
 	return true;
 }
@@ -411,7 +420,8 @@ static const struct snd_soc_dai_ops ak4613_dai_ops = {
 				 SNDRV_PCM_RATE_96000  |\
 				 SNDRV_PCM_RATE_176400 |\
 				 SNDRV_PCM_RATE_192000)
-#define AK4613_PCM_FMTBIT	(SNDRV_PCM_FMTBIT_S24_LE)
+#define AK4613_PCM_FMTBIT	(SNDRV_PCM_FMTBIT_S16_LE |\
+				 SNDRV_PCM_FMTBIT_S24_LE)
 
 static struct snd_soc_dai_driver ak4613_dai = {
 	.name = "ak4613-hifi",

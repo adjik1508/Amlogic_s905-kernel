@@ -513,20 +513,16 @@ static void hsw_trans_edp_pipe_A_crc_wa(struct drm_i915_private *dev_priv,
 	struct intel_crtc *crtc = intel_get_crtc_for_pipe(dev_priv, PIPE_A);
 	struct intel_crtc_state *pipe_config;
 	struct drm_atomic_state *state;
-	struct drm_modeset_acquire_ctx ctx;
 	int ret = 0;
 
-	drm_modeset_acquire_init(&ctx, 0);
-
+	drm_modeset_lock_all(dev);
 	state = drm_atomic_state_alloc(dev);
 	if (!state) {
 		ret = -ENOMEM;
 		goto unlock;
 	}
 
-	state->acquire_ctx = &ctx;
-
-retry:
+	state->acquire_ctx = crtc->base.dev->mode_config.acquire_ctx;
 	pipe_config = intel_atomic_get_crtc_state(state, crtc);
 	if (IS_ERR(pipe_config)) {
 		ret = PTR_ERR(pipe_config);
@@ -541,17 +537,10 @@ retry:
 	ret = drm_atomic_commit(state);
 
 put_state:
-	if (ret == -EDEADLK) {
-		drm_atomic_state_clear(state);
-		drm_modeset_backoff(&ctx);
-		goto retry;
-	}
-
 	drm_atomic_state_put(state);
 unlock:
 	WARN(ret, "Toggling workaround to %i returns %i\n", enable, ret);
-	drm_modeset_drop_locks(&ctx);
-	drm_modeset_acquire_fini(&ctx);
+	drm_modeset_unlock_all(dev);
 }
 
 static int ivb_pipe_crc_ctl_reg(struct drm_i915_private *dev_priv,
@@ -853,12 +842,19 @@ static ssize_t display_crc_ctl_write(struct file *file, const char __user *ubuf,
 		return -E2BIG;
 	}
 
-	tmpbuf = memdup_user_nul(ubuf, len);
-	if (IS_ERR(tmpbuf))
-		return PTR_ERR(tmpbuf);
+	tmpbuf = kmalloc(len + 1, GFP_KERNEL);
+	if (!tmpbuf)
+		return -ENOMEM;
+
+	if (copy_from_user(tmpbuf, ubuf, len)) {
+		ret = -EFAULT;
+		goto out;
+	}
+	tmpbuf[len] = '\0';
 
 	ret = display_crc_ctl_parse(dev_priv, tmpbuf, len);
 
+out:
 	kfree(tmpbuf);
 	if (ret < 0)
 		return ret;

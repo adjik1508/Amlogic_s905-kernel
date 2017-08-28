@@ -19,7 +19,6 @@
 #include <linux/mm.h>
 #include <linux/sram.h>
 
-#include <asm/fncpy.h>
 #include <asm/set_memory.h>
 
 #include "sram.h"
@@ -59,32 +58,20 @@ int sram_add_protect_exec(struct sram_partition *part)
  * @src: Source address for the data to copy
  * @size: Size of copy to perform, which starting from dst, must reside in pool
  *
- * Return: Address for copied data that can safely be called through function
- *	   pointer, or NULL if problem.
- *
  * This helper function allows sram driver to act as central control location
  * of 'protect-exec' pools which are normal sram pools but are always set
  * read-only and executable except when copying data to them, at which point
  * they are set to read-write non-executable, to make sure no memory is
  * writeable and executable at the same time. This region must be page-aligned
  * and is checked during probe, otherwise page attribute manipulation would
- * not be possible. Care must be taken to only call the returned address as
- * dst address is not guaranteed to be safely callable.
- *
- * NOTE: This function uses the fncpy macro to move code to the executable
- * region. Some architectures have strict requirements for relocating
- * executable code, so fncpy is a macro that must be defined by any arch
- * making use of this functionality that guarantees a safe copy of exec
- * data and returns a safe address that can be called as a C function
- * pointer.
+ * not be possible.
  */
-void *sram_exec_copy(struct gen_pool *pool, void *dst, void *src,
-		     size_t size)
+int sram_exec_copy(struct gen_pool *pool, void *dst, void *src,
+		   size_t size)
 {
 	struct sram_partition *part = NULL, *p;
 	unsigned long base;
 	int pages;
-	void *dst_cpy;
 
 	mutex_lock(&exec_pool_list_mutex);
 	list_for_each_entry(p, &exec_pool_list, list) {
@@ -94,10 +81,10 @@ void *sram_exec_copy(struct gen_pool *pool, void *dst, void *src,
 	mutex_unlock(&exec_pool_list_mutex);
 
 	if (!part)
-		return NULL;
+		return -EINVAL;
 
 	if (!addr_in_gen_pool(pool, (unsigned long)dst, size))
-		return NULL;
+		return -EINVAL;
 
 	base = (unsigned long)part->base;
 	pages = PAGE_ALIGN(size) / PAGE_SIZE;
@@ -107,13 +94,13 @@ void *sram_exec_copy(struct gen_pool *pool, void *dst, void *src,
 	set_memory_nx((unsigned long)base, pages);
 	set_memory_rw((unsigned long)base, pages);
 
-	dst_cpy = fncpy(dst, src, size);
+	memcpy(dst, src, size);
 
 	set_memory_ro((unsigned long)base, pages);
 	set_memory_x((unsigned long)base, pages);
 
 	mutex_unlock(&part->lock);
 
-	return dst_cpy;
+	return 0;
 }
 EXPORT_SYMBOL_GPL(sram_exec_copy);

@@ -54,6 +54,8 @@ static const char *phy_speed_to_str(int speed)
 		return "5Gbps";
 	case SPEED_10000:
 		return "10Gbps";
+	case SPEED_14000:
+		return "14Gbps";
 	case SPEED_20000:
 		return "20Gbps";
 	case SPEED_25000:
@@ -241,7 +243,7 @@ static const struct phy_setting settings[] = {
  * phy_lookup_setting - lookup a PHY setting
  * @speed: speed to match
  * @duplex: duplex to match
- * @feature: allowed link modes
+ * @features: allowed link modes
  * @exact: an exact match is required
  *
  * Search the settings array for a setting that matches the speed and
@@ -377,7 +379,6 @@ static void phy_sanitize_settings(struct phy_device *phydev)
  * @cmd: ethtool_cmd
  *
  * A few notes about parameter checking:
- *
  * - We don't set port or transceiver, so we don't care what they
  *   were set to.
  * - phy_start_aneg() will make sure forced settings are sane, and
@@ -748,6 +749,9 @@ void phy_stop_machine(struct phy_device *phydev)
 	if (phydev->state > PHY_UP && phydev->state != PHY_HALTED)
 		phydev->state = PHY_UP;
 	mutex_unlock(&phydev->lock);
+
+	/* Now we can run the state machine synchronously */
+	phy_state_machine(&phydev->state_queue.work);
 }
 
 /**

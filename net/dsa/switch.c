@@ -12,8 +12,7 @@
 
 #include <linux/netdevice.h>
 #include <linux/notifier.h>
-
-#include "dsa_priv.h"
+#include <net/dsa.h>
 
 static int dsa_switch_bridge_join(struct dsa_switch *ds,
 				  struct dsa_notifier_bridge_info *info)

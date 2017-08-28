@@ -6,7 +6,8 @@
 # pnmttologo:    Convert pnm files to logo files
 # conmakehash:   Create chartable
 # conmakehash:	 Create arrays for initializing the kernel console tables
-# docproc:       Used in Documentation/
+# docproc:       Used in Documentation/DocBook
+# check-lc_ctype: Used in Documentation/DocBook
 
 HOST_EXTRACFLAGS += -I$(srctree)/tools/include
 
@@ -28,13 +29,15 @@ HOSTLOADLIBES_extract-cert = -lcrypto
 always		:= $(hostprogs-y) $(hostprogs-m)
 
 # The following hostprogs-y programs are only build on demand
-hostprogs-y += unifdef docproc
+hostprogs-y += unifdef docproc check-lc_ctype
 
 # These targets are used internally to avoid "is up to date" messages
-PHONY += build_unifdef build_docproc
+PHONY += build_unifdef build_docproc build_check-lc_ctype
 build_unifdef: $(obj)/unifdef
 	@:
 build_docproc: $(obj)/docproc
+	@:
+build_check-lc_ctype: $(obj)/check-lc_ctype
 	@:
 
 subdir-$(CONFIG_MODVERSIONS) += genksyms

@@ -605,7 +605,6 @@ err:
 	tty_unlock(tty);
 	return retval;
 }
-EXPORT_SYMBOL_GPL(tty_set_ldisc);
 
 /**
  *	tty_ldisc_kill	-	teardown ldisc
@@ -798,7 +797,6 @@ void tty_ldisc_release(struct tty_struct *tty)
 
 	tty_ldisc_debug(tty, "released\n");
 }
-EXPORT_SYMBOL_GPL(tty_ldisc_release);
 
 /**
  *	tty_ldisc_init		-	ldisc setup for new tty

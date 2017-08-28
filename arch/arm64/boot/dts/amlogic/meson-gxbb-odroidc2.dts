@@ -135,6 +135,54 @@
 		compatible = "mmc-pwrseq-emmc";
 		reset-gpios = <&gpio BOOT_9 GPIO_ACTIVE_LOW>;
 	};
+
+	hdmi-connector {
+		compatible = "hdmi-connector";
+		type = "a";
+
+		port {
+			hdmi_connector_in: endpoint {
+				remote-endpoint = <&hdmi_tx_tmds_out>;
+			};
+		};
+	};
+
+	soc {
+		sound {
+			compatible = "simple-audio-card";
+			simple-audio-card,name = "meson-gxbb-odroidc2";
+			status = "okay";
+
+			simple-audio-card,dai-link@0 {
+				format = "i2s";
+				mclk-fs = <256>;
+				bitclock-master = <&i2s_dai>;
+				frame-master = <&i2s_dai>;
+
+				plat {
+					sound-dai = <&aiu_i2s_dma>;
+				};
+
+				cpu {
+					sound-dai = <&i2s_dai>;
+				};
+
+				codec {
+					sound-dai = <&hdmi_tx>;
+				};
+			};
+		};
+	};
+};
+
+&scpi_clocks {
+	status = "disabled";
+};
+
+&uart_AO {
+	status = "okay";
+	pinctrl-0 = <&uart_ao_a_pins>;
+	pinctrl-names = "default";
 };
 
 &ethmac {
@@ -160,33 +208,6 @@
 			eee-broken-1000t;
 		};
 	};
-};
-
-&gpio_ao {
-	/*
-	 * WARNING: The USB Hub on the Odroid-C2 needs a reset signal
-	 * to be turned high in order to be detected by the USB Controller
-	 * This signal should be handled by a USB specific power sequence
-	 * in order to reset the Hub when USB bus is powered down.
-	 */
-	usb-hub {
-		gpio-hog;
-		gpios = <GPIOAO_4 GPIO_ACTIVE_HIGH>;
-		output-high;
-		line-name = "usb-hub-reset";
-	};
-};
-
-&i2c_A {
-	status = "okay";
-	pinctrl-0 = <&i2c_a_pins>;
-	pinctrl-names = "default";
-};
-
-&ir {
-	status = "okay";
-	pinctrl-0 = <&remote_input_ao_pins>;
-	pinctrl-names = "default";
 };
 
 &pinctrl_aobus {
@@ -240,13 +261,60 @@
 			  "";
 };
 
+&ir {
+	status = "okay";
+	pinctrl-0 = <&remote_input_ao_pins>;
+	pinctrl-names = "default";
+};
+
+&i2c_A {
+	status = "okay";
+	pinctrl-0 = <&i2c_a_pins>;
+	pinctrl-names = "default";
+};
+
+&gpio_ao {
+	/*
+	 * WARNING: The USB Hub on the Odroid-C2 needs a reset signal
+	 * to be turned high in order to be detected by the USB Controller
+	 * This signal should be handled by a USB specific power sequence
+	 * in order to reset the Hub when USB bus is powered down.
+	 */
+	usb-hub {
+		gpio-hog;
+		gpios = <GPIOAO_4 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "usb-hub-reset";
+	};
+};
+
+&usb0_phy {
+	status = "okay";
+	phy-supply = <&usb_otg_pwr>;
+};
+
+&usb1_phy {
+	status = "okay";
+};
+
+&usb0 {
+	status = "okay";
+};
+
+&usb1 {
+	status = "okay";
+
+	hub@1 {
+		compatible = "usb5e3,610";
+		reg = <1>;
+		reset-gpios = <&gpio GPIOAO_4 GPIO_ACTIVE_LOW>;
+		reset-duration-us = <3000>;
+	};
+};
+
 &saradc {
 	status = "okay";
 	vref-supply = <&vcc1v8>;
-};
-
-&scpi_clocks {
-	status = "disabled";
 };
 
 /* SD */
@@ -287,25 +355,36 @@
 	vqmmc-supply = <&vcc1v8>;
 };
 
-&uart_AO {
+&cec_AO {
 	status = "okay";
-	pinctrl-0 = <&uart_ao_a_pins>;
+	pinctrl-0 = <&ao_cec_pins>;
+	pinctrl-names = "default";
+	hdmi-phandle = <&hdmi_tx>;
+};
+
+&hdmi_tx {
+	status = "okay";
+	pinctrl-0 = <&hdmi_hpd_pins>, <&hdmi_i2c_pins>;
 	pinctrl-names = "default";
 };
 
-&usb0_phy {
-	status = "okay";
-	phy-supply = <&usb_otg_pwr>;
+&hdmi_tx_tmds_port {
+	hdmi_tx_tmds_out: endpoint {
+		remote-endpoint = <&hdmi_connector_in>;
+	};
 };
 
-&usb1_phy {
-	status = "okay";
-};
-
-&usb0 {
+&audio {
 	status = "okay";
 };
 
-&usb1 {
+&aiu_i2s_dma {
+	status = "okay";
+};
+
+&i2s_dai {
+	pinctrl-0 = <&i2s_am_clk_pins>, <&i2s_out_ao_clk_pins>,
+		    <&i2s_out_lr_clk_pins>, <&i2s_out_ch01_ao_pins>;
+	pinctrl-names = "default";
 	status = "okay";
 };

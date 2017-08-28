@@ -126,7 +126,7 @@
 		clock-names = "ext_clock";
 	};
 
-	cvbs_connector: cvbs-connector {
+	cvbs-connector {
 		compatible = "composite-video-connector";
 
 		port {
@@ -146,24 +146,47 @@
 			};
 		};
 	};
-};
 
-&cvbs_vdac_port {
-	cvbs_vdac_out: endpoint {
-		remote-endpoint = <&cvbs_connector_in>;
+	i2s_codec: external-codec {
+		#sound-dai-cells = <0>;
+		compatible = "everest,es7134";
+		status = "okay";
+	};
+
+	soc {
+		sound {
+			compatible = "simple-audio-card";
+			simple-audio-card,name = "meson-gxbb-p20x";
+			status = "okay";
+
+			simple-audio-card,dai-link@0 {
+				/* RCA Output */
+				format = "i2s";
+				mclk-fs = <256>;
+				bitclock-master = <&i2s_dai>;
+				frame-master = <&i2s_dai>;
+
+				plat {
+					sound-dai = <&aiu_i2s_dma>;
+				};
+
+				cpu {
+					sound-dai = <&i2s_dai>;
+				};
+
+				codec {
+					sound-dai = <&hdmi_tx>;
+				};
+			};
+		};
 	};
 };
 
-&hdmi_tx {
+/* This UART is brought out to the DB9 connector */
+&uart_AO {
 	status = "okay";
-	pinctrl-0 = <&hdmi_hpd_pins>, <&hdmi_i2c_pins>;
+	pinctrl-0 = <&uart_ao_a_pins>;
 	pinctrl-names = "default";
-};
-
-&hdmi_tx_tmds_port {
-	hdmi_tx_tmds_out: endpoint {
-		remote-endpoint = <&hdmi_connector_in>;
-	};
 };
 
 &ir {
@@ -172,12 +195,21 @@
 	pinctrl-names = "default";
 };
 
-&pwm_ef {
+&usb0_phy {
 	status = "okay";
-	pinctrl-0 = <&pwm_e_pins>;
-	pinctrl-names = "default";
-	clocks = <&clkc CLKID_FCLK_DIV4>;
-	clock-names = "clkin0";
+	phy-supply = <&usb_pwr>;
+};
+
+&usb1_phy {
+	status = "okay";
+};
+
+&usb0 {
+	status = "okay";
+};
+
+&usb1 {
+	status = "okay";
 };
 
 /* Wireless SDIO Module */
@@ -200,7 +232,7 @@
 	vmmc-supply = <&vddao_3v3>;
 	vqmmc-supply = <&vddio_boot>;
 
-	brcmf: wifi@1 {
+	brcmf: bcrmf@1 {
 		reg = <1>;
 		compatible = "brcm,bcm4329-fmac";
 	};
@@ -244,26 +276,50 @@
 	vqmmc-supply = <&vddio_boot>;
 };
 
-/* This UART is brought out to the DB9 connector */
-&uart_AO {
+&pwm_ef {
 	status = "okay";
-	pinctrl-0 = <&uart_ao_a_pins>;
+	pinctrl-0 = <&pwm_e_pins>;
+	pinctrl-names = "default";
+	clocks = <&clkc CLKID_FCLK_DIV4>;
+	clock-names = "clkin0";
+};
+
+&cec_AO {
+	status = "okay";
+	pinctrl-0 = <&ao_cec_pins>;
+	pinctrl-names = "default";
+	hdmi-phandle = <&hdmi_tx>;
+};
+
+&cvbs_vdac_port {
+	cvbs_vdac_out: endpoint {
+		remote-endpoint = <&cvbs_connector_in>;
+	};
+};
+
+&hdmi_tx {
+	status = "okay";
+	pinctrl-0 = <&hdmi_hpd_pins>, <&hdmi_i2c_pins>;
 	pinctrl-names = "default";
 };
 
-&usb0_phy {
-	status = "okay";
-	phy-supply = <&usb_pwr>;
+&hdmi_tx_tmds_port {
+	hdmi_tx_tmds_out: endpoint {
+		remote-endpoint = <&hdmi_connector_in>;
+	};
 };
 
-&usb1_phy {
-	status = "okay";
-};
-
-&usb0 {
+&audio {
 	status = "okay";
 };
 
-&usb1 {
+&aiu_i2s_dma {
+	status = "okay";
+};
+
+&i2s_dai {
+	pinctrl-0 = <&i2s_am_clk_pins>, <&i2s_out_ao_clk_pins>,
+		    <&i2s_out_lr_clk_pins>, <&i2s_out_ch01_ao_pins>;
+	pinctrl-names = "default";
 	status = "okay";
 };

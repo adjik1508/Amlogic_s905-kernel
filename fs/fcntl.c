@@ -246,8 +246,6 @@ static int f_getowner_uids(struct file *filp, unsigned long arg)
 static long do_fcntl(int fd, unsigned int cmd, unsigned long arg,
 		struct file *filp)
 {
-	void __user *argp = (void __user *)arg;
-	struct flock flock;
 	long err = -EINVAL;
 
 	switch (cmd) {
@@ -275,11 +273,7 @@ static long do_fcntl(int fd, unsigned int cmd, unsigned long arg,
 	case F_OFD_GETLK:
 #endif
 	case F_GETLK:
-		if (copy_from_user(&flock, argp, sizeof(flock)))
-			return -EFAULT;
-		err = fcntl_getlk(filp, cmd, &flock);
-		if (!err && copy_to_user(argp, &flock, sizeof(flock)))
-			return -EFAULT;
+		err = fcntl_getlk(filp, cmd, (struct flock __user *) arg);
 		break;
 #if BITS_PER_LONG != 32
 	/* 32-bit arches must use fcntl64() */
@@ -289,9 +283,7 @@ static long do_fcntl(int fd, unsigned int cmd, unsigned long arg,
 		/* Fallthrough */
 	case F_SETLK:
 	case F_SETLKW:
-		if (copy_from_user(&flock, argp, sizeof(flock)))
-			return -EFAULT;
-		err = fcntl_setlk(fd, filp, cmd, &flock);
+		err = fcntl_setlk(fd, filp, cmd, (struct flock __user *) arg);
 		break;
 	case F_GETOWN:
 		/*
@@ -391,9 +383,7 @@ out:
 SYSCALL_DEFINE3(fcntl64, unsigned int, fd, unsigned int, cmd,
 		unsigned long, arg)
 {	
-	void __user *argp = (void __user *)arg;
 	struct fd f = fdget_raw(fd);
-	struct flock64 flock;
 	long err = -EBADF;
 
 	if (!f.file)
@@ -411,21 +401,14 @@ SYSCALL_DEFINE3(fcntl64, unsigned int, fd, unsigned int, cmd,
 	switch (cmd) {
 	case F_GETLK64:
 	case F_OFD_GETLK:
-		err = -EFAULT;
-		if (copy_from_user(&flock, argp, sizeof(flock)))
-			break;
-		err = fcntl_getlk64(f.file, cmd, &flock);
-		if (!err && copy_to_user(argp, &flock, sizeof(flock)))
-			err = -EFAULT;
+		err = fcntl_getlk64(f.file, cmd, (struct flock64 __user *) arg);
 		break;
 	case F_SETLK64:
 	case F_SETLKW64:
 	case F_OFD_SETLK:
 	case F_OFD_SETLKW:
-		err = -EFAULT;
-		if (copy_from_user(&flock, argp, sizeof(flock)))
-			break;
-		err = fcntl_setlk64(fd, f.file, cmd, &flock);
+		err = fcntl_setlk64(fd, f.file, cmd,
+				(struct flock64 __user *) arg);
 		break;
 	default:
 		err = do_fcntl(fd, cmd, arg, f.file);
@@ -506,92 +489,76 @@ convert_fcntl_cmd(unsigned int cmd)
 	return cmd;
 }
 
-/*
- * GETLK was successful and we need to return the data, but it needs to fit in
- * the compat structure.
- * l_start shouldn't be too big, unless the original start + end is greater than
- * COMPAT_OFF_T_MAX, in which case the app was asking for trouble, so we return
- * -EOVERFLOW in that case.  l_len could be too big, in which case we just
- * truncate it, and only allow the app to see that part of the conflicting lock
- * that might make sense to it anyway
- */
-static int fixup_compat_flock(struct flock *flock)
-{
-	if (flock->l_start > COMPAT_OFF_T_MAX)
-		return -EOVERFLOW;
-	if (flock->l_len > COMPAT_OFF_T_MAX)
-		flock->l_len = COMPAT_OFF_T_MAX;
-	return 0;
-}
-
 COMPAT_SYSCALL_DEFINE3(fcntl64, unsigned int, fd, unsigned int, cmd,
 		       compat_ulong_t, arg)
 {
-	struct fd f = fdget_raw(fd);
-	struct flock flock;
-	long err = -EBADF;
-
-	if (!f.file)
-		return err;
-
-	if (unlikely(f.file->f_mode & FMODE_PATH)) {
-		if (!check_fcntl_cmd(cmd))
-			goto out_put;
-	}
-
-	err = security_file_fcntl(f.file, cmd, arg);
-	if (err)
-		goto out_put;
+	mm_segment_t old_fs;
+	struct flock f;
+	long ret;
+	unsigned int conv_cmd;
 
 	switch (cmd) {
 	case F_GETLK:
-		err = get_compat_flock(&flock, compat_ptr(arg));
-		if (err)
-			break;
-		err = fcntl_getlk(f.file, convert_fcntl_cmd(cmd), &flock);
-		if (err)
-			break;
-		err = fixup_compat_flock(&flock);
-		if (err)
-			return err;
-		err = put_compat_flock(&flock, compat_ptr(arg));
-		break;
-	case F_GETLK64:
-	case F_OFD_GETLK:
-		err = get_compat_flock64(&flock, compat_ptr(arg));
-		if (err)
-			break;
-		err = fcntl_getlk(f.file, convert_fcntl_cmd(cmd), &flock);
-		if (err)
-			break;
-		err = fixup_compat_flock(&flock);
-		if (err)
-			return err;
-		err = put_compat_flock64(&flock, compat_ptr(arg));
-		break;
 	case F_SETLK:
 	case F_SETLKW:
-		err = get_compat_flock(&flock, compat_ptr(arg));
-		if (err)
+		ret = get_compat_flock(&f, compat_ptr(arg));
+		if (ret != 0)
 			break;
-		err = fcntl_setlk(fd, f.file, convert_fcntl_cmd(cmd), &flock);
+		old_fs = get_fs();
+		set_fs(KERNEL_DS);
+		ret = sys_fcntl(fd, cmd, (unsigned long)&f);
+		set_fs(old_fs);
+		if (cmd == F_GETLK && ret == 0) {
+			/* GETLK was successful and we need to return the data...
+			 * but it needs to fit in the compat structure.
+			 * l_start shouldn't be too big, unless the original
+			 * start + end is greater than COMPAT_OFF_T_MAX, in which
+			 * case the app was asking for trouble, so we return
+			 * -EOVERFLOW in that case.
+			 * l_len could be too big, in which case we just truncate it,
+			 * and only allow the app to see that part of the conflicting
+			 * lock that might make sense to it anyway
+			 */
+
+			if (f.l_start > COMPAT_OFF_T_MAX)
+				ret = -EOVERFLOW;
+			if (f.l_len > COMPAT_OFF_T_MAX)
+				f.l_len = COMPAT_OFF_T_MAX;
+			if (ret == 0)
+				ret = put_compat_flock(&f, compat_ptr(arg));
+		}
 		break;
+
+	case F_GETLK64:
 	case F_SETLK64:
 	case F_SETLKW64:
+	case F_OFD_GETLK:
 	case F_OFD_SETLK:
 	case F_OFD_SETLKW:
-		err = get_compat_flock64(&flock, compat_ptr(arg));
-		if (err)
+		ret = get_compat_flock64(&f, compat_ptr(arg));
+		if (ret != 0)
 			break;
-		err = fcntl_setlk(fd, f.file, convert_fcntl_cmd(cmd), &flock);
+		old_fs = get_fs();
+		set_fs(KERNEL_DS);
+		conv_cmd = convert_fcntl_cmd(cmd);
+		ret = sys_fcntl(fd, conv_cmd, (unsigned long)&f);
+		set_fs(old_fs);
+		if ((conv_cmd == F_GETLK || conv_cmd == F_OFD_GETLK) && ret == 0) {
+			/* need to return lock information - see above for commentary */
+			if (f.l_start > COMPAT_LOFF_T_MAX)
+				ret = -EOVERFLOW;
+			if (f.l_len > COMPAT_LOFF_T_MAX)
+				f.l_len = COMPAT_LOFF_T_MAX;
+			if (ret == 0)
+				ret = put_compat_flock64(&f, compat_ptr(arg));
+		}
 		break;
+
 	default:
-		err = do_fcntl(fd, cmd, arg, f.file);
+		ret = sys_fcntl(fd, cmd, arg);
 		break;
 	}
-out_put:
-	fdput(f);
-	return err;
+	return ret;
 }
 
 COMPAT_SYSCALL_DEFINE3(fcntl, unsigned int, fd, unsigned int, cmd,

@@ -41,6 +41,8 @@ static struct sync_file *sync_file_alloc(void)
 	if (IS_ERR(sync_file->file))
 		goto err;
 
+	kref_init(&sync_file->kref);
+
 	init_waitqueue_head(&sync_file->wq);
 
 	INIT_LIST_HEAD(&sync_file->cb.node);
@@ -275,15 +277,22 @@ err:
 
 }
 
-static int sync_file_release(struct inode *inode, struct file *file)
+static void sync_file_free(struct kref *kref)
 {
-	struct sync_file *sync_file = file->private_data;
+	struct sync_file *sync_file = container_of(kref, struct sync_file,
+						     kref);
 
 	if (test_bit(POLL_ENABLED, &sync_file->fence->flags))
 		dma_fence_remove_callback(sync_file->fence, &sync_file->cb);
 	dma_fence_put(sync_file->fence);
 	kfree(sync_file);
+}
 
+static int sync_file_release(struct inode *inode, struct file *file)
+{
+	struct sync_file *sync_file = file->private_data;
+
+	kref_put(&sync_file->kref, sync_file_free);
 	return 0;
 }
 

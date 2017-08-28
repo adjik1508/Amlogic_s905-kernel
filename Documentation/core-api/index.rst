@@ -19,7 +19,6 @@ Core utilities
    workqueue
    genericirq
    flexible-arrays
-   librs
 
 Interfaces for kernel debugging
 ===============================

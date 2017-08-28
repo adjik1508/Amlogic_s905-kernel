@@ -606,9 +606,11 @@ struct root_domain {
 
 extern struct root_domain def_root_domain;
 extern struct mutex sched_domains_mutex;
+extern cpumask_var_t fallback_doms;
+extern cpumask_var_t sched_domains_tmpmask;
 
 extern void init_defrootdomain(void);
-extern int sched_init_domains(const struct cpumask *cpu_map);
+extern int init_sched_domains(const struct cpumask *cpu_map);
 extern void rq_attach_root(struct rq *rq, struct root_domain *rd);
 
 #endif /* CONFIG_SMP */
@@ -1023,11 +1025,7 @@ struct sched_group_capacity {
 	unsigned long next_update;
 	int imbalance; /* XXX unrelated to capacity but shared group state */
 
-#ifdef CONFIG_SCHED_DEBUG
-	int id;
-#endif
-
-	unsigned long cpumask[0]; /* balance mask */
+	unsigned long cpumask[0]; /* iteration mask */
 };
 
 struct sched_group {
@@ -1048,15 +1046,16 @@ struct sched_group {
 	unsigned long cpumask[0];
 };
 
-static inline struct cpumask *sched_group_span(struct sched_group *sg)
+static inline struct cpumask *sched_group_cpus(struct sched_group *sg)
 {
 	return to_cpumask(sg->cpumask);
 }
 
 /*
- * See build_balance_mask().
+ * cpumask masking which cpus in the group are allowed to iterate up the domain
+ * tree.
  */
-static inline struct cpumask *group_balance_mask(struct sched_group *sg)
+static inline struct cpumask *sched_group_mask(struct sched_group *sg)
 {
 	return to_cpumask(sg->sgc->cpumask);
 }
@@ -1067,7 +1066,7 @@ static inline struct cpumask *group_balance_mask(struct sched_group *sg)
  */
 static inline unsigned int group_first_cpu(struct sched_group *group)
 {
-	return cpumask_first(sched_group_span(group));
+	return cpumask_first(sched_group_cpus(group));
 }
 
 extern int group_balance_cpu(struct sched_group *sg);

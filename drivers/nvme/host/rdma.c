@@ -88,7 +88,7 @@ enum nvme_rdma_queue_flags {
 
 struct nvme_rdma_queue {
 	struct nvme_rdma_qe	*rsp_ring;
-	u8			sig_count;
+	atomic_t		sig_count;
 	int			queue_size;
 	size_t			cmnd_capsule_len;
 	struct nvme_rdma_ctrl	*ctrl;
@@ -553,6 +553,7 @@ static int nvme_rdma_init_queue(struct nvme_rdma_ctrl *ctrl,
 		queue->cmnd_capsule_len = sizeof(struct nvme_command);
 
 	queue->queue_size = queue_size;
+	atomic_set(&queue->sig_count, 0);
 
 	queue->cm_id = rdma_create_id(&init_net, nvme_rdma_cm_handler, queue,
 			RDMA_PS_TCP, IB_QPT_RC);
@@ -753,28 +754,26 @@ static void nvme_rdma_reconnect_ctrl_work(struct work_struct *work)
 	if (ret)
 		goto requeue;
 
-	blk_mq_start_stopped_hw_queues(ctrl->ctrl.admin_q, true);
-
 	ret = nvmf_connect_admin_queue(&ctrl->ctrl);
 	if (ret)
-		goto stop_admin_q;
+		goto requeue;
 
 	set_bit(NVME_RDMA_Q_LIVE, &ctrl->queues[0].flags);
 
 	ret = nvme_enable_ctrl(&ctrl->ctrl, ctrl->cap);
 	if (ret)
-		goto stop_admin_q;
+		goto requeue;
 
 	nvme_start_keep_alive(&ctrl->ctrl);
 
 	if (ctrl->queue_count > 1) {
 		ret = nvme_rdma_init_io_queues(ctrl);
 		if (ret)
-			goto stop_admin_q;
+			goto requeue;
 
 		ret = nvme_rdma_connect_io_queues(ctrl);
 		if (ret)
-			goto stop_admin_q;
+			goto requeue;
 	}
 
 	changed = nvme_change_ctrl_state(&ctrl->ctrl, NVME_CTRL_LIVE);
@@ -782,7 +781,6 @@ static void nvme_rdma_reconnect_ctrl_work(struct work_struct *work)
 	ctrl->ctrl.opts->nr_reconnects = 0;
 
 	if (ctrl->queue_count > 1) {
-		nvme_start_queues(&ctrl->ctrl);
 		nvme_queue_scan(&ctrl->ctrl);
 		nvme_queue_async_events(&ctrl->ctrl);
 	}
@@ -791,8 +789,6 @@ static void nvme_rdma_reconnect_ctrl_work(struct work_struct *work)
 
 	return;
 
-stop_admin_q:
-	blk_mq_stop_hw_queues(ctrl->ctrl.admin_q);
 requeue:
 	dev_info(ctrl->ctrl.device, "Failed reconnect attempt %d\n",
 			ctrl->ctrl.opts->nr_reconnects);
@@ -822,6 +818,13 @@ static void nvme_rdma_error_recovery_work(struct work_struct *work)
 					nvme_cancel_request, &ctrl->ctrl);
 	blk_mq_tagset_busy_iter(&ctrl->admin_tag_set,
 				nvme_cancel_request, &ctrl->ctrl);
+
+	/*
+	 * queues are not a live anymore, so restart the queues to fail fast
+	 * new IO
+	 */
+	blk_mq_start_stopped_hw_queues(ctrl->ctrl.admin_q, true);
+	nvme_start_queues(&ctrl->ctrl);
 
 	nvme_rdma_reconnect_or_remove(ctrl);
 }
@@ -1038,6 +1041,18 @@ static void nvme_rdma_send_done(struct ib_cq *cq, struct ib_wc *wc)
 		nvme_rdma_wr_error(cq, wc, "SEND");
 }
 
+/*
+ * We want to signal completion at least every queue depth/2.  This returns the
+ * largest power of two that is not above half of (queue size + 1) to optimize
+ * (avoid divisions).
+ */
+static inline bool nvme_rdma_queue_sig_limit(struct nvme_rdma_queue *queue)
+{
+	int limit = 1 << ilog2((queue->queue_size + 1) / 2);
+
+	return (atomic_inc_return(&queue->sig_count) & (limit - 1)) == 0;
+}
+
 static int nvme_rdma_post_send(struct nvme_rdma_queue *queue,
 		struct nvme_rdma_qe *qe, struct ib_sge *sge, u32 num_sge,
 		struct ib_send_wr *first, bool flush)
@@ -1065,9 +1080,6 @@ static int nvme_rdma_post_send(struct nvme_rdma_queue *queue,
 	 * Would have been way to obvious to handle this in hardware or
 	 * at least the RDMA stack..
 	 *
-	 * This messy and racy code sniplet is copy and pasted from the iSER
-	 * initiator, and the magic '32' comes from there as well.
-	 *
 	 * Always signal the flushes. The magic request used for the flush
 	 * sequencer is not allocated in our driver's tagset and it's
 	 * triggered to be freed by blk_cleanup_queue(). So we need to
@@ -1075,7 +1087,7 @@ static int nvme_rdma_post_send(struct nvme_rdma_queue *queue,
 	 * embedded in request's payload, is not freed when __ib_process_cq()
 	 * calls wr_cqe->done().
 	 */
-	if ((++queue->sig_count % 32) == 0 || flush)
+	if (nvme_rdma_queue_sig_limit(queue) || flush)
 		wr.send_flags |= IB_SEND_SIGNALED;
 
 	if (first)
@@ -1423,7 +1435,7 @@ nvme_rdma_timeout(struct request *rq, bool reserved)
 /*
  * We cannot accept any other command until the Connect command has completed.
  */
-static inline bool nvme_rdma_queue_is_ready(struct nvme_rdma_queue *queue,
+static inline int nvme_rdma_queue_is_ready(struct nvme_rdma_queue *queue,
 		struct request *rq)
 {
 	if (unlikely(!test_bit(NVME_RDMA_Q_LIVE, &queue->flags))) {
@@ -1431,11 +1443,22 @@ static inline bool nvme_rdma_queue_is_ready(struct nvme_rdma_queue *queue,
 
 		if (!blk_rq_is_passthrough(rq) ||
 		    cmd->common.opcode != nvme_fabrics_command ||
-		    cmd->fabrics.fctype != nvme_fabrics_type_connect)
-			return false;
+		    cmd->fabrics.fctype != nvme_fabrics_type_connect) {
+			/*
+			 * reconnecting state means transport disruption, which
+			 * can take a long time and even might fail permanently,
+			 * so we can't let incoming I/O be requeued forever.
+			 * fail it fast to allow upper layers a chance to
+			 * failover.
+			 */
+			if (queue->ctrl->ctrl.state == NVME_CTRL_RECONNECTING)
+				return -EIO;
+			else
+				return -EAGAIN;
+		}
 	}
 
-	return true;
+	return 0;
 }
 
 static int nvme_rdma_queue_rq(struct blk_mq_hw_ctx *hctx,
@@ -1453,8 +1476,9 @@ static int nvme_rdma_queue_rq(struct blk_mq_hw_ctx *hctx,
 
 	WARN_ON_ONCE(rq->tag < 0);
 
-	if (!nvme_rdma_queue_is_ready(queue, rq))
-		return BLK_MQ_RQ_QUEUE_BUSY;
+	ret = nvme_rdma_queue_is_ready(queue, rq);
+	if (unlikely(ret))
+		goto err;
 
 	dev = queue->device->dev;
 	ib_dma_sync_single_for_cpu(dev, sqe->dma,
@@ -1782,7 +1806,7 @@ static int nvme_rdma_reset_ctrl(struct nvme_ctrl *nctrl)
 static const struct nvme_ctrl_ops nvme_rdma_ctrl_ops = {
 	.name			= "rdma",
 	.module			= THIS_MODULE,
-	.is_fabrics		= true,
+	.flags			= NVME_F_FABRICS,
 	.reg_read32		= nvmf_reg_read32,
 	.reg_read64		= nvmf_reg_read64,
 	.reg_write32		= nvmf_reg_write32,

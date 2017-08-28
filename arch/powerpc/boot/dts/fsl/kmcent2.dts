@@ -293,7 +293,9 @@
 			compatible = "fsl,ucc-hdlc";
 			rx-clock-name = "clk9";
 			tx-clock-name = "clk9";
-			fsl,hdlc-bus;
+			fsl,tx-timeslot-mask = <0xfffffffe>;
+			fsl,rx-timeslot-mask = <0xfffffffe>;
+			fsl,siram-entry-id = <0>;
 		};
 	};
 };

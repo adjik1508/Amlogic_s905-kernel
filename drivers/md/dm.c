@@ -58,9 +58,6 @@ static DECLARE_WORK(deferred_remove_work, do_deferred_remove);
 
 static struct workqueue_struct *deferred_remove_workqueue;
 
-atomic_t dm_global_event_nr = ATOMIC_INIT(0);
-DECLARE_WAIT_QUEUE_HEAD(dm_global_eventq);
-
 /*
  * One of these is allocated per bio.
  */
@@ -1660,7 +1657,7 @@ static struct mapped_device *alloc_dev(int minor)
 
 	bio_init(&md->flush_bio, NULL, 0);
 	md->flush_bio.bi_bdev = md->bdev;
-	md->flush_bio.bi_opf = REQ_OP_WRITE | REQ_PREFLUSH;
+	md->flush_bio.bi_opf = REQ_OP_WRITE | REQ_PREFLUSH | REQ_SYNC;
 
 	dm_stats_init(&md->stats);
 
@@ -1756,9 +1753,7 @@ static void event_callback(void *context)
 	dm_send_uevents(&uevents, &disk_to_dev(md->disk)->kobj);
 
 	atomic_inc(&md->event_nr);
-	atomic_inc(&dm_global_event_nr);
 	wake_up(&md->eventq);
-	wake_up(&dm_global_eventq);
 }
 
 /*

@@ -20,6 +20,7 @@
  */
 #include "speakup.h"
 #include "spk_priv.h"
+#include "serialio.h"
 #include "speakup_dtlk.h" /* local header file for LiteTalk values */
 
 #define DRV_VERSION "2.11"
@@ -110,16 +111,16 @@ static struct spk_synth synth_ltlk = {
 	.startup = SYNTH_START,
 	.checkval = SYNTH_CHECK,
 	.vars = vars,
-	.io_ops = &spk_ttyio_ops,
+	.io_ops = &spk_serial_io_ops,
 	.probe = synth_probe,
-	.release = spk_ttyio_release,
-	.synth_immediate = spk_ttyio_synth_immediate,
+	.release = spk_serial_release,
+	.synth_immediate = spk_serial_synth_immediate,
 	.catch_up = spk_do_catch_up,
 	.flush = spk_synth_flush,
 	.is_alive = spk_synth_is_alive_restart,
 	.synth_adjust = NULL,
 	.read_buff_add = NULL,
-	.get_index = spk_synth_get_index,
+	.get_index = spk_serial_in_nowait,
 	.indexing = {
 		.command = "\x01%di",
 		.lowindex = 1,
@@ -140,7 +141,7 @@ static void synth_interrogate(struct spk_synth *synth)
 
 	synth->synth_immediate(synth, "\x18\x01?");
 	for (i = 0; i < 50; i++) {
-		buf[i] = synth->io_ops->synth_in();
+		buf[i] = spk_serial_in();
 		if (i > 2 && buf[i] == 0x7f)
 			break;
 	}
@@ -158,7 +159,7 @@ static int synth_probe(struct spk_synth *synth)
 {
 	int failed = 0;
 
-	failed = spk_ttyio_synth_probe(synth);
+	failed = spk_serial_synth_probe(synth);
 	if (failed == 0)
 		synth_interrogate(synth);
 	synth->alive = !failed;

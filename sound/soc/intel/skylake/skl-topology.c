@@ -1995,7 +1995,7 @@ static int skl_tplg_get_token(struct device *dev,
 		mconfig->converter = tkn_elem->value;
 		break;
 
-	case SKL_TKN_U32_D0I3_CAPS:
+	case SKL_TKL_U32_D0I3_CAPS:
 		mconfig->d0i3_caps = tkn_elem->value;
 		break;
 
@@ -2502,7 +2502,7 @@ static int skl_tplg_get_manifest_tkn(struct device *dev,
 
 			if (ret < 0)
 				return ret;
-			tkn_count += ret;
+			tkn_count = ret;
 
 			tuple_size += tkn_count *
 				sizeof(struct snd_soc_tplg_vendor_string_elem);

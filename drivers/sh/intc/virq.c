@@ -94,8 +94,10 @@ static int add_virq_to_pirq(unsigned int irq, unsigned int virq)
 	}
 
 	entry = kzalloc(sizeof(struct intc_virq_list), GFP_ATOMIC);
-	if (!entry)
+	if (!entry) {
+		pr_err("can't allocate VIRQ mapping for %d\n", virq);
 		return -ENOMEM;
+	}
 
 	entry->irq = virq;
 

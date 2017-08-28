@@ -1,4 +1,4 @@
-#!/usr/bin/awk -f
+#!/bin/awk -f
 
 # Modify SRCU for formal verification. The first argument should be srcu.h and
 # the second should be srcu.c. Outputs modified srcu.h and srcu.c into the

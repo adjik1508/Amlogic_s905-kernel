@@ -24,22 +24,26 @@
 #include <linux/kthread.h>
 
 #include "spk_priv.h"
+#include "serialio.h"
 #include "speakup.h"
 
 #define DRV_VERSION "2.14"
 #define SYNTH_CLEAR 0x03
 #define PROCSPEECH 0x0b
+static unsigned char last_char;
 
-static volatile unsigned char last_char;
-
-static void read_buff_add(u_char ch)
+static inline u_char get_last_char(void)
 {
-	last_char = ch;
+	u_char avail = inb_p(speakup_info.port_tts + UART_LSR) & UART_LSR_DR;
+
+	if (avail)
+		last_char = inb_p(speakup_info.port_tts + UART_RX);
+	return last_char;
 }
 
 static inline bool synth_full(void)
 {
-	return last_char == 0x13;
+	return get_last_char() == 0x13;
 }
 
 static void do_catch_up(struct spk_synth *synth);
@@ -123,15 +127,15 @@ static struct spk_synth synth_decext = {
 	.startup = SYNTH_START,
 	.checkval = SYNTH_CHECK,
 	.vars = vars,
-	.io_ops = &spk_ttyio_ops,
-	.probe = spk_ttyio_synth_probe,
-	.release = spk_ttyio_release,
-	.synth_immediate = spk_ttyio_synth_immediate,
+	.io_ops = &spk_serial_io_ops,
+	.probe = spk_serial_synth_probe,
+	.release = spk_serial_release,
+	.synth_immediate = spk_serial_synth_immediate,
 	.catch_up = do_catch_up,
 	.flush = synth_flush,
 	.is_alive = spk_synth_is_alive_restart,
 	.synth_adjust = NULL,
-	.read_buff_add = read_buff_add,
+	.read_buff_add = NULL,
 	.get_index = NULL,
 	.indexing = {
 		.command = NULL,
@@ -221,7 +225,6 @@ static void do_catch_up(struct spk_synth *synth)
 static void synth_flush(struct spk_synth *synth)
 {
 	in_escape = 0;
-	synth->io_ops->flush_buffer();
 	synth->synth_immediate(synth, "\033P;10z\033\\");
 }
 

@@ -264,10 +264,10 @@ struct local_aplist_t {
 };
 
 struct local_gain_t {
-	u8 tx_mode;
-	u8 rx_mode;
-	u8 tx_gain;
-	u8 rx_gain;
+	u8 TxMode;
+	u8 RxMode;
+	u8 TxGain;
+	u8 RxGain;
 };
 
 struct local_eeprom_sum_t {

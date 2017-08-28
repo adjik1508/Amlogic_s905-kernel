@@ -26,13 +26,6 @@ to_drm_gem_cma_obj(struct drm_gem_object *gem_obj)
 	return container_of(gem_obj, struct drm_gem_cma_object, base);
 }
 
-#ifndef CONFIG_MMU
-#define DRM_GEM_CMA_UNMAPPED_AREA_FOPS \
-	.get_unmapped_area	= drm_gem_cma_get_unmapped_area,
-#else
-#define DRM_GEM_CMA_UNMAPPED_AREA_FOPS
-#endif
-
 /**
  * DEFINE_DRM_GEM_CMA_FOPS() - macro to generate file operations for CMA drivers
  * @name: name for the generated structure
@@ -57,7 +50,6 @@ to_drm_gem_cma_obj(struct drm_gem_object *gem_obj)
 		.read		= drm_read,\
 		.llseek		= noop_llseek,\
 		.mmap		= drm_gem_cma_mmap,\
-		DRM_GEM_CMA_UNMAPPED_AREA_FOPS \
 	}
 
 /* free GEM object */
@@ -93,6 +85,15 @@ unsigned long drm_gem_cma_get_unmapped_area(struct file *filp,
 					    unsigned long len,
 					    unsigned long pgoff,
 					    unsigned long flags);
+#else
+static inline unsigned long drm_gem_cma_get_unmapped_area(struct file *filp,
+							  unsigned long addr,
+							  unsigned long len,
+							  unsigned long pgoff,
+							  unsigned long flags)
+{
+	return -EINVAL;
+}
 #endif
 
 #ifdef CONFIG_DEBUG_FS

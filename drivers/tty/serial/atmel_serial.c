@@ -46,7 +46,6 @@
 #include <linux/err.h>
 #include <linux/irq.h>
 #include <linux/suspend.h>
-#include <linux/mm.h>
 
 #include <asm/io.h>
 #include <asm/ioctls.h>
@@ -960,7 +959,7 @@ static int atmel_prepare_tx_dma(struct uart_port *port)
 	sg_set_page(&atmel_port->sg_tx,
 			virt_to_page(port->state->xmit.buf),
 			UART_XMIT_SIZE,
-			offset_in_page(port->state->xmit.buf));
+			(unsigned long)port->state->xmit.buf & ~PAGE_MASK);
 	nent = dma_map_sg(port->dev,
 				&atmel_port->sg_tx,
 				1,
@@ -1142,7 +1141,7 @@ static int atmel_prepare_rx_dma(struct uart_port *port)
 	sg_set_page(&atmel_port->sg_rx,
 		    virt_to_page(ring->buf),
 		    sizeof(struct atmel_uart_char) * ATMEL_SERIAL_RINGSIZE,
-		    offset_in_page(ring->buf));
+		    (unsigned long)ring->buf & ~PAGE_MASK);
 	nent = dma_map_sg(port->dev,
 			  &atmel_port->sg_rx,
 			  1,

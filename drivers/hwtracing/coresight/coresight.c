@@ -253,22 +253,14 @@ static int coresight_enable_source(struct coresight_device *csdev, u32 mode)
 	return 0;
 }
 
-/**
- *  coresight_disable_source - Drop the reference count by 1 and disable
- *  the device if there are no users left.
- *
- *  @csdev - The coresight device to disable
- *
- *  Returns true if the device has been disabled.
- */
-static bool coresight_disable_source(struct coresight_device *csdev)
+static void coresight_disable_source(struct coresight_device *csdev)
 {
 	if (atomic_dec_return(csdev->refcnt) == 0) {
-		if (source_ops(csdev)->disable)
+		if (source_ops(csdev)->disable) {
 			source_ops(csdev)->disable(csdev, NULL);
-		csdev->enable = false;
+			csdev->enable = false;
+		}
 	}
-	return !csdev->enable;
 }
 
 void coresight_disable_path(struct list_head *path)
@@ -558,9 +550,6 @@ int coresight_enable(struct coresight_device *csdev)
 	int cpu, ret = 0;
 	struct coresight_device *sink;
 	struct list_head *path;
-	enum coresight_dev_subtype_source subtype;
-
-	subtype = csdev->subtype.source_subtype;
 
 	mutex_lock(&coresight_mutex);
 
@@ -568,16 +557,8 @@ int coresight_enable(struct coresight_device *csdev)
 	if (ret)
 		goto out;
 
-	if (csdev->enable) {
-		/*
-		 * There could be multiple applications driving the software
-		 * source. So keep the refcount for each such user when the
-		 * source is already enabled.
-		 */
-		if (subtype == CORESIGHT_DEV_SUBTYPE_SOURCE_SOFTWARE)
-			atomic_inc(csdev->refcnt);
+	if (csdev->enable)
 		goto out;
-	}
 
 	/*
 	 * Search for a valid sink for this session but don't reset the
@@ -604,7 +585,7 @@ int coresight_enable(struct coresight_device *csdev)
 	if (ret)
 		goto err_source;
 
-	switch (subtype) {
+	switch (csdev->subtype.source_subtype) {
 	case CORESIGHT_DEV_SUBTYPE_SOURCE_PROC:
 		/*
 		 * When working from sysFS it is important to keep track
@@ -648,7 +629,7 @@ void coresight_disable(struct coresight_device *csdev)
 	if (ret)
 		goto out;
 
-	if (!csdev->enable || !coresight_disable_source(csdev))
+	if (!csdev->enable)
 		goto out;
 
 	switch (csdev->subtype.source_subtype) {
@@ -666,6 +647,7 @@ void coresight_disable(struct coresight_device *csdev)
 		break;
 	}
 
+	coresight_disable_source(csdev);
 	coresight_disable_path(path);
 	coresight_release_path(path);
 

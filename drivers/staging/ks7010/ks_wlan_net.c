@@ -2378,14 +2378,14 @@ static int ks_wlan_set_tx_gain(struct net_device *dev,
 		return -EPERM;
 	/* for SLEEP MODE */
 	if (*uwrq >= 0 && *uwrq <= 0xFF)	/* 0-255 */
-		priv->gain.tx_gain = (uint8_t)*uwrq;
+		priv->gain.TxGain = (uint8_t)*uwrq;
 	else
 		return -EINVAL;
 
-	if (priv->gain.tx_gain < 0xFF)
-		priv->gain.tx_mode = 1;
+	if (priv->gain.TxGain < 0xFF)
+		priv->gain.TxMode = 1;
 	else
-		priv->gain.tx_mode = 0;
+		priv->gain.TxMode = 0;
 
 	hostif_sme_enqueue(priv, SME_SET_GAIN);
 	return 0;
@@ -2400,7 +2400,7 @@ static int ks_wlan_get_tx_gain(struct net_device *dev,
 	if (priv->sleep_mode == SLP_SLEEP)
 		return -EPERM;
 	/* for SLEEP MODE */
-	*uwrq = priv->gain.tx_gain;
+	*uwrq = priv->gain.TxGain;
 	hostif_sme_enqueue(priv, SME_GET_GAIN);
 	return 0;
 }
@@ -2415,14 +2415,14 @@ static int ks_wlan_set_rx_gain(struct net_device *dev,
 		return -EPERM;
 	/* for SLEEP MODE */
 	if (*uwrq >= 0 && *uwrq <= 0xFF)	/* 0-255 */
-		priv->gain.rx_gain = (uint8_t)*uwrq;
+		priv->gain.RxGain = (uint8_t)*uwrq;
 	else
 		return -EINVAL;
 
-	if (priv->gain.rx_gain < 0xFF)
-		priv->gain.rx_mode = 1;
+	if (priv->gain.RxGain < 0xFF)
+		priv->gain.RxMode = 1;
 	else
-		priv->gain.rx_mode = 0;
+		priv->gain.RxMode = 0;
 
 	hostif_sme_enqueue(priv, SME_SET_GAIN);
 	return 0;
@@ -2437,7 +2437,7 @@ static int ks_wlan_get_rx_gain(struct net_device *dev,
 	if (priv->sleep_mode == SLP_SLEEP)
 		return -EPERM;
 	/* for SLEEP MODE */
-	*uwrq = priv->gain.rx_gain;
+	*uwrq = priv->gain.RxGain;
 	hostif_sme_enqueue(priv, SME_GET_GAIN);
 	return 0;
 }

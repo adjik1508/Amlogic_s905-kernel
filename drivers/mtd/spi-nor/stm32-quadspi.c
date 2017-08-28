@@ -19,7 +19,6 @@
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/reset.h>
-#include <linux/sizes.h>
 
 #define QUADSPI_CR		0x00
 #define CR_EN			BIT(0)
@@ -193,15 +192,15 @@ static void stm32_qspi_set_framemode(struct spi_nor *nor,
 	cmd->framemode = CCR_IMODE_1;
 
 	if (read) {
-		switch (nor->read_proto) {
-		default:
-		case SNOR_PROTO_1_1_1:
+		switch (nor->flash_read) {
+		case SPI_NOR_NORMAL:
+		case SPI_NOR_FAST:
 			dmode = CCR_DMODE_1;
 			break;
-		case SNOR_PROTO_1_1_2:
+		case SPI_NOR_DUAL:
 			dmode = CCR_DMODE_2;
 			break;
-		case SNOR_PROTO_1_1_4:
+		case SPI_NOR_QUAD:
 			dmode = CCR_DMODE_4;
 			break;
 		}
@@ -376,7 +375,7 @@ static ssize_t stm32_qspi_read(struct spi_nor *nor, loff_t from, size_t len,
 	struct stm32_qspi_cmd cmd;
 	int err;
 
-	dev_dbg(qspi->dev, "read(%#.2x): buf:%p from:%#.8x len:%#zx\n",
+	dev_dbg(qspi->dev, "read(%#.2x): buf:%p from:%#.8x len:%#x\n",
 		nor->read_opcode, buf, (u32)from, len);
 
 	memset(&cmd, 0, sizeof(cmd));
@@ -403,7 +402,7 @@ static ssize_t stm32_qspi_write(struct spi_nor *nor, loff_t to, size_t len,
 	struct stm32_qspi_cmd cmd;
 	int err;
 
-	dev_dbg(dev, "write(%#.2x): buf:%p to:%#.8x len:%#zx\n",
+	dev_dbg(dev, "write(%#.2x): buf:%p to:%#.8x len:%#x\n",
 		nor->program_opcode, buf, (u32)to, len);
 
 	memset(&cmd, 0, sizeof(cmd));
@@ -481,12 +480,7 @@ static void stm32_qspi_unprep(struct spi_nor *nor, enum spi_nor_ops ops)
 static int stm32_qspi_flash_setup(struct stm32_qspi *qspi,
 				  struct device_node *np)
 {
-	struct spi_nor_hwcaps hwcaps = {
-		.mask = SNOR_HWCAPS_READ |
-			SNOR_HWCAPS_READ_FAST |
-			SNOR_HWCAPS_PP,
-	};
-	u32 width, presc, cs_num, max_rate = 0;
+	u32 width, flash_read, presc, cs_num, max_rate = 0;
 	struct stm32_qspi_flash *flash;
 	struct mtd_info *mtd;
 	int ret;
@@ -505,10 +499,12 @@ static int stm32_qspi_flash_setup(struct stm32_qspi *qspi,
 		width = 1;
 
 	if (width == 4)
-		hwcaps.mask |= SNOR_HWCAPS_READ_1_1_4;
+		flash_read = SPI_NOR_QUAD;
 	else if (width == 2)
-		hwcaps.mask |= SNOR_HWCAPS_READ_1_1_2;
-	else if (width != 1)
+		flash_read = SPI_NOR_DUAL;
+	else if (width == 1)
+		flash_read = SPI_NOR_NORMAL;
+	else
 		return -EINVAL;
 
 	flash = &qspi->flash[cs_num];
@@ -543,7 +539,7 @@ static int stm32_qspi_flash_setup(struct stm32_qspi *qspi,
 	 */
 	flash->fsize = FSIZE_VAL(SZ_1K);
 
-	ret = spi_nor_scan(&flash->nor, NULL, &hwcaps);
+	ret = spi_nor_scan(&flash->nor, NULL, flash_read);
 	if (ret) {
 		dev_err(qspi->dev, "device scan failed\n");
 		return ret;

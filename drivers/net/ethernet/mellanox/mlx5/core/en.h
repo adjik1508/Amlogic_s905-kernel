@@ -261,6 +261,14 @@ struct mlx5e_dcbx {
 };
 #endif
 
+#define MAX_PIN_NUM	8
+struct mlx5e_pps {
+	u8                         pin_caps[MAX_PIN_NUM];
+	struct work_struct         out_work;
+	u64                        start[MAX_PIN_NUM];
+	u8                         enabled;
+};
+
 struct mlx5e_tstamp {
 	rwlock_t                   lock;
 	struct cyclecounter        cycles;
@@ -272,7 +280,7 @@ struct mlx5e_tstamp {
 	struct mlx5_core_dev      *mdev;
 	struct ptp_clock          *ptp;
 	struct ptp_clock_info      ptp_info;
-	u8                        *pps_pin_caps;
+	struct mlx5e_pps           pps_info;
 };
 
 enum {
@@ -458,13 +466,15 @@ struct mlx5e_mpw_info {
 
 struct mlx5e_rx_am_stats {
 	int ppms; /* packets per msec */
+	int bpms; /* bytes per msec */
 	int epms; /* events per msec */
 };
 
 struct mlx5e_rx_am_sample {
-	ktime_t		time;
-	unsigned int	pkt_ctr;
-	u16		event_ctr;
+	ktime_t	time;
+	u32	pkt_ctr;
+	u32	byte_ctr;
+	u16	event_ctr;
 };
 
 struct mlx5e_rx_am { /* Adaptive Moderation */

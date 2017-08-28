@@ -1078,6 +1078,7 @@ static inline u32 f2fs_crc32(struct f2fs_sb_info *sbi, const void *address,
 {
 	SHASH_DESC_ON_STACK(shash, sbi->s_chksum_driver);
 	u32 *ctx = (u32 *)shash_desc_ctx(shash);
+	u32 retval;
 	int err;
 
 	shash->tfm = sbi->s_chksum_driver;
@@ -1087,7 +1088,9 @@ static inline u32 f2fs_crc32(struct f2fs_sb_info *sbi, const void *address,
 	err = crypto_shash_update(shash, address, length);
 	BUG_ON(err);
 
-	return *ctx;
+	retval = *ctx;
+	barrier_data(ctx);
+	return retval;
 }
 
 static inline bool f2fs_crc_valid(struct f2fs_sb_info *sbi, __u32 blk_crc,
@@ -1225,9 +1228,11 @@ static inline void __set_ckpt_flags(struct f2fs_checkpoint *cp, unsigned int f)
 
 static inline void set_ckpt_flags(struct f2fs_sb_info *sbi, unsigned int f)
 {
-	spin_lock(&sbi->cp_lock);
+	unsigned long flags;
+
+	spin_lock_irqsave(&sbi->cp_lock, flags);
 	__set_ckpt_flags(F2FS_CKPT(sbi), f);
-	spin_unlock(&sbi->cp_lock);
+	spin_unlock_irqrestore(&sbi->cp_lock, flags);
 }
 
 static inline void __clear_ckpt_flags(struct f2fs_checkpoint *cp, unsigned int f)
@@ -1241,22 +1246,26 @@ static inline void __clear_ckpt_flags(struct f2fs_checkpoint *cp, unsigned int f
 
 static inline void clear_ckpt_flags(struct f2fs_sb_info *sbi, unsigned int f)
 {
-	spin_lock(&sbi->cp_lock);
+	unsigned long flags;
+
+	spin_lock_irqsave(&sbi->cp_lock, flags);
 	__clear_ckpt_flags(F2FS_CKPT(sbi), f);
-	spin_unlock(&sbi->cp_lock);
+	spin_unlock_irqrestore(&sbi->cp_lock, flags);
 }
 
 static inline void disable_nat_bits(struct f2fs_sb_info *sbi, bool lock)
 {
+	unsigned long flags;
+
 	set_sbi_flag(sbi, SBI_NEED_FSCK);
 
 	if (lock)
-		spin_lock(&sbi->cp_lock);
+		spin_lock_irqsave(&sbi->cp_lock, flags);
 	__clear_ckpt_flags(F2FS_CKPT(sbi), CP_NAT_BITS_FLAG);
 	kfree(NM_I(sbi)->nat_bits);
 	NM_I(sbi)->nat_bits = NULL;
 	if (lock)
-		spin_unlock(&sbi->cp_lock);
+		spin_unlock_irqrestore(&sbi->cp_lock, flags);
 }
 
 static inline bool enabled_nat_bits(struct f2fs_sb_info *sbi,

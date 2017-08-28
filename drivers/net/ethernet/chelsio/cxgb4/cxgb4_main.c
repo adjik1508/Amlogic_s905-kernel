@@ -891,7 +891,7 @@ static u16 cxgb_select_queue(struct net_device *dev, struct sk_buff *skb,
 	 * The skb's priority is determined via the VLAN Tag Priority Code
 	 * Point field.
 	 */
-	if (cxgb4_dcb_enabled(dev) && !is_kdump_kernel()) {
+	if (cxgb4_dcb_enabled(dev)) {
 		u16 vlan_tci;
 		int err;
 
@@ -2055,12 +2055,12 @@ static void detach_ulds(struct adapter *adap)
 
 	mutex_lock(&uld_mutex);
 	list_del(&adap->list_node);
+
 	for (i = 0; i < CXGB4_ULD_MAX; i++)
-		if (adap->uld && adap->uld[i].handle) {
+		if (adap->uld && adap->uld[i].handle)
 			adap->uld[i].state_change(adap->uld[i].handle,
 					     CXGB4_STATE_DETACH);
-			adap->uld[i].handle = NULL;
-		}
+
 	if (netevent_registered && list_empty(&adapter_list)) {
 		unregister_netevent_notifier(&cxgb4_netevent_nb);
 		netevent_registered = false;
@@ -2171,9 +2171,10 @@ static int cxgb_up(struct adapter *adap)
 {
 	int err;
 
+	mutex_lock(&uld_mutex);
 	err = setup_sge_queues(adap);
 	if (err)
-		goto out;
+		goto rel_lock;
 	err = setup_rss(adap);
 	if (err)
 		goto freeq;
@@ -2196,23 +2197,28 @@ static int cxgb_up(struct adapter *adap)
 		if (err)
 			goto irq_err;
 	}
+
 	enable_rx(adap);
 	t4_sge_start(adap);
 	t4_intr_enable(adap);
 	adap->flags |= FULL_INIT_DONE;
+	mutex_unlock(&uld_mutex);
+
 	notify_ulds(adap, CXGB4_STATE_UP);
 #if IS_ENABLED(CONFIG_IPV6)
 	update_clip(adap);
 #endif
 	/* Initialize hash mac addr list*/
 	INIT_LIST_HEAD(&adap->mac_hlist);
- out:
 	return err;
+
  irq_err:
 	dev_err(adap->pdev_dev, "request_irq failed, err %d\n", err);
  freeq:
 	t4_free_sge_resources(adap);
-	goto out;
+ rel_lock:
+	mutex_unlock(&uld_mutex);
+	return err;
 }
 
 static void cxgb_down(struct adapter *adapter)
@@ -2770,6 +2776,9 @@ static const struct ethtool_ops cxgb4_mgmt_ethtool_ops = {
 void t4_fatal_err(struct adapter *adap)
 {
 	int port;
+
+	if (pci_channel_offline(adap->pdev))
+		return;
 
 	/* Disable the SGE since ULDs are going to free resources that
 	 * could be exposed to the adapter.  RDMA MWs for example...
@@ -3882,9 +3891,10 @@ static pci_ers_result_t eeh_err_detected(struct pci_dev *pdev,
 	spin_lock(&adap->stats_lock);
 	for_each_port(adap, i) {
 		struct net_device *dev = adap->port[i];
-
-		netif_device_detach(dev);
-		netif_carrier_off(dev);
+		if (dev) {
+			netif_device_detach(dev);
+			netif_carrier_off(dev);
+		}
 	}
 	spin_unlock(&adap->stats_lock);
 	disable_interrupts(adap);
@@ -3963,12 +3973,13 @@ static void eeh_resume(struct pci_dev *pdev)
 	rtnl_lock();
 	for_each_port(adap, i) {
 		struct net_device *dev = adap->port[i];
-
-		if (netif_running(dev)) {
-			link_start(dev);
-			cxgb_set_rxmode(dev);
+		if (dev) {
+			if (netif_running(dev)) {
+				link_start(dev);
+				cxgb_set_rxmode(dev);
+			}
+			netif_device_attach(dev);
 		}
-		netif_device_attach(dev);
 	}
 	rtnl_unlock();
 }
@@ -4007,7 +4018,10 @@ static void cfg_queues(struct adapter *adap)
 
 	/* Reduce memory usage in kdump environment, disable all offload.
 	 */
-	if (is_kdump_kernel() || (is_uld(adap) && t4_uld_mem_alloc(adap))) {
+	if (is_kdump_kernel()) {
+		adap->params.offload = 0;
+		adap->params.crypto = 0;
+	} else if (is_uld(adap) && t4_uld_mem_alloc(adap)) {
 		adap->params.offload = 0;
 		adap->params.crypto = 0;
 	}
@@ -4028,7 +4042,7 @@ static void cfg_queues(struct adapter *adap)
 		struct port_info *pi = adap2pinfo(adap, i);
 
 		pi->first_qset = qidx;
-		pi->nqsets = is_kdump_kernel() ? 1 : 8;
+		pi->nqsets = 8;
 		qidx += pi->nqsets;
 	}
 #else /* !CONFIG_CHELSIO_T4_DCB */
@@ -4040,9 +4054,6 @@ static void cfg_queues(struct adapter *adap)
 		q10g = (MAX_ETH_QSETS - (adap->params.nports - n10g)) / n10g;
 	if (q10g > netif_get_num_default_rss_queues())
 		q10g = netif_get_num_default_rss_queues();
-
-	if (is_kdump_kernel())
-		q10g = 1;
 
 	for_each_port(adap, i) {
 		struct port_info *pi = adap2pinfo(adap, i);
@@ -4516,7 +4527,7 @@ static void dummy_setup(struct net_device *dev)
 	/* Initialize the device structure. */
 	dev->netdev_ops = &cxgb4_mgmt_netdev_ops;
 	dev->ethtool_ops = &cxgb4_mgmt_ethtool_ops;
-	dev->destructor = free_netdev;
+	dev->needs_free_netdev = true;
 }
 
 static int config_mgmt_dev(struct pci_dev *pdev)
@@ -5075,8 +5086,10 @@ static void remove_one(struct pci_dev *pdev)
 		 */
 		destroy_workqueue(adapter->workq);
 
-		if (is_uld(adapter))
+		if (is_uld(adapter)) {
 			detach_ulds(adapter);
+			t4_uld_clean_up(adapter);
+		}
 
 		disable_interrupts(adapter);
 
@@ -5153,7 +5166,11 @@ static void shutdown_one(struct pci_dev *pdev)
 			if (adapter->port[i]->reg_state == NETREG_REGISTERED)
 				cxgb_close(adapter->port[i]);
 
-		t4_uld_clean_up(adapter);
+		if (is_uld(adapter)) {
+			detach_ulds(adapter);
+			t4_uld_clean_up(adapter);
+		}
+
 		disable_interrupts(adapter);
 		disable_msi(adapter);
 

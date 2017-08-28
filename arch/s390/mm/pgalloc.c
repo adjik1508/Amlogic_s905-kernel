@@ -76,46 +76,29 @@ static void __crst_table_upgrade(void *arg)
 	__tlb_flush_local();
 }
 
-int crst_table_upgrade(struct mm_struct *mm, unsigned long end)
+int crst_table_upgrade(struct mm_struct *mm)
 {
 	unsigned long *table, *pgd;
-	int rc, notify;
 
-	/* upgrade should only happen from 3 to 4, 3 to 5, or 4 to 5 levels */
-	BUG_ON(mm->context.asce_limit < (1UL << 42));
-	if (end >= TASK_SIZE_MAX)
+	/* upgrade should only happen from 3 to 4 levels */
+	BUG_ON(mm->context.asce_limit != (1UL << 42));
+
+	table = crst_table_alloc(mm);
+	if (!table)
 		return -ENOMEM;
-	rc = 0;
-	notify = 0;
-	while (mm->context.asce_limit < end) {
-		table = crst_table_alloc(mm);
-		if (!table) {
-			rc = -ENOMEM;
-			break;
-		}
-		spin_lock_bh(&mm->page_table_lock);
-		pgd = (unsigned long *) mm->pgd;
-		if (mm->context.asce_limit == (1UL << 42)) {
-			crst_table_init(table, _REGION2_ENTRY_EMPTY);
-			p4d_populate(mm, (p4d_t *) table, (pud_t *) pgd);
-			mm->pgd = (pgd_t *) table;
-			mm->context.asce_limit = 1UL << 53;
-			mm->context.asce = __pa(mm->pgd) | _ASCE_TABLE_LENGTH |
-				_ASCE_USER_BITS | _ASCE_TYPE_REGION2;
-		} else {
-			crst_table_init(table, _REGION1_ENTRY_EMPTY);
-			pgd_populate(mm, (pgd_t *) table, (p4d_t *) pgd);
-			mm->pgd = (pgd_t *) table;
-			mm->context.asce_limit = -PAGE_SIZE;
-			mm->context.asce = __pa(mm->pgd) | _ASCE_TABLE_LENGTH |
-				_ASCE_USER_BITS | _ASCE_TYPE_REGION1;
-		}
-		notify = 1;
-		spin_unlock_bh(&mm->page_table_lock);
-	}
-	if (notify)
-		on_each_cpu(__crst_table_upgrade, mm, 0);
-	return rc;
+
+	spin_lock_bh(&mm->page_table_lock);
+	pgd = (unsigned long *) mm->pgd;
+	crst_table_init(table, _REGION2_ENTRY_EMPTY);
+	pgd_populate(mm, (pgd_t *) table, (pud_t *) pgd);
+	mm->pgd = (pgd_t *) table;
+	mm->context.asce_limit = 1UL << 53;
+	mm->context.asce = __pa(mm->pgd) | _ASCE_TABLE_LENGTH |
+			   _ASCE_USER_BITS | _ASCE_TYPE_REGION2;
+	spin_unlock_bh(&mm->page_table_lock);
+
+	on_each_cpu(__crst_table_upgrade, mm, 0);
+	return 0;
 }
 
 void crst_table_downgrade(struct mm_struct *mm)
@@ -291,7 +274,7 @@ static void __tlb_remove_table(void *_table)
 	struct page *page = pfn_to_page(__pa(table) >> PAGE_SHIFT);
 
 	switch (mask) {
-	case 0:		/* pmd, pud, or p4d */
+	case 0:		/* pmd or pud */
 		free_pages((unsigned long) table, 2);
 		break;
 	case 1:		/* lower 2K of a 4K page table */

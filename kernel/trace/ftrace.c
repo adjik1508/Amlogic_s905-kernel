@@ -3665,7 +3665,7 @@ match_records(struct ftrace_hash *hash, char *func, int len, char *mod)
 	int exclude_mod = 0;
 	int found = 0;
 	int ret;
-	int clear_filter;
+	int clear_filter = 0;
 
 	if (func) {
 		func_g.type = filter_parse_regex(func, len, &func_g.search,
@@ -4336,9 +4336,6 @@ static int ftrace_process_regex(struct ftrace_iterator *iter,
 	/* command found */
 
 	command = strsep(&next, ":");
-
-	if (WARN_ON_ONCE(!tr))
-		return -EINVAL;
 
 	mutex_lock(&ftrace_cmd_mutex);
 	list_for_each_entry(p, &ftrace_commands, list) {
@@ -5063,7 +5060,7 @@ ftrace_graph_release(struct inode *inode, struct file *file)
 	}
 
  out:
-	kfree(fgd->new_hash);
+	free_ftrace_hash(fgd->new_hash);
 	kfree(fgd);
 
 	return ret;

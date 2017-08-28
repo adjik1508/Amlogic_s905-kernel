@@ -26,6 +26,7 @@
 #include <linux/kthread.h>
 
 #include <mostcore.h>
+#include <networking.h>
 #include "dim2_hal.h"
 #include "dim2_hdm.h"
 #include "dim2_errors.h"
@@ -106,8 +107,6 @@ struct dim2_hdm {
 	unsigned char link_state;
 	int atx_idx;
 	struct medialb_bus bus;
-	void (*on_netinfo)(struct most_interface *,
-			   unsigned char, unsigned char *);
 };
 
 #define iface_to_hdm(iface) container_of(iface, struct dim2_hdm, most_iface)
@@ -288,11 +287,8 @@ static int deliver_netinfo_thread(void *data)
 
 		if (dev->deliver_netinfo) {
 			dev->deliver_netinfo--;
-			if (dev->on_netinfo) {
-				dev->on_netinfo(&dev->most_iface,
-						dev->link_state,
-						dev->mac_addrs);
-			}
+			most_deliver_netinfo(&dev->most_iface, dev->link_state,
+					     dev->mac_addrs);
 		}
 	}
 
@@ -658,17 +654,11 @@ static int enqueue(struct most_interface *most_iface, int ch_idx,
  * Send a command to INIC which triggers retrieving of network info by means of
  * "Message exchange over MDP/MEP". Return 0 on success, negative on failure.
  */
-static void request_netinfo(struct most_interface *most_iface, int ch_idx,
-			    void (*on_netinfo)(struct most_interface *,
-					       unsigned char, unsigned char *))
+static void request_netinfo(struct most_interface *most_iface, int ch_idx)
 {
 	struct dim2_hdm *dev = iface_to_hdm(most_iface);
 	struct mbo *mbo;
 	u8 *data;
-
-	dev->on_netinfo = on_netinfo;
-	if (!on_netinfo)
-		return;
 
 	if (dev->atx_idx < 0) {
 		pr_err("Async Tx Not initialized\n");

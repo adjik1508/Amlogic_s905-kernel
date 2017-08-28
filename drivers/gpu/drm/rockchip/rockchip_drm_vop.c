@@ -468,7 +468,7 @@ static bool vop_line_flag_irq_is_enabled(struct vop *vop)
 	return !!line_flag_irq;
 }
 
-static void vop_line_flag_irq_enable(struct vop *vop)
+static void vop_line_flag_irq_enable(struct vop *vop, int line_num)
 {
 	unsigned long flags;
 
@@ -477,6 +477,7 @@ static void vop_line_flag_irq_enable(struct vop *vop)
 
 	spin_lock_irqsave(&vop->irq_lock, flags);
 
+	VOP_CTRL_SET(vop, line_flag_num[0], line_num);
 	VOP_INTR_SET_TYPE(vop, clear, LINE_FLAG_INTR, 1);
 	VOP_INTR_SET_TYPE(vop, enable, LINE_FLAG_INTR, 1);
 
@@ -874,6 +875,7 @@ static bool vop_crtc_mode_fixup(struct drm_crtc *crtc,
 static void vop_crtc_enable(struct drm_crtc *crtc)
 {
 	struct vop *vop = to_vop(crtc);
+	const struct vop_data *vop_data = vop->data;
 	struct rockchip_crtc_state *s = to_rockchip_crtc_state(crtc->state);
 	struct drm_display_mode *adjusted_mode = &crtc->state->adjusted_mode;
 	u16 hsync_len = adjusted_mode->hsync_end - adjusted_mode->hsync_start;
@@ -966,6 +968,13 @@ static void vop_crtc_enable(struct drm_crtc *crtc)
 		DRM_DEV_ERROR(vop->dev, "unsupported connector_type [%d]\n",
 			      s->output_type);
 	}
+
+	/*
+	 * if vop is not support RGB10 output, need force RGB10 to RGB888.
+	 */
+	if (s->output_mode == ROCKCHIP_OUT_MODE_AAAA &&
+	    !(vop_data->feature & VOP_FEATURE_OUTPUT_RGB10))
+		s->output_mode = ROCKCHIP_OUT_MODE_P888;
 	VOP_CTRL_SET(vop, out_mode, s->output_mode);
 
 	VOP_CTRL_SET(vop, htotal_pw, (htotal << 16) | hsync_len);
@@ -979,8 +988,6 @@ static void vop_crtc_enable(struct drm_crtc *crtc)
 	val |= vact_end;
 	VOP_CTRL_SET(vop, vact_st_end, val);
 	VOP_CTRL_SET(vop, vpost_st_end, val);
-
-	VOP_CTRL_SET(vop, line_flag_num[0], vact_end);
 
 	clk_set_rate(vop->dclk, adjusted_mode->clock * 1000);
 
@@ -1508,16 +1515,19 @@ static void vop_win_init(struct vop *vop)
 }
 
 /**
- * rockchip_drm_wait_vact_end
+ * rockchip_drm_wait_line_flag - acqiure the give line flag event
  * @crtc: CRTC to enable line flag
+ * @line_num: interested line number
  * @mstimeout: millisecond for timeout
  *
- * Wait for vact_end line flag irq or timeout.
+ * Driver would hold here until the interested line flag interrupt have
+ * happened or timeout to wait.
  *
  * Returns:
  * Zero on success, negative errno on failure.
  */
-int rockchip_drm_wait_vact_end(struct drm_crtc *crtc, unsigned int mstimeout)
+int rockchip_drm_wait_line_flag(struct drm_crtc *crtc, unsigned int line_num,
+				unsigned int mstimeout)
 {
 	struct vop *vop = to_vop(crtc);
 	unsigned long jiffies_left;
@@ -1525,14 +1535,14 @@ int rockchip_drm_wait_vact_end(struct drm_crtc *crtc, unsigned int mstimeout)
 	if (!crtc || !vop->is_enabled)
 		return -ENODEV;
 
-	if (mstimeout <= 0)
+	if (line_num > crtc->mode.vtotal || mstimeout <= 0)
 		return -EINVAL;
 
 	if (vop_line_flag_irq_is_enabled(vop))
 		return -EBUSY;
 
 	reinit_completion(&vop->line_flag_completion);
-	vop_line_flag_irq_enable(vop);
+	vop_line_flag_irq_enable(vop, line_num);
 
 	jiffies_left = wait_for_completion_timeout(&vop->line_flag_completion,
 						   msecs_to_jiffies(mstimeout));
@@ -1545,7 +1555,7 @@ int rockchip_drm_wait_vact_end(struct drm_crtc *crtc, unsigned int mstimeout)
 
 	return 0;
 }
-EXPORT_SYMBOL(rockchip_drm_wait_vact_end);
+EXPORT_SYMBOL(rockchip_drm_wait_line_flag);
 
 static int vop_bind(struct device *dev, struct device *master, void *data)
 {

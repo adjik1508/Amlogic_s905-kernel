@@ -271,6 +271,10 @@
 	status = "okay";
 };
 
+&usb0_vbus_pin_a {
+	pins = "PG11";
+};
+
 &usbphy {
 	pinctrl-names = "default";
 	pinctrl-0 = <&usb0_id_detect_pin>;

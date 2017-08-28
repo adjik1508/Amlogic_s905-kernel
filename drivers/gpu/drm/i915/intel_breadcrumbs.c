@@ -64,12 +64,10 @@ static unsigned long wait_timeout(void)
 
 static noinline void missed_breadcrumb(struct intel_engine_cs *engine)
 {
-	DRM_DEBUG_DRIVER("%s missed breadcrumb at %pF, irq posted? %s, current seqno=%x, last=%x\n",
+	DRM_DEBUG_DRIVER("%s missed breadcrumb at %pF, irq posted? %s\n",
 			 engine->name, __builtin_return_address(0),
 			 yesno(test_bit(ENGINE_IRQ_BREADCRUMB,
-					&engine->irq_posted)),
-			 intel_engine_get_seqno(engine),
-			 intel_engine_last_submit(engine));
+					&engine->irq_posted)));
 
 	set_bit(engine->id, &engine->i915->gpu_error.missed_irq_rings);
 }
@@ -667,13 +665,12 @@ static int intel_breadcrumbs_signaler(void *arg)
 	return 0;
 }
 
-void intel_engine_enable_signaling(struct drm_i915_gem_request *request,
-				   bool wakeup)
+void intel_engine_enable_signaling(struct drm_i915_gem_request *request)
 {
 	struct intel_engine_cs *engine = request->engine;
 	struct intel_breadcrumbs *b = &engine->breadcrumbs;
 	struct rb_node *parent, **p;
-	bool first;
+	bool first, wakeup;
 	u32 seqno;
 
 	/* Note that we may be called from an interrupt handler on another
@@ -706,7 +703,7 @@ void intel_engine_enable_signaling(struct drm_i915_gem_request *request,
 	 * If we are the oldest waiter, enable the irq (after which we
 	 * must double check that the seqno did not complete).
 	 */
-	wakeup &= __intel_engine_add_wait(engine, &request->signaling.wait);
+	wakeup = __intel_engine_add_wait(engine, &request->signaling.wait);
 
 	/* Now insert ourselves into the retirement ordered list of signals
 	 * on this engine. We track the oldest seqno as that will be the

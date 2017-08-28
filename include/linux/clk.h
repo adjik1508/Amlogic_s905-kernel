@@ -265,6 +265,30 @@ struct clk *devm_clk_get(struct device *dev, const char *id);
  */
 struct clk *devm_get_clk_from_child(struct device *dev,
 				    struct device_node *np, const char *con_id);
+/**
+ * clk_rate_protect - inform the system when the clock rate must be protected.
+ * @clk: clock source
+ *
+ * This function informs the system that the consumer protecting the clock
+ * depends on the rate of the clock source and can't tolerate any glitches
+ * introduced by further clock rate change or re-parenting of the clock source.
+ *
+ * Must not be called from within atomic context.
+ */
+void clk_rate_protect(struct clk *clk);
+
+/**
+ * clk_rate_unprotect - release the protection of the clock source.
+ * @clk: clock source
+ *
+ * This function informs the system that the consumer previously protecting the
+ * clock rate can now deal with other consumer altering the clock source rate
+ *
+ * The caller must balance the number of rate_protect and rate_unprotect calls.
+ *
+ * Must not be called from within atomic context.
+ */
+void clk_rate_unprotect(struct clk *clk);
 
 /**
  * clk_enable - inform the system when the clock source should be running.
@@ -364,6 +388,15 @@ long clk_round_rate(struct clk *clk, unsigned long rate);
 int clk_set_rate(struct clk *clk, unsigned long rate);
 
 /**
+ * clk_set_rate_protect - set and protect the clock rate for a clock source
+ * @clk: clock source
+ * @rate: desired clock rate in Hz
+ *
+ * Returns success (0) or negative errno.
+ */
+int clk_set_rate_protect(struct clk *clk, unsigned long rate);
+
+/**
  * clk_has_parent - check if a clock is a possible parent for another
  * @clk: clock source
  * @parent: parent clock source
@@ -460,6 +493,11 @@ static inline void clk_put(struct clk *clk) {}
 
 static inline void devm_clk_put(struct device *dev, struct clk *clk) {}
 
+
+static inline void clk_protect(struct clk *clk) {}
+
+static inline void clk_unprotect(struct clk *clk) {}
+
 static inline int clk_enable(struct clk *clk)
 {
 	return 0;
@@ -473,6 +511,11 @@ static inline unsigned long clk_get_rate(struct clk *clk)
 }
 
 static inline int clk_set_rate(struct clk *clk, unsigned long rate)
+{
+	return 0;
+}
+
+static inline int clk_set_rate_protect(struct clk *clk, unsigned long rate)
 {
 	return 0;
 }

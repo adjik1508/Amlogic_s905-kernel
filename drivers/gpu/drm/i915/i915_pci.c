@@ -208,7 +208,7 @@ static const struct intel_device_info intel_ironlake_d_info = {
 static const struct intel_device_info intel_ironlake_m_info = {
 	GEN5_FEATURES,
 	.platform = INTEL_IRONLAKE,
-	.is_mobile = 1,
+	.is_mobile = 1, .has_fbc = 1,
 };
 
 #define GEN6_FEATURES \
@@ -220,6 +220,7 @@ static const struct intel_device_info intel_ironlake_m_info = {
 	.has_rc6 = 1, \
 	.has_rc6p = 1, \
 	.has_gmbus_irq = 1, \
+	.has_hw_contexts = 1, \
 	.has_aliasing_ppgtt = 1, \
 	GEN_DEFAULT_PIPEOFFSETS, \
 	CURSOR_OFFSETS
@@ -244,6 +245,7 @@ static const struct intel_device_info intel_sandybridge_m_info = {
 	.has_rc6 = 1, \
 	.has_rc6p = 1, \
 	.has_gmbus_irq = 1, \
+	.has_hw_contexts = 1, \
 	.has_aliasing_ppgtt = 1, \
 	.has_full_ppgtt = 1, \
 	GEN_DEFAULT_PIPEOFFSETS, \
@@ -278,6 +280,7 @@ static const struct intel_device_info intel_valleyview_info = {
 	.has_runtime_pm = 1,
 	.has_rc6 = 1,
 	.has_gmbus_irq = 1,
+	.has_hw_contexts = 1,
 	.has_gmch_display = 1,
 	.has_hotplug = 1,
 	.has_aliasing_ppgtt = 1,
@@ -337,6 +340,7 @@ static const struct intel_device_info intel_cherryview_info = {
 	.has_resource_streamer = 1,
 	.has_rc6 = 1,
 	.has_gmbus_irq = 1,
+	.has_hw_contexts = 1,
 	.has_logical_ring_contexts = 1,
 	.has_gmch_display = 1,
 	.has_aliasing_ppgtt = 1,
@@ -383,9 +387,9 @@ static const struct intel_device_info intel_skylake_gt3_info = {
 	.has_rc6 = 1, \
 	.has_dp_mst = 1, \
 	.has_gmbus_irq = 1, \
+	.has_hw_contexts = 1, \
 	.has_logical_ring_contexts = 1, \
 	.has_guc = 1, \
-	.has_decoupled_mmio = 1, \
 	.has_aliasing_ppgtt = 1, \
 	.has_full_ppgtt = 1, \
 	.has_full_48bit_ppgtt = 1, \

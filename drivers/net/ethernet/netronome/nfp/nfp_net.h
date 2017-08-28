@@ -102,7 +102,6 @@
 #define NFP_NET_RX_DESCS_DEFAULT 4096	/* Default # of Rx descs per ring */
 
 #define NFP_NET_FL_BATCH	16	/* Add freelist in this Batch size */
-#define NFP_NET_XDP_MAX_COMPLETE 2048	/* XDP bufs to reclaim in NAPI poll */
 
 /* Offload definitions */
 #define NFP_NET_N_VXLAN_PORTS	(NFP_NET_CFG_VXLAN_SZ / sizeof(__be16))
@@ -116,9 +115,6 @@ struct nfp_cpp;
 struct nfp_eth_table_port;
 struct nfp_net;
 struct nfp_net_r_vector;
-
-/* Convenience macro for wrapping descriptor index on ring size */
-#define D_IDX(ring, idx)	((idx) & ((ring)->cnt - 1))
 
 /* Convenience macro for writing dma address into RX/TX descriptors */
 #define nfp_desc_set_dma_addr(desc, dma_addr)				\
@@ -157,15 +153,10 @@ struct nfp_net_tx_desc {
 			__le32 dma_addr_lo; /* Low 32bit of host buf addr */
 
 			__le16 mss;	/* MSS to be used for LSO */
-			u8 lso_hdrlen;	/* LSO, TCP payload offset */
+			u8 l4_offset;	/* LSO, where the L4 data starts */
 			u8 flags;	/* TX Flags, see @PCIE_DESC_TX_* */
-			union {
-				struct {
-					u8 l3_offset; /* L3 header offset */
-					u8 l4_offset; /* L4 header offset */
-				};
-				__le16 vlan; /* VLAN tag to add if indicated */
-			};
+
+			__le16 vlan;	/* VLAN tag to add if indicated */
 			__le16 data_len; /* Length of frame + meta data */
 		} __packed;
 		__le32 vals[4];
@@ -296,11 +287,9 @@ struct nfp_net_rx_desc {
 #define NFP_NET_META_FIELD_MASK GENMASK(NFP_NET_META_FIELD_SIZE - 1, 0)
 
 struct nfp_meta_parsed {
-	u8 hash_type;
-	u8 csum_type;
+	u32 hash_type;
 	u32 hash;
 	u32 mark;
-	__wsum csum;
 };
 
 struct nfp_net_rx_hash {

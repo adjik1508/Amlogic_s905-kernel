@@ -578,8 +578,7 @@ int init_initiator_rw_iscsi_task(struct iscsi_task_params *task_params,
 					  (struct iscsi_common_hdr *)cmd_header,
 					  tx_sgl_params, cmd_params,
 					  dif_task_params);
-	else if (GET_FIELD(cmd_header->flags_attr, ISCSI_CMD_HDR_READ) ||
-		 (task_params->rx_io_size == 0 && task_params->tx_io_size == 0))
+	else if (GET_FIELD(cmd_header->flags_attr, ISCSI_CMD_HDR_READ))
 		return init_rw_iscsi_task(task_params,
 					  ISCSI_TASK_TYPE_INITIATOR_READ,
 					  conn_params,

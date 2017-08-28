@@ -48,7 +48,7 @@ init_iova_domain(struct iova_domain *iovad, unsigned long granule,
 	iovad->cached32_node = NULL;
 	iovad->granule = granule;
 	iovad->start_pfn = start_pfn;
-	iovad->dma_32bit_pfn = pfn_32bit + 1;
+	iovad->dma_32bit_pfn = pfn_32bit;
 	init_iova_rcaches(iovad);
 }
 EXPORT_SYMBOL_GPL(init_iova_domain);
@@ -63,7 +63,7 @@ __get_cached_rbnode(struct iova_domain *iovad, unsigned long *limit_pfn)
 		struct rb_node *prev_node = rb_prev(iovad->cached32_node);
 		struct iova *curr_iova =
 			rb_entry(iovad->cached32_node, struct iova, node);
-		*limit_pfn = curr_iova->pfn_lo;
+		*limit_pfn = curr_iova->pfn_lo - 1;
 		return prev_node;
 	}
 }
@@ -135,7 +135,7 @@ iova_insert_rbtree(struct rb_root *root, struct iova *iova,
 static unsigned int
 iova_get_pad_size(unsigned int size, unsigned int limit_pfn)
 {
-	return (limit_pfn - size) & (__roundup_pow_of_two(size) - 1);
+	return (limit_pfn + 1 - size) & (__roundup_pow_of_two(size) - 1);
 }
 
 static int __alloc_and_insert_iova_range(struct iova_domain *iovad,
@@ -155,15 +155,18 @@ static int __alloc_and_insert_iova_range(struct iova_domain *iovad,
 	while (curr) {
 		struct iova *curr_iova = rb_entry(curr, struct iova, node);
 
-		if (limit_pfn <= curr_iova->pfn_lo) {
+		if (limit_pfn < curr_iova->pfn_lo)
 			goto move_left;
-		} else if (limit_pfn > curr_iova->pfn_hi) {
+		else if (limit_pfn < curr_iova->pfn_hi)
+			goto adjust_limit_pfn;
+		else {
 			if (size_aligned)
 				pad_size = iova_get_pad_size(size, limit_pfn);
-			if ((curr_iova->pfn_hi + size + pad_size) < limit_pfn)
+			if ((curr_iova->pfn_hi + size + pad_size) <= limit_pfn)
 				break;	/* found a free slot */
 		}
-		limit_pfn = curr_iova->pfn_lo;
+adjust_limit_pfn:
+		limit_pfn = curr_iova->pfn_lo ? (curr_iova->pfn_lo - 1) : 0;
 move_left:
 		prev = curr;
 		curr = rb_prev(curr);
@@ -179,7 +182,7 @@ move_left:
 	}
 
 	/* pfn_lo will point to size aligned address if size_aligned is set */
-	new->pfn_lo = limit_pfn - (size + pad_size);
+	new->pfn_lo = limit_pfn - (size + pad_size) + 1;
 	new->pfn_hi = new->pfn_lo + size - 1;
 
 	/* If we have 'prev', it's a valid place to start the insertion. */
@@ -266,7 +269,7 @@ alloc_iova(struct iova_domain *iovad, unsigned long size,
 	if (!new_iova)
 		return NULL;
 
-	ret = __alloc_and_insert_iova_range(iovad, size, limit_pfn + 1,
+	ret = __alloc_and_insert_iova_range(iovad, size, limit_pfn,
 			new_iova, size_aligned);
 
 	if (ret) {

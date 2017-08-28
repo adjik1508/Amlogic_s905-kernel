@@ -361,9 +361,17 @@ static ssize_t wdm_write
 	if (we < 0)
 		return usb_translate_errors(we);
 
-	buf = memdup_user(buffer, count);
-	if (IS_ERR(buf))
-		return PTR_ERR(buf);
+	buf = kmalloc(count, GFP_KERNEL);
+	if (!buf) {
+		rv = -ENOMEM;
+		goto outnl;
+	}
+
+	r = copy_from_user(buf, buffer, count);
+	if (r > 0) {
+		rv = -EFAULT;
+		goto out_free_mem;
+	}
 
 	/* concurrent writes and disconnect */
 	r = mutex_lock_interruptible(&desc->wlock);
@@ -433,7 +441,8 @@ static ssize_t wdm_write
 
 	usb_autopm_put_interface(desc->intf);
 	mutex_unlock(&desc->wlock);
-	return count;
+outnl:
+	return rv < 0 ? rv : count;
 
 out_free_mem_pm:
 	usb_autopm_put_interface(desc->intf);

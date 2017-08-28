@@ -12,7 +12,6 @@
 
 #include <linux/kernel.h>
 #include <linux/atomic.h>
-#include <linux/random.h>
 #include <linux/static_key.h>
 #include <asm/cpacf.h>
 

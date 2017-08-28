@@ -23,7 +23,6 @@ whole; patches welcome!
    kmemleak
    kmemcheck
    gdb-kernel-debugging
-   kgdb
 
 
 .. only::  subproject and html

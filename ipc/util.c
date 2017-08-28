@@ -418,43 +418,46 @@ void ipc_free(void *ptr)
 }
 
 /**
- * ipc_rcu_alloc - allocate ipc space
+ * ipc_rcu_alloc - allocate ipc and rcu space
  * @size: size desired
  *
- * Allocate memory for an ipc object.
- * The first member must be struct kern_ipc_perm.
+ * Allocate memory for the rcu header structure +  the object.
+ * Returns the pointer to the object or NULL upon failure.
  */
-struct kern_ipc_perm *ipc_rcu_alloc(int size)
+void *ipc_rcu_alloc(int size)
 {
 	/*
 	 * We prepend the allocation with the rcu struct
 	 */
-	struct kern_ipc_perm *out = ipc_alloc(size);
+	struct ipc_rcu *out = ipc_alloc(sizeof(struct ipc_rcu) + size);
 	if (unlikely(!out))
 		return NULL;
 	atomic_set(&out->refcount, 1);
-	return out;
+	return out + 1;
 }
 
-int ipc_rcu_getref(struct kern_ipc_perm *ptr)
+int ipc_rcu_getref(void *ptr)
 {
-	return atomic_inc_not_zero(&ptr->refcount);
+	struct ipc_rcu *p = ((struct ipc_rcu *)ptr) - 1;
+
+	return atomic_inc_not_zero(&p->refcount);
 }
 
-void ipc_rcu_putref(struct kern_ipc_perm *ptr,
-			void (*func)(struct rcu_head *head))
+void ipc_rcu_putref(void *ptr, void (*func)(struct rcu_head *head))
 {
-	if (!atomic_dec_and_test(&ptr->refcount))
+	struct ipc_rcu *p = ((struct ipc_rcu *)ptr) - 1;
+
+	if (!atomic_dec_and_test(&p->refcount))
 		return;
 
-	call_rcu(&ptr->rcu, func);
+	call_rcu(&p->rcu, func);
 }
 
-void ipc_rcu_free(struct rcu_head *h)
+void ipc_rcu_free(struct rcu_head *head)
 {
-	struct kern_ipc_perm *ptr = container_of(h, struct kern_ipc_perm, rcu);
+	struct ipc_rcu *p = container_of(head, struct ipc_rcu, rcu);
 
-	kvfree(ptr);
+	kvfree(p);
 }
 
 /**

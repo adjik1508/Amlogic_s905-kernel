@@ -17,8 +17,10 @@
 #define CLKID_SAR_ADC		23
 #define CLKID_RNG0		25
 #define CLKID_SPI		34
+#define CLKID_I2S_SPDIF		35
 #define CLKID_ETH		36
 #define CLKID_AIU_GLUE		38
+#define CLKID_IEC958		39
 #define CLKID_I2S_OUT		40
 #define CLKID_MIXER_IFACE	44
 #define CLKID_AIU		47
@@ -31,6 +33,7 @@
 #define CLKID_SANA		69
 #define CLKID_GCLK_VENCI_INT0	77
 #define CLKID_AOCLK_GATE	80
+#define CLKID_IEC958_GATE	81
 #define CLKID_AO_I2C		93
 #define CLKID_SD_EMMC_A		94
 #define CLKID_SD_EMMC_B		95
@@ -42,5 +45,8 @@
 #define CLKID_MALI_1_SEL	103
 #define CLKID_MALI_1		105
 #define CLKID_MALI		106
+#define CLKID_CTS_AMCLK		107
+#define CLKID_CTS_MCLK_I958	110
+#define CLKID_CTS_I958		113
 
 #endif /* __GXBB_CLKC_H */

@@ -36,7 +36,6 @@
 #include <asm/smap.h>
 #include <asm/pgtable_types.h>
 #include <asm/export.h>
-#include <asm/frame.h>
 #include <linux/err.h>
 
 .code64
@@ -406,19 +405,17 @@ END(__switch_to_asm)
  * r12: kernel thread arg
  */
 ENTRY(ret_from_fork)
-	FRAME_BEGIN			/* help unwinder find end of stack */
 	movq	%rax, %rdi
-	call	schedule_tail		/* rdi: 'prev' task parameter */
+	call	schedule_tail			/* rdi: 'prev' task parameter */
 
-	testq	%rbx, %rbx		/* from kernel_thread? */
-	jnz	1f			/* kernel threads are uncommon */
+	testq	%rbx, %rbx			/* from kernel_thread? */
+	jnz	1f				/* kernel threads are uncommon */
 
 2:
-	leaq	FRAME_OFFSET(%rsp),%rdi	/* pt_regs pointer */
+	movq	%rsp, %rdi
 	call	syscall_return_slowpath	/* returns with IRQs disabled */
 	TRACE_IRQS_ON			/* user mode is traced as IRQS on */
 	SWAPGS
-	FRAME_END
 	jmp	restore_regs_and_iret
 
 1:
@@ -1211,6 +1208,8 @@ ENTRY(nmi)
 	 * can fault.  We therefore handle NMIs from user space like
 	 * other IST entries.
 	 */
+
+	ASM_CLAC
 
 	/* Use %rdx as our temp variable throughout */
 	pushq	%rdx

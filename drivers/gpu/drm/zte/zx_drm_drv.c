@@ -233,7 +233,6 @@ static struct platform_driver *drivers[] = {
 	&zx_crtc_driver,
 	&zx_hdmi_driver,
 	&zx_tvenc_driver,
-	&zx_vga_driver,
 	&zx_drm_platform_driver,
 };
 

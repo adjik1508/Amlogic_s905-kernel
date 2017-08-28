@@ -25,9 +25,10 @@
 
 #include <video/videomode.h>
 
+#include "sun4i_backend.h"
 #include "sun4i_crtc.h"
 #include "sun4i_drv.h"
-#include "sunxi_engine.h"
+#include "sun4i_layer.h"
 #include "sun4i_tcon.h"
 
 static void sun4i_crtc_atomic_begin(struct drm_crtc *crtc,
@@ -55,7 +56,7 @@ static void sun4i_crtc_atomic_flush(struct drm_crtc *crtc,
 
 	DRM_DEBUG_DRIVER("Committing plane changes\n");
 
-	sunxi_engine_commit(scrtc->engine);
+	sun4i_backend_commit(scrtc->backend);
 
 	if (event) {
 		crtc->state->event = NULL;
@@ -134,37 +135,36 @@ static const struct drm_crtc_funcs sun4i_crtc_funcs = {
 };
 
 struct sun4i_crtc *sun4i_crtc_init(struct drm_device *drm,
-				   struct sunxi_engine *engine,
+				   struct sun4i_backend *backend,
 				   struct sun4i_tcon *tcon)
 {
 	struct sun4i_crtc *scrtc;
-	struct drm_plane **planes;
 	struct drm_plane *primary = NULL, *cursor = NULL;
 	int ret, i;
 
 	scrtc = devm_kzalloc(drm->dev, sizeof(*scrtc), GFP_KERNEL);
 	if (!scrtc)
 		return ERR_PTR(-ENOMEM);
-	scrtc->engine = engine;
+	scrtc->backend = backend;
 	scrtc->tcon = tcon;
 
 	/* Create our layers */
-	planes = sunxi_engine_layers_init(drm, engine);
-	if (IS_ERR(planes)) {
+	scrtc->layers = sun4i_layers_init(drm, scrtc->backend);
+	if (IS_ERR(scrtc->layers)) {
 		dev_err(drm->dev, "Couldn't create the planes\n");
 		return NULL;
 	}
 
 	/* find primary and cursor planes for drm_crtc_init_with_planes */
-	for (i = 0; planes[i]; i++) {
-		struct drm_plane *plane = planes[i];
+	for (i = 0; scrtc->layers[i]; i++) {
+		struct sun4i_layer *layer = scrtc->layers[i];
 
-		switch (plane->type) {
+		switch (layer->plane.type) {
 		case DRM_PLANE_TYPE_PRIMARY:
-			primary = plane;
+			primary = &layer->plane;
 			break;
 		case DRM_PLANE_TYPE_CURSOR:
-			cursor = plane;
+			cursor = &layer->plane;
 			break;
 		default:
 			break;
@@ -188,12 +188,12 @@ struct sun4i_crtc *sun4i_crtc_init(struct drm_device *drm,
 						   1);
 
 	/* Set possible_crtcs to this crtc for overlay planes */
-	for (i = 0; planes[i]; i++) {
+	for (i = 0; scrtc->layers[i]; i++) {
 		uint32_t possible_crtcs = BIT(drm_crtc_index(&scrtc->crtc));
-		struct drm_plane *plane = planes[i];
+		struct sun4i_layer *layer = scrtc->layers[i];
 
-		if (plane->type == DRM_PLANE_TYPE_OVERLAY)
-			plane->possible_crtcs = possible_crtcs;
+		if (layer->plane.type == DRM_PLANE_TYPE_OVERLAY)
+			layer->plane.possible_crtcs = possible_crtcs;
 	}
 
 	return scrtc;

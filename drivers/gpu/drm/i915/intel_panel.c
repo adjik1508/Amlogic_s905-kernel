@@ -888,13 +888,9 @@ static void pch_enable_backlight(struct intel_connector *connector)
 	struct drm_i915_private *dev_priv = to_i915(connector->base.dev);
 	struct intel_panel *panel = &connector->panel;
 	enum pipe pipe = intel_get_pipe_from_connector(connector);
-	enum transcoder cpu_transcoder;
+	enum transcoder cpu_transcoder =
+		intel_pipe_to_cpu_transcoder(dev_priv, pipe);
 	u32 cpu_ctl2, pch_ctl1, pch_ctl2;
-
-	if (!WARN_ON_ONCE(pipe == INVALID_PIPE))
-		cpu_transcoder = intel_pipe_to_cpu_transcoder(dev_priv, pipe);
-	else
-		cpu_transcoder = TRANSCODER_EDP;
 
 	cpu_ctl2 = I915_READ(BLC_PWM_CPU_CTL2);
 	if (cpu_ctl2 & BLM_PWM_ENABLE) {
@@ -977,9 +973,6 @@ static void i965_enable_backlight(struct intel_connector *connector)
 	enum pipe pipe = intel_get_pipe_from_connector(connector);
 	u32 ctl, ctl2, freq;
 
-	if (WARN_ON_ONCE(pipe == INVALID_PIPE))
-		pipe = PIPE_A;
-
 	ctl2 = I915_READ(BLC_PWM_CTL2);
 	if (ctl2 & BLM_PWM_ENABLE) {
 		DRM_DEBUG_KMS("backlight already enabled\n");
@@ -1044,9 +1037,6 @@ static void bxt_enable_backlight(struct intel_connector *connector)
 	enum pipe pipe = intel_get_pipe_from_connector(connector);
 	u32 pwm_ctl, val;
 
-	if (WARN_ON_ONCE(pipe == INVALID_PIPE))
-		pipe = PIPE_A;
-
 	/* Controller 1 uses the utility pin. */
 	if (panel->backlight.controller == 1) {
 		val = I915_READ(UTIL_PIN_CTL);
@@ -1103,8 +1093,7 @@ void intel_panel_enable_backlight(struct intel_connector *connector)
 	if (!panel->backlight.present)
 		return;
 
-	if (!WARN_ON_ONCE(pipe == INVALID_PIPE))
-		DRM_DEBUG_KMS("pipe %c\n", pipe_name(pipe));
+	DRM_DEBUG_KMS("pipe %c\n", pipe_name(pipe));
 
 	mutex_lock(&dev_priv->backlight_lock);
 

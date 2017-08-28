@@ -2769,10 +2769,12 @@ out:
 
 struct recorded_ref {
 	struct list_head list;
+	char *dir_path;
 	char *name;
 	struct fs_path *full_path;
 	u64 dir;
 	u64 dir_gen;
+	int dir_path_len;
 	int name_len;
 };
 
@@ -2796,6 +2798,12 @@ static int __record_ref(struct list_head *head, u64 dir,
 
 	ref->name = (char *)kbasename(ref->full_path->start);
 	ref->name_len = ref->full_path->end - ref->name;
+	ref->dir_path = ref->full_path->start;
+	if (ref->name == ref->full_path->start)
+		ref->dir_path_len = 0;
+	else
+		ref->dir_path_len = ref->full_path->end -
+				ref->full_path->start - 1 - ref->name_len;
 
 	list_add_tail(&ref->list, head);
 	return 0;
@@ -5182,15 +5190,12 @@ static int is_extent_unchanged(struct send_ctx *sctx,
 			goto out;
 		}
 
-		right_disknr = btrfs_file_extent_disk_bytenr(eb, ei);
 		if (right_type == BTRFS_FILE_EXTENT_INLINE) {
 			right_len = btrfs_file_extent_inline_len(eb, slot, ei);
 			right_len = PAGE_ALIGN(right_len);
 		} else {
 			right_len = btrfs_file_extent_num_bytes(eb, ei);
 		}
-		right_offset = btrfs_file_extent_offset(eb, ei);
-		right_gen = btrfs_file_extent_generation(eb, ei);
 
 		/*
 		 * Are we at extent 8? If yes, we know the extent is changed.
@@ -5214,6 +5219,10 @@ static int is_extent_unchanged(struct send_ctx *sctx,
 			ret = 0;
 			goto out;
 		}
+
+		right_disknr = btrfs_file_extent_disk_bytenr(eb, ei);
+		right_offset = btrfs_file_extent_offset(eb, ei);
+		right_gen = btrfs_file_extent_generation(eb, ei);
 
 		left_offset_fixed = left_offset;
 		if (key.offset < ekey->offset) {

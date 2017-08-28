@@ -116,7 +116,6 @@ typedef enum {
 	NAND_ECC_HW,
 	NAND_ECC_HW_SYNDROME,
 	NAND_ECC_HW_OOB_FIRST,
-	NAND_ECC_ON_DIE,
 } nand_ecc_modes_t;
 
 enum nand_ecc_algo {
@@ -258,8 +257,6 @@ struct nand_chip;
 
 /* Vendor-specific feature address (Micron) */
 #define ONFI_FEATURE_ADDR_READ_RETRY	0x89
-#define ONFI_FEATURE_ON_DIE_ECC		0x90
-#define   ONFI_FEATURE_ON_DIE_ECC_EN	BIT(3)
 
 /* ONFI subfeature parameters length */
 #define ONFI_SUBFEATURE_PARAM_LEN	4
@@ -641,10 +638,10 @@ struct nand_buffers {
  * @tWW_min: WP# transition to WE# low
  */
 struct nand_sdr_timings {
-	u32 tBERS_max;
+	u64 tBERS_max;
 	u32 tCCS_min;
-	u32 tPROG_max;
-	u32 tR_max;
+	u64 tPROG_max;
+	u64 tR_max;
 	u32 tALH_min;
 	u32 tADL_min;
 	u32 tALS_min;
@@ -788,7 +785,7 @@ struct nand_manufacturer_ops {
  *			Minimum amount of bit errors per @ecc_step_ds guaranteed
  *			to be correctable. If unknown, set to zero.
  * @ecc_step_ds:	[INTERN] ECC step required by the @ecc_strength_ds,
- *			also from the datasheet. It is the recommended ECC step
+ *                      also from the datasheet. It is the recommended ECC step
  *			size, if known; if unknown, set to zero.
  * @onfi_timing_mode_default: [INTERN] default ONFI timing mode. This field is
  *			      set to the actually used ONFI mode if the chip is
@@ -1260,14 +1257,6 @@ int nand_read_oob_std(struct mtd_info *mtd, struct nand_chip *chip, int page);
 /* Default read_oob syndrome implementation */
 int nand_read_oob_syndrome(struct mtd_info *mtd, struct nand_chip *chip,
 			   int page);
-
-/* Default read_page_raw implementation */
-int nand_read_page_raw(struct mtd_info *mtd, struct nand_chip *chip,
-		       uint8_t *buf, int oob_required, int page);
-
-/* Default write_page_raw implementation */
-int nand_write_page_raw(struct mtd_info *mtd, struct nand_chip *chip,
-			const uint8_t *buf, int oob_required, int page);
 
 /* Reset and initialize a NAND device */
 int nand_reset(struct nand_chip *chip, int chipnr);

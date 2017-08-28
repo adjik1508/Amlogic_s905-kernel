@@ -408,7 +408,6 @@ static void start_event_fetch(struct ssif_info *ssif_info, unsigned long *flags)
 	msg = ipmi_alloc_smi_msg();
 	if (!msg) {
 		ssif_info->ssif_state = SSIF_NORMAL;
-		ipmi_ssif_unlock_cond(ssif_info, flags);
 		return;
 	}
 
@@ -431,7 +430,6 @@ static void start_recv_msg_fetch(struct ssif_info *ssif_info,
 	msg = ipmi_alloc_smi_msg();
 	if (!msg) {
 		ssif_info->ssif_state = SSIF_NORMAL;
-		ipmi_ssif_unlock_cond(ssif_info, flags);
 		return;
 	}
 
@@ -763,6 +761,11 @@ static void msg_done_handler(struct ssif_info *ssif_info, int result,
 			       result, len, data[2]);
 		} else if (data[0] != (IPMI_NETFN_APP_REQUEST | 1) << 2
 			   || data[1] != IPMI_GET_MSG_FLAGS_CMD) {
+			/*
+			 * Don't abort here, maybe it was a queued
+			 * response to a previous command.
+			 */
+			ipmi_ssif_unlock_cond(ssif_info, flags);
 			pr_warn(PFX "Invalid response getting flags: %x %x\n",
 				data[0], data[1]);
 		} else {
@@ -1419,7 +1422,8 @@ static int find_slave_address(struct i2c_client *client, int slave_addr)
 	list_for_each_entry(info, &ssif_infos, link) {
 		if (info->binfo.addr != client->addr)
 			continue;
-		if (info->adapter_name && strcmp_nospace(info->adapter_name,
+		if (info->adapter_name && client->adapter->name &&
+		    strcmp_nospace(info->adapter_name,
 				   client->adapter->name))
 			continue;
 		if (info->slave_addr) {

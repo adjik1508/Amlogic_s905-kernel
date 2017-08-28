@@ -256,6 +256,9 @@ static int sdricoh_blockio(struct sdricoh_host *host, int read,
 		}
 	}
 
+	if (len)
+		return -EIO;
+
 	return 0;
 }
 

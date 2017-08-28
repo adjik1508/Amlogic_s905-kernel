@@ -546,11 +546,12 @@ repeat:
 }
 
 static int
-i915_gem_execbuffer_relocate_entry(struct drm_i915_gem_object *obj,
+i915_gem_execbuffer_relocate_entry(struct i915_vma *vma,
 				   struct eb_vmas *eb,
 				   struct drm_i915_gem_relocation_entry *reloc,
 				   struct reloc_cache *cache)
 {
+	struct drm_i915_gem_object *obj = vma->obj;
 	struct drm_i915_private *dev_priv = to_i915(obj->base.dev);
 	struct drm_gem_object *target_obj;
 	struct drm_i915_gem_object *target_i915_obj;
@@ -628,6 +629,16 @@ i915_gem_execbuffer_relocate_entry(struct drm_i915_gem_object *obj,
 		return -EINVAL;
 	}
 
+	/*
+	 * If we write into the object, we need to force the synchronisation
+	 * barrier, either with an asynchronous clflush or if we executed the
+	 * patching using the GPU (though that should be serialised by the
+	 * timeline). To be completely sure, and since we are required to
+	 * do relocations we are already stalling, disable the user's opt
+	 * of our synchronisation.
+	 */
+	vma->exec_entry->flags &= ~EXEC_OBJECT_ASYNC;
+
 	ret = relocate_entry(obj, reloc, cache, target_offset);
 	if (ret)
 		return ret;
@@ -678,7 +689,7 @@ i915_gem_execbuffer_relocate_vma(struct i915_vma *vma,
 		do {
 			u64 offset = r->presumed_offset;
 
-			ret = i915_gem_execbuffer_relocate_entry(vma->obj, eb, r, &cache);
+			ret = i915_gem_execbuffer_relocate_entry(vma, eb, r, &cache);
 			if (ret)
 				goto out;
 
@@ -726,7 +737,7 @@ i915_gem_execbuffer_relocate_vma_slow(struct i915_vma *vma,
 
 	reloc_cache_init(&cache, eb->i915);
 	for (i = 0; i < entry->relocation_count; i++) {
-		ret = i915_gem_execbuffer_relocate_entry(vma->obj, eb, &relocs[i], &cache);
+		ret = i915_gem_execbuffer_relocate_entry(vma, eb, &relocs[i], &cache);
 		if (ret)
 			break;
 	}
@@ -1019,11 +1030,11 @@ i915_gem_execbuffer_relocate_slow(struct drm_device *dev,
 	for (i = 0; i < count; i++)
 		total += exec[i].relocation_count;
 
-	reloc_offset = kvmalloc_array(count, sizeof(*reloc_offset), GFP_KERNEL);
-	reloc = kvmalloc_array(total, sizeof(*reloc), GFP_KERNEL);
+	reloc_offset = drm_malloc_ab(count, sizeof(*reloc_offset));
+	reloc = drm_malloc_ab(total, sizeof(*reloc));
 	if (reloc == NULL || reloc_offset == NULL) {
-		kvfree(reloc);
-		kvfree(reloc_offset);
+		drm_free_large(reloc);
+		drm_free_large(reloc_offset);
 		mutex_lock(&dev->struct_mutex);
 		return -ENOMEM;
 	}
@@ -1099,8 +1110,8 @@ i915_gem_execbuffer_relocate_slow(struct drm_device *dev,
 	 */
 
 err:
-	kvfree(reloc);
-	kvfree(reloc_offset);
+	drm_free_large(reloc);
+	drm_free_large(reloc_offset);
 	return ret;
 }
 
@@ -1113,18 +1124,6 @@ i915_gem_execbuffer_move_to_gpu(struct drm_i915_gem_request *req,
 
 	list_for_each_entry(vma, vmas, exec_list) {
 		struct drm_i915_gem_object *obj = vma->obj;
-
-		if (vma->exec_entry->flags & EXEC_OBJECT_CAPTURE) {
-			struct i915_gem_capture_list *capture;
-
-			capture = kmalloc(sizeof(*capture), GFP_KERNEL);
-			if (unlikely(!capture))
-				return -ENOMEM;
-
-			capture->next = req->capture_list;
-			capture->vma = vma;
-			req->capture_list = capture;
-		}
 
 		if (vma->exec_entry->flags & EXEC_OBJECT_ASYNC)
 			continue;
@@ -1871,13 +1870,13 @@ i915_gem_execbuffer(struct drm_device *dev, void *data,
 	}
 
 	/* Copy in the exec list from userland */
-	exec_list = kvmalloc_array(sizeof(*exec_list), args->buffer_count, GFP_KERNEL);
-	exec2_list = kvmalloc_array(sizeof(*exec2_list), args->buffer_count, GFP_KERNEL);
+	exec_list = drm_malloc_ab(sizeof(*exec_list), args->buffer_count);
+	exec2_list = drm_malloc_ab(sizeof(*exec2_list), args->buffer_count);
 	if (exec_list == NULL || exec2_list == NULL) {
 		DRM_DEBUG("Failed to allocate exec list for %d buffers\n",
 			  args->buffer_count);
-		kvfree(exec_list);
-		kvfree(exec2_list);
+		drm_free_large(exec_list);
+		drm_free_large(exec2_list);
 		return -ENOMEM;
 	}
 	ret = copy_from_user(exec_list,
@@ -1886,8 +1885,8 @@ i915_gem_execbuffer(struct drm_device *dev, void *data,
 	if (ret != 0) {
 		DRM_DEBUG("copy %d exec entries failed %d\n",
 			  args->buffer_count, ret);
-		kvfree(exec_list);
-		kvfree(exec2_list);
+		drm_free_large(exec_list);
+		drm_free_large(exec2_list);
 		return -EFAULT;
 	}
 
@@ -1936,8 +1935,8 @@ i915_gem_execbuffer(struct drm_device *dev, void *data,
 		}
 	}
 
-	kvfree(exec_list);
-	kvfree(exec2_list);
+	drm_free_large(exec_list);
+	drm_free_large(exec2_list);
 	return ret;
 }
 
@@ -1955,7 +1954,7 @@ i915_gem_execbuffer2(struct drm_device *dev, void *data,
 		return -EINVAL;
 	}
 
-	exec2_list = kvmalloc_array(args->buffer_count,
+	exec2_list = drm_malloc_gfp(args->buffer_count,
 				    sizeof(*exec2_list),
 				    GFP_TEMPORARY);
 	if (exec2_list == NULL) {
@@ -1969,7 +1968,7 @@ i915_gem_execbuffer2(struct drm_device *dev, void *data,
 	if (ret != 0) {
 		DRM_DEBUG("copy %d exec entries failed %d\n",
 			  args->buffer_count, ret);
-		kvfree(exec2_list);
+		drm_free_large(exec2_list);
 		return -EFAULT;
 	}
 
@@ -1996,6 +1995,6 @@ i915_gem_execbuffer2(struct drm_device *dev, void *data,
 		}
 	}
 
-	kvfree(exec2_list);
+	drm_free_large(exec2_list);
 	return ret;
 }

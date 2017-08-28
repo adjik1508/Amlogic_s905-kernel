@@ -451,18 +451,6 @@ fail:
 
 
 #ifdef CONFIG_DRM_TEGRA_STAGING
-static struct tegra_drm_context *
-tegra_drm_file_get_context(struct tegra_drm_file *file, u32 id)
-{
-	struct tegra_drm_context *context;
-
-	mutex_lock(&file->lock);
-	context = idr_find(&file->contexts, id);
-	mutex_unlock(&file->lock);
-
-	return context;
-}
-
 static int tegra_gem_create(struct drm_device *drm, void *data,
 			    struct drm_file *file)
 {
@@ -551,7 +539,7 @@ static int tegra_client_open(struct tegra_drm_file *fpriv,
 	if (err < 0)
 		return err;
 
-	err = idr_alloc(&fpriv->contexts, context, 0, 0, GFP_KERNEL);
+	err = idr_alloc(&fpriv->contexts, context, 1, 0, GFP_KERNEL);
 	if (err < 0) {
 		client->ops->close_channel(context);
 		return err;
@@ -606,7 +594,7 @@ static int tegra_close_channel(struct drm_device *drm, void *data,
 
 	mutex_lock(&fpriv->lock);
 
-	context = tegra_drm_file_get_context(fpriv, args->context);
+	context = idr_find(&fpriv->contexts, args->context);
 	if (!context) {
 		err = -EINVAL;
 		goto unlock;
@@ -631,7 +619,7 @@ static int tegra_get_syncpt(struct drm_device *drm, void *data,
 
 	mutex_lock(&fpriv->lock);
 
-	context = tegra_drm_file_get_context(fpriv, args->context);
+	context = idr_find(&fpriv->contexts, args->context);
 	if (!context) {
 		err = -ENODEV;
 		goto unlock;
@@ -660,7 +648,7 @@ static int tegra_submit(struct drm_device *drm, void *data,
 
 	mutex_lock(&fpriv->lock);
 
-	context = tegra_drm_file_get_context(fpriv, args->context);
+	context = idr_find(&fpriv->contexts, args->context);
 	if (!context) {
 		err = -ENODEV;
 		goto unlock;
@@ -685,7 +673,7 @@ static int tegra_get_syncpt_base(struct drm_device *drm, void *data,
 
 	mutex_lock(&fpriv->lock);
 
-	context = tegra_drm_file_get_context(fpriv, args->context);
+	context = idr_find(&fpriv->contexts, args->context);
 	if (!context) {
 		err = -ENODEV;
 		goto unlock;
@@ -892,7 +880,7 @@ static int tegra_drm_context_cleanup(int id, void *p, void *data)
 	return 0;
 }
 
-static void tegra_drm_postclose(struct drm_device *drm, struct drm_file *file)
+static void tegra_drm_preclose(struct drm_device *drm, struct drm_file *file)
 {
 	struct tegra_drm_file *fpriv = file->driver_priv;
 
@@ -960,7 +948,7 @@ static struct drm_driver tegra_drm_driver = {
 	.load = tegra_drm_load,
 	.unload = tegra_drm_unload,
 	.open = tegra_drm_open,
-	.postclose = tegra_drm_postclose,
+	.preclose = tegra_drm_preclose,
 	.lastclose = tegra_drm_lastclose,
 
 #if defined(CONFIG_DEBUG_FS)

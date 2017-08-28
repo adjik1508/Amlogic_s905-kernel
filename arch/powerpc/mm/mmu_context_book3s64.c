@@ -99,7 +99,7 @@ static int hash__init_new_context(struct mm_struct *mm)
 	 * mm->context.addr_limit. Default to max task size so that we copy the
 	 * default values to paca which will help us to handle slb miss early.
 	 */
-	mm->context.addr_limit = TASK_SIZE_128TB;
+	mm->context.addr_limit = DEFAULT_MAP_WINDOW_USER64;
 
 	/*
 	 * The old code would re-promote on fork, we don't do that when using
@@ -223,9 +223,15 @@ void destroy_context(struct mm_struct *mm)
 	mm->context.cop_lockp = NULL;
 #endif /* CONFIG_PPC_ICSWX */
 
-	if (radix_enabled())
-		process_tb[mm->context.id].prtb1 = 0;
-	else
+	if (radix_enabled()) {
+		/*
+		 * Radix doesn't have a valid bit in the process table
+		 * entries. However we know that at least P9 implementation
+		 * will avoid caching an entry with an invalid RTS field,
+		 * and 0 is invalid. So this will do.
+		 */
+		process_tb[mm->context.id].prtb0 = 0;
+	} else
 		subpage_prot_free(mm);
 	destroy_pagetable_page(mm);
 	__destroy_context(mm->context.id);

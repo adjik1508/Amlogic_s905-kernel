@@ -236,9 +236,10 @@ static void __reset_isolation_suitable(struct zone *zone)
 
 		cond_resched();
 
-		page = pfn_to_online_page(pfn);
-		if (!page)
+		if (!pfn_valid(pfn))
 			continue;
+
+		page = pfn_to_page(pfn);
 		if (zone != page_zone(page))
 			continue;
 

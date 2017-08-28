@@ -28,6 +28,7 @@
 #include <linux/reset.h>
 #include <linux/gpio/consumer.h>
 #include <net/dsa.h>
+#include <net/switchdev.h>
 
 #include "mt7530.h"
 
@@ -853,7 +854,7 @@ mt7530_port_fdb_del(struct dsa_switch *ds, int port,
 static int
 mt7530_port_fdb_dump(struct dsa_switch *ds, int port,
 		     struct switchdev_obj_port_fdb *fdb,
-		     switchdev_obj_dump_cb_t *cb)
+		     int (*cb)(struct switchdev_obj *obj))
 {
 	struct mt7530_priv *priv = ds->priv;
 	struct mt7530_fdb _fdb = { 0 };

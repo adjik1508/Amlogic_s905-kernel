@@ -46,10 +46,8 @@ MODULE_PARM_DESC(id, "ID string for "NAME_ALLCAPS".");
 module_param_array(enable, bool, NULL, 0444);
 MODULE_PARM_DESC(enable, "Enable "NAME_ALLCAPS".");
 
-/* driver_info flags */
-#define US122L_FLAG_US144	BIT(0)
-
 static int snd_us122l_card_used[SNDRV_CARDS];
+
 
 static int us122l_create_usbmidi(struct snd_card *card)
 {
@@ -200,7 +198,8 @@ static int usb_stream_hwdep_open(struct snd_hwdep *hw, struct file *file)
 	if (!us122l->first)
 		us122l->first = file;
 
-	if (us122l->is_us144) {
+	if (us122l->dev->descriptor.idProduct == USB_ID_US144 ||
+	    us122l->dev->descriptor.idProduct == USB_ID_US144MKII) {
 		iface = usb_ifnum_to_if(us122l->dev, 0);
 		usb_autopm_get_interface(iface);
 	}
@@ -215,7 +214,8 @@ static int usb_stream_hwdep_release(struct snd_hwdep *hw, struct file *file)
 	struct usb_interface *iface;
 	snd_printdd(KERN_DEBUG "%p %p\n", hw, file);
 
-	if (us122l->is_us144) {
+	if (us122l->dev->descriptor.idProduct == USB_ID_US144 ||
+	    us122l->dev->descriptor.idProduct == USB_ID_US144MKII) {
 		iface = usb_ifnum_to_if(us122l->dev, 0);
 		usb_autopm_put_interface(iface);
 	}
@@ -483,7 +483,8 @@ static bool us122l_create_card(struct snd_card *card)
 	int err;
 	struct us122l *us122l = US122L(card);
 
-	if (us122l->is_us144) {
+	if (us122l->dev->descriptor.idProduct == USB_ID_US144 ||
+	    us122l->dev->descriptor.idProduct == USB_ID_US144MKII) {
 		err = usb_set_interface(us122l->dev, 0, 1);
 		if (err) {
 			snd_printk(KERN_ERR "usb_set_interface error \n");
@@ -502,7 +503,8 @@ static bool us122l_create_card(struct snd_card *card)
 	if (!us122l_start(us122l, 44100, 256))
 		return false;
 
-	if (us122l->is_us144)
+	if (us122l->dev->descriptor.idProduct == USB_ID_US144 ||
+	    us122l->dev->descriptor.idProduct == USB_ID_US144MKII)
 		err = us144_create_usbmidi(card);
 	else
 		err = us122l_create_usbmidi(card);
@@ -534,8 +536,7 @@ static void snd_us122l_free(struct snd_card *card)
 
 static int usx2y_create_card(struct usb_device *device,
 			     struct usb_interface *intf,
-			     struct snd_card **cardp,
-			     unsigned long flags)
+			     struct snd_card **cardp)
 {
 	int		dev;
 	struct snd_card *card;
@@ -555,7 +556,6 @@ static int usx2y_create_card(struct usb_device *device,
 	US122L(card)->dev = device;
 	mutex_init(&US122L(card)->mutex);
 	init_waitqueue_head(&US122L(card)->sk.sleep);
-	US122L(card)->is_us144 = flags & US122L_FLAG_US144;
 	INIT_LIST_HEAD(&US122L(card)->midi_list);
 	strcpy(card->driver, "USB "NAME_ALLCAPS"");
 	sprintf(card->shortname, "TASCAM "NAME_ALLCAPS"");
@@ -579,7 +579,7 @@ static int us122l_usb_probe(struct usb_interface *intf,
 	struct snd_card *card;
 	int err;
 
-	err = usx2y_create_card(device, intf, &card, device_id->driver_info);
+	err = usx2y_create_card(device, intf, &card);
 	if (err < 0)
 		return err;
 
@@ -607,8 +607,9 @@ static int snd_us122l_probe(struct usb_interface *intf,
 	struct snd_card *card;
 	int err;
 
-	if (id->driver_info & US122L_FLAG_US144 &&
-			device->speed == USB_SPEED_HIGH) {
+	if ((device->descriptor.idProduct == USB_ID_US144 ||
+	     device->descriptor.idProduct == USB_ID_US144MKII)
+		&& device->speed == USB_SPEED_HIGH) {
 		snd_printk(KERN_ERR "disable ehci-hcd to run US-144 \n");
 		return -ENODEV;
 	}
@@ -702,7 +703,8 @@ static int snd_us122l_resume(struct usb_interface *intf)
 
 	mutex_lock(&us122l->mutex);
 	/* needed, doesn't restart without: */
-	if (us122l->is_us144) {
+	if (us122l->dev->descriptor.idProduct == USB_ID_US144 ||
+	    us122l->dev->descriptor.idProduct == USB_ID_US144MKII) {
 		err = usb_set_interface(us122l->dev, 0, 1);
 		if (err) {
 			snd_printk(KERN_ERR "usb_set_interface error \n");
@@ -745,8 +747,7 @@ static struct usb_device_id snd_us122l_usb_id_table[] = {
 	{	/* US-144 only works at USB1.1! Disable module ehci-hcd. */
 		.match_flags =	USB_DEVICE_ID_MATCH_DEVICE,
 		.idVendor =	0x0644,
-		.idProduct =	USB_ID_US144,
-		.driver_info =	US122L_FLAG_US144
+		.idProduct =	USB_ID_US144
 	},
 	{
 		.match_flags =	USB_DEVICE_ID_MATCH_DEVICE,
@@ -756,8 +757,7 @@ static struct usb_device_id snd_us122l_usb_id_table[] = {
 	{
 		.match_flags =	USB_DEVICE_ID_MATCH_DEVICE,
 		.idVendor =	0x0644,
-		.idProduct =	USB_ID_US144MKII,
-		.driver_info =	US122L_FLAG_US144
+		.idProduct =	USB_ID_US144MKII
 	},
 	{ /* terminator */ }
 };

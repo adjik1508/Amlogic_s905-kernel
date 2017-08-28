@@ -359,18 +359,35 @@ void vnt_update_ifs(struct vnt_private *priv)
 		priv->sifs = C_SIFS_A;
 		priv->difs = C_SIFS_A + 2 * C_SLOT_SHORT;
 		max_min = 4;
-	} else {
+	} else if (priv->packet_type == PK_TYPE_11B) {
+		priv->slot = C_SLOT_LONG;
+		priv->sifs = C_SIFS_BG;
+		priv->difs = C_SIFS_BG + 2 * C_SLOT_LONG;
+		max_min = 5;
+	} else {/* PK_TYPE_11GA & PK_TYPE_11GB */
+		bool ofdm_rate = false;
+		unsigned int ii = 0;
+
 		priv->sifs = C_SIFS_BG;
 
-		if (priv->short_slot_time) {
+		if (priv->short_slot_time)
 			priv->slot = C_SLOT_SHORT;
-			max_min = 4;
-		} else {
+		else
 			priv->slot = C_SLOT_LONG;
-			max_min = 5;
-		}
 
 		priv->difs = C_SIFS_BG + 2 * priv->slot;
+
+		for (ii = RATE_54M; ii >= RATE_6M; ii--) {
+			if (priv->basic_rates & ((u32)(0x1 << ii))) {
+				ofdm_rate = true;
+				break;
+			}
+		}
+
+		if (ofdm_rate)
+			max_min = 4;
+		else
+			max_min = 5;
 	}
 
 	priv->eifs = C_EIFS;

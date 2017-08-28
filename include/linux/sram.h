@@ -16,12 +16,12 @@
 struct gen_pool;
 
 #ifdef CONFIG_SRAM_EXEC
-void *sram_exec_copy(struct gen_pool *pool, void *dst, void *src, size_t size);
+int sram_exec_copy(struct gen_pool *pool, void *dst, void *src, size_t size);
 #else
-static inline void *sram_exec_copy(struct gen_pool *pool, void *dst, void *src,
-				   size_t size)
+static inline int sram_exec_copy(struct gen_pool *pool, void *dst, void *src,
+				 size_t size)
 {
-	return NULL;
+	return -ENODEV;
 }
 #endif /* CONFIG_SRAM_EXEC */
 #endif /* __LINUX_SRAM_H__ */

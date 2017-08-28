@@ -20,7 +20,6 @@
 #include <linux/of.h>
 #include <linux/ethtool.h>
 #include <net/devlink.h>
-#include <net/switchdev.h>
 
 struct tc_action;
 struct phy_device;
@@ -28,13 +27,13 @@ struct fixed_phy_status;
 
 enum dsa_tag_protocol {
 	DSA_TAG_PROTO_NONE = 0,
-	DSA_TAG_PROTO_BRCM,
 	DSA_TAG_PROTO_DSA,
-	DSA_TAG_PROTO_EDSA,
-	DSA_TAG_PROTO_LAN9303,
-	DSA_TAG_PROTO_MTK,
-	DSA_TAG_PROTO_QCA,
 	DSA_TAG_PROTO_TRAILER,
+	DSA_TAG_PROTO_EDSA,
+	DSA_TAG_PROTO_BRCM,
+	DSA_TAG_PROTO_QCA,
+	DSA_TAG_PROTO_MTK,
+	DSA_TAG_PROTO_LAN9303,
 	DSA_TAG_LAST,		/* MUST BE LAST */
 };
 
@@ -138,9 +137,10 @@ struct dsa_switch_tree {
 	const struct ethtool_ops *master_orig_ethtool_ops;
 
 	/*
-	 * The switch port to which the CPU is attached.
+	 * The switch and port to which the CPU is attached.
 	 */
-	struct dsa_port		*cpu_dp;
+	struct dsa_switch	*cpu_switch;
+	s8			cpu_port;
 
 	/*
 	 * Data for the individual switch chips.
@@ -251,7 +251,7 @@ struct dsa_switch {
 
 static inline bool dsa_is_cpu_port(struct dsa_switch *ds, int p)
 {
-	return ds->dst->cpu_dp == &ds->ports[p];
+	return !!(ds == ds->dst->cpu_switch && p == ds->dst->cpu_port);
 }
 
 static inline bool dsa_is_dsa_port(struct dsa_switch *ds, int p)
@@ -279,11 +279,17 @@ static inline u8 dsa_upstream_port(struct dsa_switch *ds)
 	 * Else return the (DSA) port number that connects to the
 	 * switch that is one hop closer to the cpu.
 	 */
-	if (dst->cpu_dp->ds == ds)
-		return dst->cpu_dp->index;
+	if (dst->cpu_switch == ds)
+		return dst->cpu_port;
 	else
-		return ds->rtable[dst->cpu_dp->ds->index];
+		return ds->rtable[dst->cpu_switch->index];
 }
+
+struct switchdev_trans;
+struct switchdev_obj;
+struct switchdev_obj_port_fdb;
+struct switchdev_obj_port_mdb;
+struct switchdev_obj_port_vlan;
 
 #define DSA_NOTIFIER_BRIDGE_JOIN		1
 #define DSA_NOTIFIER_BRIDGE_LEAVE		2
@@ -404,7 +410,7 @@ struct dsa_switch_ops {
 				 const struct switchdev_obj_port_vlan *vlan);
 	int	(*port_vlan_dump)(struct dsa_switch *ds, int port,
 				  struct switchdev_obj_port_vlan *vlan,
-				  switchdev_obj_dump_cb_t *cb);
+				  int (*cb)(struct switchdev_obj *obj));
 
 	/*
 	 * Forwarding database
@@ -419,7 +425,7 @@ struct dsa_switch_ops {
 				const struct switchdev_obj_port_fdb *fdb);
 	int	(*port_fdb_dump)(struct dsa_switch *ds, int port,
 				 struct switchdev_obj_port_fdb *fdb,
-				  switchdev_obj_dump_cb_t *cb);
+				 int (*cb)(struct switchdev_obj *obj));
 
 	/*
 	 * Multicast database
@@ -434,7 +440,7 @@ struct dsa_switch_ops {
 				const struct switchdev_obj_port_mdb *mdb);
 	int	(*port_mdb_dump)(struct dsa_switch *ds, int port,
 				 struct switchdev_obj_port_mdb *mdb,
-				  switchdev_obj_dump_cb_t *cb);
+				 int (*cb)(struct switchdev_obj *obj));
 
 	/*
 	 * RXNFC

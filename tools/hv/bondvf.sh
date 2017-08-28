@@ -102,30 +102,15 @@ function create_bond_cfg_redhat {
 }
 
 function del_eth_cfg_ubuntu {
-	local mainfn=$cfgdir/interfaces
-	local fnlist=( $mainfn )
-
-	local dirlist=(`awk '/^[ \t]*source/{print $2}' $mainfn`)
-
-	local i
-	for i in "${dirlist[@]}"
-	do
-		fnlist+=(`ls $i 2>/dev/null`)
-	done
-
+	local fn=$cfgdir/interfaces
 	local tmpfl=$(mktemp)
 
 	local nic_start='^[ \t]*(auto|iface|mapping|allow-.*)[ \t]+'$1
 	local nic_end='^[ \t]*(auto|iface|mapping|allow-.*|source)'
 
-	local fn
-	for fn in "${fnlist[@]}"
-	do
-		awk "/$nic_end/{x=0} x{next} /$nic_start/{x=1;next} 1" \
-			$fn >$tmpfl
+	awk "/$nic_end/{x=0} x{next} /$nic_start/{x=1;next} 1"  $fn >$tmpfl
 
-		cp $tmpfl $fn
-	done
+	cp $tmpfl $fn
 
 	rm $tmpfl
 }

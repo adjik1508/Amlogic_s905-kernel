@@ -2105,7 +2105,7 @@ static void refresh_pce(void *ignored)
 		load_mm_cr4(current->active_mm);
 }
 
-static void x86_pmu_event_mapped(struct perf_event *event)
+static void x86_pmu_event_mapped(struct perf_event *event, struct mm_struct *mm)
 {
 	if (!(event->hw.flags & PERF_X86_EVENT_RDPMC_ALLOWED))
 		return;
@@ -2120,22 +2120,20 @@ static void x86_pmu_event_mapped(struct perf_event *event)
 	 * For now, this can't happen because all callers hold mmap_sem
 	 * for write.  If this changes, we'll need a different solution.
 	 */
-	lockdep_assert_held_exclusive(&current->mm->mmap_sem);
+	lockdep_assert_held_exclusive(&mm->mmap_sem);
 
-	if (atomic_inc_return(&current->mm->context.perf_rdpmc_allowed) == 1)
-		on_each_cpu_mask(mm_cpumask(current->mm), refresh_pce, NULL, 1);
+	if (atomic_inc_return(&mm->context.perf_rdpmc_allowed) == 1)
+		on_each_cpu_mask(mm_cpumask(mm), refresh_pce, NULL, 1);
 }
 
-static void x86_pmu_event_unmapped(struct perf_event *event)
+static void x86_pmu_event_unmapped(struct perf_event *event, struct mm_struct *mm)
 {
-	if (!current->mm)
-		return;
 
 	if (!(event->hw.flags & PERF_X86_EVENT_RDPMC_ALLOWED))
 		return;
 
-	if (atomic_dec_and_test(&current->mm->context.perf_rdpmc_allowed))
-		on_each_cpu_mask(mm_cpumask(current->mm), refresh_pce, NULL, 1);
+	if (atomic_dec_and_test(&mm->context.perf_rdpmc_allowed))
+		on_each_cpu_mask(mm_cpumask(mm), refresh_pce, NULL, 1);
 }
 
 static int x86_pmu_event_idx(struct perf_event *event)
@@ -2224,6 +2222,7 @@ void perf_check_microcode(void)
 	if (x86_pmu.check_microcode)
 		x86_pmu.check_microcode();
 }
+EXPORT_SYMBOL_GPL(perf_check_microcode);
 
 static struct pmu pmu = {
 	.pmu_enable		= x86_pmu_enable,
@@ -2254,7 +2253,7 @@ static struct pmu pmu = {
 void arch_perf_update_userpage(struct perf_event *event,
 			       struct perf_event_mmap_page *userpg, u64 now)
 {
-	struct cyc2ns_data data;
+	struct cyc2ns_data *data;
 	u64 offset;
 
 	userpg->cap_user_time = 0;
@@ -2266,17 +2265,17 @@ void arch_perf_update_userpage(struct perf_event *event,
 	if (!using_native_sched_clock() || !sched_clock_stable())
 		return;
 
-	cyc2ns_read_begin(&data);
+	data = cyc2ns_read_begin();
 
-	offset = data.cyc2ns_offset + __sched_clock_offset;
+	offset = data->cyc2ns_offset + __sched_clock_offset;
 
 	/*
 	 * Internal timekeeping for enabled/running/stopped times
 	 * is always in the local_clock domain.
 	 */
 	userpg->cap_user_time = 1;
-	userpg->time_mult = data.cyc2ns_mul;
-	userpg->time_shift = data.cyc2ns_shift;
+	userpg->time_mult = data->cyc2ns_mul;
+	userpg->time_shift = data->cyc2ns_shift;
 	userpg->time_offset = offset - now;
 
 	/*
@@ -2288,7 +2287,7 @@ void arch_perf_update_userpage(struct perf_event *event,
 		userpg->time_zero = offset;
 	}
 
-	cyc2ns_read_end();
+	cyc2ns_read_end(data);
 }
 
 void

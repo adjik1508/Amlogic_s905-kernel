@@ -114,12 +114,8 @@ static inline struct sk_buff *hci_uart_dequeue(struct hci_uart *hu)
 	struct sk_buff *skb = hu->tx_skb;
 
 	if (!skb) {
-		read_lock(&hu->proto_lock);
-
 		if (test_bit(HCI_UART_PROTO_READY, &hu->flags))
 			skb = hu->proto->dequeue(hu);
-
-		read_unlock(&hu->proto_lock);
 	} else {
 		hu->tx_skb = NULL;
 	}
@@ -129,22 +125,17 @@ static inline struct sk_buff *hci_uart_dequeue(struct hci_uart *hu)
 
 int hci_uart_tx_wakeup(struct hci_uart *hu)
 {
-	read_lock(&hu->proto_lock);
-
 	if (!test_bit(HCI_UART_PROTO_READY, &hu->flags))
-		goto no_schedule;
+		return 0;
 
 	if (test_and_set_bit(HCI_UART_SENDING, &hu->tx_state)) {
 		set_bit(HCI_UART_TX_WAKEUP, &hu->tx_state);
-		goto no_schedule;
+		return 0;
 	}
 
 	BT_DBG("");
 
 	schedule_work(&hu->write_work);
-
-no_schedule:
-	read_unlock(&hu->proto_lock);
 
 	return 0;
 }
@@ -246,12 +237,8 @@ static int hci_uart_flush(struct hci_dev *hdev)
 	tty_ldisc_flush(tty);
 	tty_driver_flush_buffer(tty);
 
-	read_lock(&hu->proto_lock);
-
 	if (test_bit(HCI_UART_PROTO_READY, &hu->flags))
 		hu->proto->flush(hu);
-
-	read_unlock(&hu->proto_lock);
 
 	return 0;
 }
@@ -274,15 +261,10 @@ static int hci_uart_send_frame(struct hci_dev *hdev, struct sk_buff *skb)
 	BT_DBG("%s: type %d len %d", hdev->name, hci_skb_pkt_type(skb),
 	       skb->len);
 
-	read_lock(&hu->proto_lock);
-
-	if (!test_bit(HCI_UART_PROTO_READY, &hu->flags)) {
-		read_unlock(&hu->proto_lock);
+	if (!test_bit(HCI_UART_PROTO_READY, &hu->flags))
 		return -EUNATCH;
-	}
 
 	hu->proto->enqueue(hu, skb);
-	read_unlock(&hu->proto_lock);
 
 	hci_uart_tx_wakeup(hu);
 
@@ -478,8 +460,6 @@ static int hci_uart_tty_open(struct tty_struct *tty)
 	INIT_WORK(&hu->init_ready, hci_uart_init_work);
 	INIT_WORK(&hu->write_work, hci_uart_write_work);
 
-	rwlock_init(&hu->proto_lock);
-
 	/* Flush any pending characters in the driver */
 	tty_driver_flush_buffer(tty);
 
@@ -495,7 +475,6 @@ static void hci_uart_tty_close(struct tty_struct *tty)
 {
 	struct hci_uart *hu = tty->disc_data;
 	struct hci_dev *hdev;
-	unsigned long flags;
 
 	BT_DBG("tty %p", tty);
 
@@ -511,11 +490,7 @@ static void hci_uart_tty_close(struct tty_struct *tty)
 
 	cancel_work_sync(&hu->write_work);
 
-	if (test_bit(HCI_UART_PROTO_READY, &hu->flags)) {
-		write_lock_irqsave(&hu->proto_lock, flags);
-		clear_bit(HCI_UART_PROTO_READY, &hu->flags);
-		write_unlock_irqrestore(&hu->proto_lock, flags);
-
+	if (test_and_clear_bit(HCI_UART_PROTO_READY, &hu->flags)) {
 		if (hdev) {
 			if (test_bit(HCI_UART_REGISTERED, &hu->flags))
 				hci_unregister_dev(hdev);
@@ -574,18 +549,13 @@ static void hci_uart_tty_receive(struct tty_struct *tty, const u8 *data,
 	if (!hu || tty != hu->tty)
 		return;
 
-	read_lock(&hu->proto_lock);
-
-	if (!test_bit(HCI_UART_PROTO_READY, &hu->flags)) {
-		read_unlock(&hu->proto_lock);
+	if (!test_bit(HCI_UART_PROTO_READY, &hu->flags))
 		return;
-	}
 
 	/* It does not need a lock here as it is already protected by a mutex in
 	 * tty caller
 	 */
 	hu->proto->recv(hu, data, count);
-	read_unlock(&hu->proto_lock);
 
 	if (hu->hdev)
 		hu->hdev->stat.byte_rx += count;

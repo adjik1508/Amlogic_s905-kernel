@@ -391,7 +391,7 @@ void release_ds_buffers(void)
 	if (!x86_pmu.bts && !x86_pmu.pebs)
 		return;
 
-	lockdep_assert_hotplug_held();
+	get_online_cpus();
 	for_each_online_cpu(cpu)
 		fini_debug_store_on_cpu(cpu);
 
@@ -400,6 +400,7 @@ void release_ds_buffers(void)
 		release_bts_buffer(cpu);
 		release_ds_buffer(cpu);
 	}
+	put_online_cpus();
 }
 
 void reserve_ds_buffers(void)
@@ -419,7 +420,7 @@ void reserve_ds_buffers(void)
 	if (!x86_pmu.pebs)
 		pebs_err = 1;
 
-	lockdep_assert_hotplug_held();
+	get_online_cpus();
 
 	for_each_possible_cpu(cpu) {
 		if (alloc_ds_buffer(cpu)) {
@@ -460,6 +461,8 @@ void reserve_ds_buffers(void)
 		for_each_online_cpu(cpu)
 			init_debug_store_on_cpu(cpu);
 	}
+
+	put_online_cpus();
 }
 
 /*

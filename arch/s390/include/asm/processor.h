@@ -92,11 +92,11 @@ extern void execve_tail(void);
  */
 
 #define TASK_SIZE_OF(tsk)	(test_tsk_thread_flag(tsk, TIF_31BIT) ? \
-					(1UL << 31) : -PAGE_SIZE)
+					(1UL << 31) : (1UL << 53))
 #define TASK_UNMAPPED_BASE	(test_thread_flag(TIF_31BIT) ? \
 					(1UL << 30) : (1UL << 41))
 #define TASK_SIZE		TASK_SIZE_OF(current)
-#define TASK_SIZE_MAX		(-PAGE_SIZE)
+#define TASK_SIZE_MAX		(1UL << 53)
 
 #define STACK_TOP		(test_thread_flag(TIF_31BIT) ? \
 					(1UL << 31) : (1UL << 42))
@@ -220,11 +220,6 @@ extern void release_thread(struct task_struct *);
 
 /* Free guarded storage control block for current */
 void exit_thread_gs(void);
-
-/*
- * Return saved PC of a blocked thread.
- */
-extern unsigned long thread_saved_pc(struct task_struct *t);
 
 unsigned long get_wchan(struct task_struct *p);
 #define task_pt_regs(tsk) ((struct pt_regs *) \

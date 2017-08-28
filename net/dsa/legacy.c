@@ -22,7 +22,7 @@
 #include <linux/sysfs.h>
 #include <linux/phy_fixed.h>
 #include <linux/etherdevice.h>
-
+#include <net/dsa.h>
 #include "dsa_priv.h"
 
 /* switch driver registration ***********************************************/
@@ -115,12 +115,13 @@ static int dsa_switch_setup_one(struct dsa_switch *ds, struct device *parent)
 			continue;
 
 		if (!strcmp(name, "cpu")) {
-			if (dst->cpu_dp) {
+			if (dst->cpu_switch) {
 				netdev_err(dst->master_netdev,
 					   "multiple cpu ports?!\n");
 				return -EINVAL;
 			}
-			dst->cpu_dp = &ds->ports[i];
+			dst->cpu_switch = ds;
+			dst->cpu_port = i;
 			ds->cpu_port_mask |= 1 << i;
 		} else if (!strcmp(name, "dsa")) {
 			ds->dsa_port_mask |= 1 << i;
@@ -143,7 +144,7 @@ static int dsa_switch_setup_one(struct dsa_switch *ds, struct device *parent)
 	 * tagging protocol to the preferred tagging format of this
 	 * switch.
 	 */
-	if (dst->cpu_dp->ds == ds) {
+	if (dst->cpu_switch == ds) {
 		enum dsa_tag_protocol tag_protocol;
 
 		tag_protocol = ops->get_tag_protocol(ds);
@@ -287,53 +288,6 @@ static void dsa_switch_destroy(struct dsa_switch *ds)
 
 	dsa_switch_unregister_notifier(ds);
 }
-
-#ifdef CONFIG_PM_SLEEP
-int dsa_switch_suspend(struct dsa_switch *ds)
-{
-	int i, ret = 0;
-
-	/* Suspend slave network devices */
-	for (i = 0; i < ds->num_ports; i++) {
-		if (!dsa_is_port_initialized(ds, i))
-			continue;
-
-		ret = dsa_slave_suspend(ds->ports[i].netdev);
-		if (ret)
-			return ret;
-	}
-
-	if (ds->ops->suspend)
-		ret = ds->ops->suspend(ds);
-
-	return ret;
-}
-EXPORT_SYMBOL_GPL(dsa_switch_suspend);
-
-int dsa_switch_resume(struct dsa_switch *ds)
-{
-	int i, ret = 0;
-
-	if (ds->ops->resume)
-		ret = ds->ops->resume(ds);
-
-	if (ret)
-		return ret;
-
-	/* Resume slave network devices */
-	for (i = 0; i < ds->num_ports; i++) {
-		if (!dsa_is_port_initialized(ds, i))
-			continue;
-
-		ret = dsa_slave_resume(ds->ports[i].netdev);
-		if (ret)
-			return ret;
-	}
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(dsa_switch_resume);
-#endif
 
 /* platform driver init and cleanup *****************************************/
 static int dev_is_class(struct device *dev, void *class)
@@ -623,6 +577,7 @@ static int dsa_setup_dst(struct dsa_switch_tree *dst, struct net_device *dev,
 
 	dst->pd = pd;
 	dst->master_netdev = dev;
+	dst->cpu_port = -1;
 
 	for (i = 0; i < pd->nr_chips; i++) {
 		struct dsa_switch *ds;
@@ -733,7 +688,7 @@ static void dsa_remove_dst(struct dsa_switch_tree *dst)
 			dsa_switch_destroy(ds);
 	}
 
-	dsa_cpu_port_ethtool_restore(dst->cpu_dp->ds);
+	dsa_cpu_port_ethtool_restore(dst->cpu_switch);
 
 	dev_put(dst->master_netdev);
 }

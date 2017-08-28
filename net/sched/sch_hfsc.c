@@ -116,7 +116,6 @@ struct hfsc_class {
 	struct gnet_stats_queue qstats;
 	struct net_rate_estimator __rcu *rate_est;
 	struct tcf_proto __rcu *filter_list; /* filter list */
-	struct tcf_block *block;
 	unsigned int	filter_cnt;	/* filter count */
 	unsigned int	level;		/* class level in hierarchy */
 
@@ -1041,19 +1040,12 @@ hfsc_change_class(struct Qdisc *sch, u32 classid, u32 parentid,
 	if (cl == NULL)
 		return -ENOBUFS;
 
-	err = tcf_block_get(&cl->block, &cl->filter_list);
-	if (err) {
-		kfree(cl);
-		return err;
-	}
-
 	if (tca[TCA_RATE]) {
 		err = gen_new_estimator(&cl->bstats, NULL, &cl->rate_est,
 					NULL,
 					qdisc_root_sleeping_running(sch),
 					tca[TCA_RATE]);
 		if (err) {
-			tcf_block_put(cl->block);
 			kfree(cl);
 			return err;
 		}
@@ -1099,7 +1091,7 @@ hfsc_destroy_class(struct Qdisc *sch, struct hfsc_class *cl)
 {
 	struct hfsc_sched *q = qdisc_priv(sch);
 
-	tcf_block_put(cl->block);
+	tcf_destroy_chain(&cl->filter_list);
 	qdisc_destroy(cl->qdisc);
 	gen_kill_estimator(&cl->rate_est);
 	if (cl != &q->root)
@@ -1150,7 +1142,7 @@ hfsc_classify(struct sk_buff *skb, struct Qdisc *sch, int *qerr)
 	*qerr = NET_XMIT_SUCCESS | __NET_XMIT_BYPASS;
 	head = &q->root;
 	tcf = rcu_dereference_bh(q->root.filter_list);
-	while (tcf && (result = tcf_classify(skb, tcf, &res, false)) >= 0) {
+	while (tcf && (result = tc_classify(skb, tcf, &res, false)) >= 0) {
 #ifdef CONFIG_NET_CLS_ACT
 		switch (result) {
 		case TC_ACT_QUEUED:
@@ -1269,7 +1261,8 @@ hfsc_unbind_tcf(struct Qdisc *sch, unsigned long arg)
 	cl->filter_cnt--;
 }
 
-static struct tcf_block *hfsc_tcf_block(struct Qdisc *sch, unsigned long arg)
+static struct tcf_proto __rcu **
+hfsc_tcf_chain(struct Qdisc *sch, unsigned long arg)
 {
 	struct hfsc_sched *q = qdisc_priv(sch);
 	struct hfsc_class *cl = (struct hfsc_class *)arg;
@@ -1277,7 +1270,7 @@ static struct tcf_block *hfsc_tcf_block(struct Qdisc *sch, unsigned long arg)
 	if (cl == NULL)
 		cl = &q->root;
 
-	return cl->block;
+	return &cl->filter_list;
 }
 
 static int
@@ -1522,7 +1515,7 @@ hfsc_destroy_qdisc(struct Qdisc *sch)
 
 	for (i = 0; i < q->clhash.hashsize; i++) {
 		hlist_for_each_entry(cl, &q->clhash.hash[i], cl_common.hnode)
-			tcf_block_put(cl->block);
+			tcf_destroy_chain(&cl->filter_list);
 	}
 	for (i = 0; i < q->clhash.hashsize; i++) {
 		hlist_for_each_entry_safe(cl, next, &q->clhash.hash[i],
@@ -1669,7 +1662,7 @@ static const struct Qdisc_class_ops hfsc_class_ops = {
 	.put		= hfsc_put_class,
 	.bind_tcf	= hfsc_bind_tcf,
 	.unbind_tcf	= hfsc_unbind_tcf,
-	.tcf_block	= hfsc_tcf_block,
+	.tcf_chain	= hfsc_tcf_chain,
 	.dump		= hfsc_dump_class,
 	.dump_stats	= hfsc_dump_class_stats,
 	.walk		= hfsc_walk

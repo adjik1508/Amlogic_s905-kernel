@@ -51,34 +51,115 @@ static u32 art_to_tsc_denominator;
 static u64 art_to_tsc_offset;
 struct clocksource *art_related_clocksource;
 
-struct cyc2ns {
-	struct cyc2ns_data data[2];	/*  0 + 2*16 = 32 */
-	seqcount_t	   seq;		/* 32 + 4    = 36 */
+/*
+ * Use a ring-buffer like data structure, where a writer advances the head by
+ * writing a new data entry and a reader advances the tail when it observes a
+ * new entry.
+ *
+ * Writers are made to wait on readers until there's space to write a new
+ * entry.
+ *
+ * This means that we can always use an {offset, mul} pair to compute a ns
+ * value that is 'roughly' in the right direction, even if we're writing a new
+ * {offset, mul} pair during the clock read.
+ *
+ * The down-side is that we can no longer guarantee strict monotonicity anymore
+ * (assuming the TSC was that to begin with), because while we compute the
+ * intersection point of the two clock slopes and make sure the time is
+ * continuous at the point of switching; we can no longer guarantee a reader is
+ * strictly before or after the switch point.
+ *
+ * It does mean a reader no longer needs to disable IRQs in order to avoid
+ * CPU-Freq updates messing with his times, and similarly an NMI reader will
+ * no longer run the risk of hitting half-written state.
+ */
 
-}; /* fits one cacheline */
+struct cyc2ns {
+	struct cyc2ns_data data[2];	/*  0 + 2*24 = 48 */
+	struct cyc2ns_data *head;	/* 48 + 8    = 56 */
+	struct cyc2ns_data *tail;	/* 56 + 8    = 64 */
+}; /* exactly fits one cacheline */
 
 static DEFINE_PER_CPU_ALIGNED(struct cyc2ns, cyc2ns);
 
-void cyc2ns_read_begin(struct cyc2ns_data *data)
+struct cyc2ns_data *cyc2ns_read_begin(void)
 {
-	int seq, idx;
+	struct cyc2ns_data *head;
 
-	preempt_disable_notrace();
+	preempt_disable();
 
-	do {
-		seq = this_cpu_read(cyc2ns.seq.sequence);
-		idx = seq & 1;
+	head = this_cpu_read(cyc2ns.head);
+	/*
+	 * Ensure we observe the entry when we observe the pointer to it.
+	 * matches the wmb from cyc2ns_write_end().
+	 */
+	smp_read_barrier_depends();
+	head->__count++;
+	barrier();
 
-		data->cyc2ns_offset = this_cpu_read(cyc2ns.data[idx].cyc2ns_offset);
-		data->cyc2ns_mul    = this_cpu_read(cyc2ns.data[idx].cyc2ns_mul);
-		data->cyc2ns_shift  = this_cpu_read(cyc2ns.data[idx].cyc2ns_shift);
-
-	} while (unlikely(seq != this_cpu_read(cyc2ns.seq.sequence)));
+	return head;
 }
 
-void cyc2ns_read_end(void)
+void cyc2ns_read_end(struct cyc2ns_data *head)
 {
-	preempt_enable_notrace();
+	barrier();
+	/*
+	 * If we're the outer most nested read; update the tail pointer
+	 * when we're done. This notifies possible pending writers
+	 * that we've observed the head pointer and that the other
+	 * entry is now free.
+	 */
+	if (!--head->__count) {
+		/*
+		 * x86-TSO does not reorder writes with older reads;
+		 * therefore once this write becomes visible to another
+		 * cpu, we must be finished reading the cyc2ns_data.
+		 *
+		 * matches with cyc2ns_write_begin().
+		 */
+		this_cpu_write(cyc2ns.tail, head);
+	}
+	preempt_enable();
+}
+
+/*
+ * Begin writing a new @data entry for @cpu.
+ *
+ * Assumes some sort of write side lock; currently 'provided' by the assumption
+ * that cpufreq will call its notifiers sequentially.
+ */
+static struct cyc2ns_data *cyc2ns_write_begin(int cpu)
+{
+	struct cyc2ns *c2n = &per_cpu(cyc2ns, cpu);
+	struct cyc2ns_data *data = c2n->data;
+
+	if (data == c2n->head)
+		data++;
+
+	/* XXX send an IPI to @cpu in order to guarantee a read? */
+
+	/*
+	 * When we observe the tail write from cyc2ns_read_end(),
+	 * the cpu must be done with that entry and its safe
+	 * to start writing to it.
+	 */
+	while (c2n->tail == data)
+		cpu_relax();
+
+	return data;
+}
+
+static void cyc2ns_write_end(int cpu, struct cyc2ns_data *data)
+{
+	struct cyc2ns *c2n = &per_cpu(cyc2ns, cpu);
+
+	/*
+	 * Ensure the @data writes are visible before we publish the
+	 * entry. Matches the data-depencency in cyc2ns_read_begin().
+	 */
+	smp_wmb();
+
+	ACCESS_ONCE(c2n->head) = data;
 }
 
 /*
@@ -110,6 +191,7 @@ static void cyc2ns_data_init(struct cyc2ns_data *data)
 	data->cyc2ns_mul = 0;
 	data->cyc2ns_shift = 0;
 	data->cyc2ns_offset = 0;
+	data->__count = 0;
 }
 
 static void cyc2ns_init(int cpu)
@@ -119,29 +201,51 @@ static void cyc2ns_init(int cpu)
 	cyc2ns_data_init(&c2n->data[0]);
 	cyc2ns_data_init(&c2n->data[1]);
 
-	seqcount_init(&c2n->seq);
+	c2n->head = c2n->data;
+	c2n->tail = c2n->data;
 }
 
 static inline unsigned long long cycles_2_ns(unsigned long long cyc)
 {
-	struct cyc2ns_data data;
+	struct cyc2ns_data *data, *tail;
 	unsigned long long ns;
 
-	cyc2ns_read_begin(&data);
+	/*
+	 * See cyc2ns_read_*() for details; replicated in order to avoid
+	 * an extra few instructions that came with the abstraction.
+	 * Notable, it allows us to only do the __count and tail update
+	 * dance when its actually needed.
+	 */
 
-	ns = data.cyc2ns_offset;
-	ns += mul_u64_u32_shr(cyc, data.cyc2ns_mul, data.cyc2ns_shift);
+	preempt_disable_notrace();
+	data = this_cpu_read(cyc2ns.head);
+	tail = this_cpu_read(cyc2ns.tail);
 
-	cyc2ns_read_end();
+	if (likely(data == tail)) {
+		ns = data->cyc2ns_offset;
+		ns += mul_u64_u32_shr(cyc, data->cyc2ns_mul, data->cyc2ns_shift);
+	} else {
+		data->__count++;
+
+		barrier();
+
+		ns = data->cyc2ns_offset;
+		ns += mul_u64_u32_shr(cyc, data->cyc2ns_mul, data->cyc2ns_shift);
+
+		barrier();
+
+		if (!--data->__count)
+			this_cpu_write(cyc2ns.tail, data);
+	}
+	preempt_enable_notrace();
 
 	return ns;
 }
 
-static void __set_cyc2ns_scale(unsigned long khz, int cpu, unsigned long long tsc_now)
+static void set_cyc2ns_scale(unsigned long khz, int cpu)
 {
-	unsigned long long ns_now;
-	struct cyc2ns_data data;
-	struct cyc2ns *c2n;
+	unsigned long long tsc_now, ns_now;
+	struct cyc2ns_data *data;
 	unsigned long flags;
 
 	local_irq_save(flags);
@@ -150,6 +254,9 @@ static void __set_cyc2ns_scale(unsigned long khz, int cpu, unsigned long long ts
 	if (!khz)
 		goto done;
 
+	data = cyc2ns_write_begin(cpu);
+
+	tsc_now = rdtsc();
 	ns_now = cycles_2_ns(tsc_now);
 
 	/*
@@ -157,7 +264,7 @@ static void __set_cyc2ns_scale(unsigned long khz, int cpu, unsigned long long ts
 	 * time function is continuous; see the comment near struct
 	 * cyc2ns_data.
 	 */
-	clocks_calc_mult_shift(&data.cyc2ns_mul, &data.cyc2ns_shift, khz,
+	clocks_calc_mult_shift(&data->cyc2ns_mul, &data->cyc2ns_shift, khz,
 			       NSEC_PER_MSEC, 0);
 
 	/*
@@ -166,31 +273,20 @@ static void __set_cyc2ns_scale(unsigned long khz, int cpu, unsigned long long ts
 	 * conversion algorithm shifting a 32-bit value (now specifies a 64-bit
 	 * value) - refer perf_event_mmap_page documentation in perf_event.h.
 	 */
-	if (data.cyc2ns_shift == 32) {
-		data.cyc2ns_shift = 31;
-		data.cyc2ns_mul >>= 1;
+	if (data->cyc2ns_shift == 32) {
+		data->cyc2ns_shift = 31;
+		data->cyc2ns_mul >>= 1;
 	}
 
-	data.cyc2ns_offset = ns_now -
-		mul_u64_u32_shr(tsc_now, data.cyc2ns_mul, data.cyc2ns_shift);
+	data->cyc2ns_offset = ns_now -
+		mul_u64_u32_shr(tsc_now, data->cyc2ns_mul, data->cyc2ns_shift);
 
-	c2n = per_cpu_ptr(&cyc2ns, cpu);
-
-	raw_write_seqcount_latch(&c2n->seq);
-	c2n->data[0] = data;
-	raw_write_seqcount_latch(&c2n->seq);
-	c2n->data[1] = data;
+	cyc2ns_write_end(cpu, data);
 
 done:
-	sched_clock_idle_wakeup_event();
+	sched_clock_idle_wakeup_event(0);
 	local_irq_restore(flags);
 }
-
-static void set_cyc2ns_scale(unsigned long khz, int cpu)
-{
-	__set_cyc2ns_scale(khz, cpu, rdtsc());
-}
-
 /*
  * Scheduler clock - returns current time in nanosec units.
  */
@@ -278,8 +374,6 @@ static int __init tsc_setup(char *str)
 		tsc_clocksource_reliable = 1;
 	if (!strncmp(str, "noirqtime", 9))
 		no_sched_irq_time = 1;
-	if (!strcmp(str, "unstable"))
-		mark_tsc_unstable("boot parameter");
 	return 1;
 }
 
@@ -1033,15 +1127,6 @@ static void tsc_cs_mark_unstable(struct clocksource *cs)
 	pr_info("Marking TSC unstable due to clocksource watchdog\n");
 }
 
-static void tsc_cs_tick_stable(struct clocksource *cs)
-{
-	if (tsc_unstable)
-		return;
-
-	if (using_native_sched_clock())
-		sched_clock_tick_stable();
-}
-
 /*
  * .mask MUST be CLOCKSOURCE_MASK(64). See comment above read_tsc()
  */
@@ -1055,7 +1140,6 @@ static struct clocksource clocksource_tsc = {
 	.archdata               = { .vclock_mode = VCLOCK_TSC },
 	.resume			= tsc_resume,
 	.mark_unstable		= tsc_cs_mark_unstable,
-	.tick_stable		= tsc_cs_tick_stable,
 };
 
 void mark_tsc_unstable(char *reason)
@@ -1171,7 +1255,6 @@ static void tsc_refine_calibration_work(struct work_struct *work)
 	static int hpet;
 	u64 tsc_stop, ref_stop, delta;
 	unsigned long freq;
-	int cpu;
 
 	/* Don't bother refining TSC on unstable systems */
 	if (check_tsc_unstable())
@@ -1222,10 +1305,6 @@ static void tsc_refine_calibration_work(struct work_struct *work)
 	/* Inform the TSC deadline clockevent devices about the recalibration */
 	lapic_update_tsc_freq();
 
-	/* Update the sched_clock() rate to match the clocksource one */
-	for_each_possible_cpu(cpu)
-		__set_cyc2ns_scale(tsc_khz, cpu, tsc_stop);
-
 out:
 	if (boot_cpu_has(X86_FEATURE_ART))
 		art_related_clocksource = &clocksource_tsc;
@@ -1271,7 +1350,7 @@ device_initcall(init_tsc_clocksource);
 
 void __init tsc_init(void)
 {
-	u64 lpj, cyc;
+	u64 lpj;
 	int cpu;
 
 	if (!boot_cpu_has(X86_FEATURE_TSC)) {
@@ -1311,10 +1390,9 @@ void __init tsc_init(void)
 	 * speed as the bootup CPU. (cpufreq notifiers will fix this
 	 * up if their speed diverges)
 	 */
-	cyc = rdtsc();
 	for_each_possible_cpu(cpu) {
 		cyc2ns_init(cpu);
-		__set_cyc2ns_scale(tsc_khz, cpu, cyc);
+		set_cyc2ns_scale(tsc_khz, cpu);
 	}
 
 	if (tsc_disabled > 0)

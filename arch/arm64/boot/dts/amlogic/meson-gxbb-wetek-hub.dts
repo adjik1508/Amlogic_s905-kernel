@@ -59,10 +59,10 @@
 			panic-indicator;
 		};
 	};
-};
 
-&cvbs_connector {
-	status = "disabled";
+	cvbs-connector {
+		status = "disabled";
+	};
 };
 
 &ethmac {

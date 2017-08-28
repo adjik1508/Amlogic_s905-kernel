@@ -456,13 +456,12 @@ static void reset_with_ipi(struct pnmask *distribution, struct bau_control *bcp)
  */
 static inline unsigned long long cycles_2_ns(unsigned long long cyc)
 {
-	struct cyc2ns_data data;
+	struct cyc2ns_data *data = cyc2ns_read_begin();
 	unsigned long long ns;
 
-	cyc2ns_read_begin(&data);
-	ns = mul_u64_u32_shr(cyc, data.cyc2ns_mul, data.cyc2ns_shift);
-	cyc2ns_read_end();
+	ns = mul_u64_u32_shr(cyc, data->cyc2ns_mul, data->cyc2ns_shift);
 
+	cyc2ns_read_end(data);
 	return ns;
 }
 
@@ -471,13 +470,12 @@ static inline unsigned long long cycles_2_ns(unsigned long long cyc)
  */
 static inline unsigned long long ns_2_cycles(unsigned long long ns)
 {
-	struct cyc2ns_data data;
+	struct cyc2ns_data *data = cyc2ns_read_begin();
 	unsigned long long cyc;
 
-	cyc2ns_read_begin(&data);
-	cyc = (ns << data.cyc2ns_shift) / data.cyc2ns_mul;
-	cyc2ns_read_end();
+	cyc = (ns << data->cyc2ns_shift) / data->cyc2ns_mul;
 
+	cyc2ns_read_end(data);
 	return cyc;
 }
 

@@ -228,7 +228,7 @@ struct sctp_chunk *sctp_make_init(const struct sctp_association *asoc,
 	sctp_adaptation_ind_param_t aiparam;
 	sctp_supported_ext_param_t ext_param;
 	int num_ext = 0;
-	__u8 extensions[3];
+	__u8 extensions[4];
 	sctp_paramhdr_t *auth_chunks = NULL,
 			*auth_hmacs = NULL;
 
@@ -396,7 +396,7 @@ struct sctp_chunk *sctp_make_init_ack(const struct sctp_association *asoc,
 	sctp_adaptation_ind_param_t aiparam;
 	sctp_supported_ext_param_t ext_param;
 	int num_ext = 0;
-	__u8 extensions[3];
+	__u8 extensions[4];
 	sctp_paramhdr_t *auth_chunks = NULL,
 			*auth_hmacs = NULL,
 			*auth_random = NULL;
@@ -2454,16 +2454,11 @@ int sctp_process_init(struct sctp_association *asoc, struct sctp_chunk *chunk,
 	 * stream sequence number shall be set to 0.
 	 */
 
-	/* Allocate storage for the negotiated streams if it is not a temporary
-	 * association.
-	 */
-	if (!asoc->temp) {
-		if (sctp_stream_init(asoc, gfp))
-			goto clean_up;
+	if (sctp_stream_init(asoc, gfp))
+		goto clean_up;
 
-		if (sctp_assoc_set_id(asoc, gfp))
-			goto clean_up;
-	}
+	if (!asoc->temp && sctp_assoc_set_id(asoc, gfp))
+		goto clean_up;
 
 	/* ADDIP Section 4.1 ASCONF Chunk Procedures
 	 *

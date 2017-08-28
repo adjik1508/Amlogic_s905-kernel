@@ -33,7 +33,7 @@
 #define STI_CURS_MAX_SIZE   128
 
 /*
- * pixmap dma buffer structure
+ * pixmap dma buffer stucture
  *
  * @paddr:  physical address
  * @size:   buffer size
@@ -121,7 +121,8 @@ static int cursor_dbg_show(struct seq_file *s, void *data)
 	cursor_dbg_cml(s, cursor, readl(cursor->regs + CUR_CML));
 	DBGFS_DUMP(CUR_AWS);
 	DBGFS_DUMP(CUR_AWE);
-	seq_putc(s, '\n');
+	seq_puts(s, "\n");
+
 	return 0;
 }
 

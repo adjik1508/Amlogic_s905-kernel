@@ -2713,7 +2713,7 @@ struct bio *btrfs_bio_clone(struct bio *bio, gfp_t gfp_mask)
 	struct btrfs_io_bio *btrfs_bio;
 	struct bio *new;
 
-	new = bio_clone_fast(bio, gfp_mask, btrfs_bioset);
+	new = bio_clone_bioset(bio, gfp_mask, btrfs_bioset);
 	if (new) {
 		btrfs_bio = btrfs_io_bio(new);
 		btrfs_bio->csum = NULL;
@@ -2739,24 +2739,6 @@ struct bio *btrfs_io_bio_alloc(gfp_t gfp_mask, unsigned int nr_iovecs)
 	return bio;
 }
 
-struct bio *btrfs_bio_clone_partial(struct bio *orig, int offset, int size)
-{
-	struct bio *bio;
-	struct btrfs_io_bio *btrfs_bio;
-
-	/* this will fail when it's backed by a bioset */
-	bio = bio_clone_fast(orig, GFP_NOFS, btrfs_bioset);
-	ASSERT(bio);
-
-	btrfs_bio = btrfs_io_bio(bio);
-	btrfs_bio->csum = NULL;
-	btrfs_bio->csum_allocated = NULL;
-	btrfs_bio->end_io = NULL;
-
-	bio_trim(bio, offset >> 9, size >> 9);
-	btrfs_bio->iter = bio->bi_iter;
-	return bio;
-}
 
 static int __must_check submit_one_bio(struct bio *bio, int mirror_num,
 				       unsigned long bio_flags)
@@ -3615,9 +3597,9 @@ lock_extent_buffer_for_io(struct extent_buffer *eb,
 		set_bit(EXTENT_BUFFER_WRITEBACK, &eb->bflags);
 		spin_unlock(&eb->refs_lock);
 		btrfs_set_header_flag(eb, BTRFS_HEADER_FLAG_WRITTEN);
-		__percpu_counter_add(&fs_info->dirty_metadata_bytes,
-				     -eb->len,
-				     fs_info->dirty_metadata_batch);
+		percpu_counter_add_batch(&fs_info->dirty_metadata_bytes,
+					 -eb->len,
+					 fs_info->dirty_metadata_batch);
 		ret = 1;
 	} else {
 		spin_unlock(&eb->refs_lock);
@@ -4481,29 +4463,25 @@ try_submit_last:
 }
 
 /*
- * Sanity check for fiemap cache
+ * Emit last fiemap cache
  *
- * All fiemap cache should be submitted by emit_fiemap_extent()
- * Iteration should be terminated either by last fiemap extent or
- * fieinfo->fi_extents_max.
- * So no cached fiemap should exist.
+ * The last fiemap cache may still be cached in the following case:
+ * 0		      4k		    8k
+ * |<- Fiemap range ->|
+ * |<------------  First extent ----------->|
+ *
+ * In this case, the first extent range will be cached but not emitted.
+ * So we must emit it before ending extent_fiemap().
  */
-static int check_fiemap_cache(struct btrfs_fs_info *fs_info,
-			       struct fiemap_extent_info *fieinfo,
-			       struct fiemap_cache *cache)
+static int emit_last_fiemap_cache(struct btrfs_fs_info *fs_info,
+				  struct fiemap_extent_info *fieinfo,
+				  struct fiemap_cache *cache)
 {
 	int ret;
 
 	if (!cache->cached)
 		return 0;
 
-	/* Small and recoverbale problem, only to info developer */
-#ifdef CONFIG_BTRFS_DEBUG
-	WARN_ON(1);
-#endif
-	btrfs_warn(fs_info,
-		   "unhandled fiemap cache detected: offset=%llu phys=%llu len=%llu flags=0x%x",
-		   cache->offset, cache->phys, cache->len, cache->flags);
 	ret = fiemap_fill_next_extent(fieinfo, cache->offset, cache->phys,
 				      cache->len, cache->flags);
 	cache->cached = false;
@@ -4719,7 +4697,7 @@ int extent_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 	}
 out_free:
 	if (!ret)
-		ret = check_fiemap_cache(root->fs_info, fieinfo, &cache);
+		ret = emit_last_fiemap_cache(root->fs_info, fieinfo, &cache);
 	free_extent_map(em);
 out:
 	btrfs_free_path(path);

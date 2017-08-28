@@ -587,7 +587,7 @@ error_unreserve:
 	ttm_eu_backoff_reservation(&ticket, &list);
 
 error_free:
-	kvfree(vm_bos);
+	drm_free_large(vm_bos);
 
 	if (r && r != -ERESTARTSYS)
 		DRM_ERROR("Couldn't update BO_VA (%d)\n", r);

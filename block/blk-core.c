@@ -648,13 +648,19 @@ int blk_init_rl(struct request_list *rl, struct request_queue *q,
 	if (!rl->rq_pool)
 		return -ENOMEM;
 
+	if (rl != &q->root_rl)
+		WARN_ON_ONCE(!blk_get_queue(q));
+
 	return 0;
 }
 
-void blk_exit_rl(struct request_list *rl)
+void blk_exit_rl(struct request_queue *q, struct request_list *rl)
 {
-	if (rl->rq_pool)
+	if (rl->rq_pool) {
 		mempool_destroy(rl->rq_pool);
+		if (rl != &q->root_rl)
+			blk_put_queue(q);
+	}
 }
 
 struct request_queue *blk_alloc_queue(gfp_t gfp_mask)
@@ -3301,6 +3307,10 @@ EXPORT_SYMBOL(blk_finish_plug);
  */
 void blk_pm_runtime_init(struct request_queue *q, struct device *dev)
 {
+	/* not support for RQF_PM and ->rpm_status in blk-mq yet */
+	if (q->mq_ops)
+		return;
+
 	q->dev = dev;
 	q->rpm_status = RPM_ACTIVE;
 	pm_runtime_set_autosuspend_delay(q->dev, -1);

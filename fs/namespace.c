@@ -3239,6 +3239,7 @@ static void __init init_mount_tree(void)
 
 void __init mnt_init(void)
 {
+	unsigned u;
 	int err;
 
 	mnt_cache = kmem_cache_create("mnt_cache", sizeof(struct mount),
@@ -3247,16 +3248,21 @@ void __init mnt_init(void)
 	mount_hashtable = alloc_large_system_hash("Mount-cache",
 				sizeof(struct hlist_head),
 				mhash_entries, 19,
-				HASH_ZERO,
+				0,
 				&m_hash_shift, &m_hash_mask, 0, 0);
 	mountpoint_hashtable = alloc_large_system_hash("Mountpoint-cache",
 				sizeof(struct hlist_head),
 				mphash_entries, 19,
-				HASH_ZERO,
+				0,
 				&mp_hash_shift, &mp_hash_mask, 0, 0);
 
 	if (!mount_hashtable || !mountpoint_hashtable)
 		panic("Failed to allocate mount hash table\n");
+
+	for (u = 0; u <= m_hash_mask; u++)
+		INIT_HLIST_HEAD(&mount_hashtable[u]);
+	for (u = 0; u <= mp_hash_mask; u++)
+		INIT_HLIST_HEAD(&mountpoint_hashtable[u]);
 
 	kernfs_init();
 
@@ -3482,6 +3488,8 @@ static int mntns_install(struct nsproxy *nsproxy, struct ns_common *ns)
 		put_mnt_ns(mnt_ns);
 		return err;
 	}
+
+	put_mnt_ns(old_mnt_ns);
 
 	/* Update the pwd and root */
 	set_fs_pwd(fs, &root);

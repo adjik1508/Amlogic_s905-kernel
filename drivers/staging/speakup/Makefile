@@ -25,7 +25,6 @@ speakup-y := \
 	kobjects.o \
 	selection.o \
 	serialio.o \
-	spk_ttyio.o \
 	synth.o \
 	thread.o \
 	varhandlers.o

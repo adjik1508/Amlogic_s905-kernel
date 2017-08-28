@@ -136,6 +136,14 @@
 	status = "okay";
 };
 
+&usb0_vbus_pin_a {
+	pins = "PG13";
+};
+
+&usb1_vbus_pin_a {
+	pins = "PB10";
+};
+
 &usb_otg {
 	dr_mode = "host";
 	status = "okay";

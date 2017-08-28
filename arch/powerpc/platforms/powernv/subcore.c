@@ -356,8 +356,7 @@ static int set_subcores_per_core(int new_mode)
 	/* Ensure state is consistent before we call the other cpus */
 	mb();
 
-	stop_machine_cpuslocked(cpu_update_split_mode, &new_mode,
-				cpu_online_mask);
+	stop_machine(cpu_update_split_mode, &new_mode, cpu_online_mask);
 
 	put_online_cpus();
 
@@ -408,7 +407,13 @@ static DEVICE_ATTR(subcores_per_core, 0644,
 
 static int subcore_init(void)
 {
-	if (!cpu_has_feature(CPU_FTR_SUBCORE))
+	unsigned pvr_ver;
+
+	pvr_ver = PVR_VER(mfspr(SPRN_PVR));
+
+	if (pvr_ver != PVR_POWER8 &&
+	    pvr_ver != PVR_POWER8E &&
+	    pvr_ver != PVR_POWER8NVL)
 		return 0;
 
 	/*

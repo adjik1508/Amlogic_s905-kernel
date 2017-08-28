@@ -122,7 +122,7 @@ static void *alloc_insn_page(void)
 	return module_alloc(PAGE_SIZE);
 }
 
-static void free_insn_page(void *page)
+void __weak free_insn_page(void *page)
 {
 	module_memfree(page);
 }
@@ -495,13 +495,14 @@ static void do_optimize_kprobes(void)
 	 * This combination can cause a deadlock (cpu-hotplug try to lock
 	 * text_mutex but stop_machine can not be done because online_cpus
 	 * has been changed)
-	 * To avoid this deadlock, caller must have locked cpu hotplug
+	 * To avoid this deadlock, we need to call get_online_cpus()
 	 * for preventing cpu-hotplug outside of text_mutex locking.
 	 */
-	lockdep_assert_hotplug_held();
+	get_online_cpus();
 	mutex_lock(&text_mutex);
 	arch_optimize_kprobes(&optimizing_list);
 	mutex_unlock(&text_mutex);
+	put_online_cpus();
 }
 
 /*
@@ -517,7 +518,7 @@ static void do_unoptimize_kprobes(void)
 		return;
 
 	/* Ditto to do_optimize_kprobes */
-	lockdep_assert_hotplug_held();
+	get_online_cpus();
 	mutex_lock(&text_mutex);
 	arch_unoptimize_kprobes(&unoptimizing_list, &freeing_list);
 	/* Loop free_list for disarming */
@@ -536,6 +537,7 @@ static void do_unoptimize_kprobes(void)
 			list_del_init(&op->list);
 	}
 	mutex_unlock(&text_mutex);
+	put_online_cpus();
 }
 
 /* Reclaim all kprobes on the free_list */
@@ -559,7 +561,6 @@ static void kick_kprobe_optimizer(void)
 /* Kprobe jump optimizer */
 static void kprobe_optimizer(struct work_struct *work)
 {
-	get_online_cpus();
 	mutex_lock(&kprobe_mutex);
 	/* Lock modules while optimizing kprobes */
 	mutex_lock(&module_mutex);
@@ -591,7 +592,6 @@ static void kprobe_optimizer(struct work_struct *work)
 	/* Step 5: Kick optimizer again if needed */
 	if (!list_empty(&optimizing_list) || !list_empty(&unoptimizing_list))
 		kick_kprobe_optimizer();
-	put_online_cpus();
 }
 
 /* Wait for completing optimization and unoptimization */
@@ -650,7 +650,9 @@ static void optimize_kprobe(struct kprobe *p)
 /* Short cut to direct unoptimizing */
 static void force_unoptimize_kprobe(struct optimized_kprobe *op)
 {
+	get_online_cpus();
 	arch_unoptimize_kprobe(op);
+	put_online_cpus();
 	if (kprobe_disabled(&op->kp))
 		arch_disarm_kprobe(&op->kp);
 }
@@ -819,7 +821,6 @@ static void optimize_all_kprobes(void)
 	struct kprobe *p;
 	unsigned int i;
 
-	get_online_cpus();
 	mutex_lock(&kprobe_mutex);
 	/* If optimization is already allowed, just return */
 	if (kprobes_allow_optimization)
@@ -835,7 +836,6 @@ static void optimize_all_kprobes(void)
 	printk(KERN_INFO "Kprobes globally optimized\n");
 out:
 	mutex_unlock(&kprobe_mutex);
-	put_online_cpus();
 }
 
 static void unoptimize_all_kprobes(void)
@@ -844,7 +844,6 @@ static void unoptimize_all_kprobes(void)
 	struct kprobe *p;
 	unsigned int i;
 
-	get_online_cpus();
 	mutex_lock(&kprobe_mutex);
 	/* If optimization is already prohibited, just return */
 	if (!kprobes_allow_optimization) {
@@ -865,7 +864,6 @@ static void unoptimize_all_kprobes(void)
 	/* Wait for unoptimizing completion */
 	wait_for_kprobe_optimizer();
 	printk(KERN_INFO "Kprobes globally unoptimized\n");
-	put_online_cpus();
 }
 
 static DEFINE_MUTEX(kprobe_sysctl_mutex);
@@ -1303,11 +1301,10 @@ static int register_aggr_kprobe(struct kprobe *orig_p, struct kprobe *p)
 	/* For preparing optimization, jump_label_text_reserved() is called */
 	jump_label_lock();
 	/*
-	 * Caller must have locked CPUs to avoid text_mutex deadlock.with stop
-	 * machine, which is invoked by unoptimize_kprobe() in
-	 * add_new_kprobe()
+	 * Get online CPUs to avoid text_mutex deadlock.with stop machine,
+	 * which is invoked by unoptimize_kprobe() in add_new_kprobe()
 	 */
-	lockdep_assert_hotplug_held();
+	get_online_cpus();
 	mutex_lock(&text_mutex);
 
 	if (!kprobe_aggrprobe(orig_p)) {
@@ -1549,7 +1546,6 @@ int register_kprobe(struct kprobe *p)
 	if (ret)
 		return ret;
 
-	get_online_cpus();
 	mutex_lock(&kprobe_mutex);
 
 	old_p = get_kprobe(p->addr);
@@ -1577,7 +1573,6 @@ int register_kprobe(struct kprobe *p)
 
 out:
 	mutex_unlock(&kprobe_mutex);
-	put_online_cpus();
 
 	if (probed_mod)
 		module_put(probed_mod);

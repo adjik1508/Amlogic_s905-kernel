@@ -27,6 +27,8 @@
  * The following is for 8821A 1ANT BT Co-exist definition
  *===========================================
  */
+#define	BT_AUTO_REPORT_ONLY_8821A_1ANT				0
+
 #define	BT_INFO_8821A_1ANT_B_FTP	BIT7
 #define	BT_INFO_8821A_1ANT_B_A2DP	BIT6
 #define	BT_INFO_8821A_1ANT_B_HID	BIT5
@@ -133,7 +135,6 @@ struct coex_dm_8821a_1ant {
 	u8	cur_retry_limit_type;
 	u8	pre_ampdu_time_type;
 	u8	cur_ampdu_time_type;
-	u32	arp_cnt;
 
 	u8	error_condition;
 };
@@ -154,7 +155,6 @@ struct coex_sta_8821a_1ant {
 	u32	low_priority_tx;
 	u32	low_priority_rx;
 	u8	bt_rssi;
-	bool	bt_tx_rx_mask;
 	u8	pre_bt_rssi_state;
 	u8	pre_wifi_rssi_state[4];
 	bool	c2h_bt_info_req_sent;

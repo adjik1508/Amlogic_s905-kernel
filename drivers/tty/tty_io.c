@@ -1083,10 +1083,7 @@ static struct tty_struct *tty_driver_lookup_tty(struct tty_driver *driver,
 	struct tty_struct *tty;
 
 	if (driver->ops->lookup)
-		if (!file)
-			tty = ERR_PTR(-EIO);
-		else
-			tty = driver->ops->lookup(driver, file, idx);
+		tty = driver->ops->lookup(driver, file, idx);
 	else
 		tty = driver->ttys[idx];
 
@@ -1718,7 +1715,7 @@ static struct tty_driver *tty_lookup_driver(dev_t device, struct file *filp,
 		struct tty_driver *console_driver = console_device(index);
 		if (console_driver) {
 			driver = tty_driver_kref_get(console_driver);
-			if (driver && filp) {
+			if (driver) {
 				/* Don't let /dev/console block */
 				filp->f_flags |= O_NONBLOCK;
 				break;
@@ -1751,7 +1748,7 @@ static struct tty_driver *tty_lookup_driver(dev_t device, struct file *filp,
  *	  - concurrent tty driver removal w/ lookup
  *	  - concurrent tty removal from driver table
  */
-struct tty_struct *tty_open_by_driver(dev_t device, struct inode *inode,
+static struct tty_struct *tty_open_by_driver(dev_t device, struct inode *inode,
 					     struct file *filp)
 {
 	struct tty_struct *tty;
@@ -1796,7 +1793,6 @@ out:
 	tty_driver_kref_put(driver);
 	return tty;
 }
-EXPORT_SYMBOL_GPL(tty_open_by_driver);
 
 /**
  *	tty_open		-	open a tty device

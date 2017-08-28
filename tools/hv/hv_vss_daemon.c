@@ -261,9 +261,7 @@ int main(int argc, char *argv[])
 		if (len != sizeof(struct hv_vss_msg)) {
 			syslog(LOG_ERR, "write failed; error: %d %s", errno,
 			       strerror(errno));
-
-			if (op == VSS_OP_FREEZE)
-				vss_operate(VSS_OP_THAW);
+			exit(EXIT_FAILURE);
 		}
 	}
 

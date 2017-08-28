@@ -649,67 +649,47 @@ static void nested_enable_signaling(struct drm_i915_gem_request *rq)
 	trace_dma_fence_enable_signal(&rq->fence);
 
 	spin_lock_nested(&rq->lock, SINGLE_DEPTH_NESTING);
-	intel_engine_enable_signaling(rq, true);
+	intel_engine_enable_signaling(rq);
 	spin_unlock(&rq->lock);
-}
-
-static void port_assign(struct execlist_port *port,
-			struct drm_i915_gem_request *rq)
-{
-	GEM_BUG_ON(rq == port_request(port));
-
-	if (port_isset(port))
-		i915_gem_request_put(port_request(port));
-
-	port_set(port, i915_gem_request_get(rq));
-	nested_enable_signaling(rq);
 }
 
 static bool i915_guc_dequeue(struct intel_engine_cs *engine)
 {
 	struct execlist_port *port = engine->execlist_port;
-	struct drm_i915_gem_request *last = port_request(port);
+	struct drm_i915_gem_request *last = port[0].request;
 	struct rb_node *rb;
 	bool submit = false;
 
 	spin_lock_irq(&engine->timeline->lock);
 	rb = engine->execlist_first;
-	GEM_BUG_ON(rb_first(&engine->execlist_queue) != rb);
 	while (rb) {
-		struct i915_priolist *p = rb_entry(rb, typeof(*p), node);
-		struct drm_i915_gem_request *rq, *rn;
+		struct drm_i915_gem_request *rq =
+			rb_entry(rb, typeof(*rq), priotree.node);
 
-		list_for_each_entry_safe(rq, rn, &p->requests, priotree.link) {
-			if (last && rq->ctx != last->ctx) {
-				if (port != engine->execlist_port) {
-					__list_del_many(&p->requests,
-							&rq->priotree.link);
-					goto done;
-				}
+		if (last && rq->ctx != last->ctx) {
+			if (port != engine->execlist_port)
+				break;
 
-				port_assign(port, last);
-				port++;
-			}
-
-			INIT_LIST_HEAD(&rq->priotree.link);
-			rq->priotree.priority = INT_MAX;
-
-			i915_guc_submit(rq);
-			trace_i915_gem_request_in(rq, port_index(port, engine));
-			last = rq;
-			submit = true;
+			i915_gem_request_assign(&port->request, last);
+			nested_enable_signaling(last);
+			port++;
 		}
 
 		rb = rb_next(rb);
-		rb_erase(&p->node, &engine->execlist_queue);
-		INIT_LIST_HEAD(&p->requests);
-		if (p->priority != I915_PRIORITY_NORMAL)
-			kmem_cache_free(engine->i915->priorities, p);
+		rb_erase(&rq->priotree.node, &engine->execlist_queue);
+		RB_CLEAR_NODE(&rq->priotree.node);
+		rq->priotree.priority = INT_MAX;
+
+		i915_guc_submit(rq);
+		trace_i915_gem_request_in(rq, port - engine->execlist_port);
+		last = rq;
+		submit = true;
 	}
-done:
-	engine->execlist_first = rb;
-	if (submit)
-		port_assign(port, last);
+	if (submit) {
+		i915_gem_request_assign(&port->request, last);
+		nested_enable_signaling(last);
+		engine->execlist_first = rb;
+	}
 	spin_unlock_irq(&engine->timeline->lock);
 
 	return submit;
@@ -723,19 +703,17 @@ static void i915_guc_irq_handler(unsigned long data)
 	bool submit;
 
 	do {
-		rq = port_request(&port[0]);
+		rq = port[0].request;
 		while (rq && i915_gem_request_completed(rq)) {
 			trace_i915_gem_request_out(rq);
 			i915_gem_request_put(rq);
-
-			port[0] = port[1];
-			memset(&port[1], 0, sizeof(port[1]));
-
-			rq = port_request(&port[0]);
+			port[0].request = port[1].request;
+			port[1].request = NULL;
+			rq = port[0].request;
 		}
 
 		submit = false;
-		if (!port_count(&port[1]))
+		if (!port[1].request)
 			submit = i915_guc_dequeue(engine);
 	} while (submit);
 }
@@ -1073,7 +1051,8 @@ static int guc_ads_create(struct intel_guc *guc)
 		dev_priv->engine[RCS]->status_page.ggtt_offset;
 
 	for_each_engine(engine, dev_priv, id)
-		blob->ads.eng_state_size[engine->guc_id] = engine->context_size;
+		blob->ads.eng_state_size[engine->guc_id] =
+			intel_lr_context_size(engine);
 
 	base = guc_ggtt_offset(vma);
 	blob->ads.scheduler_policies = base + ptr_offset(blob, policies);

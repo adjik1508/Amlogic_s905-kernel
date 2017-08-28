@@ -874,8 +874,6 @@ static int nd_jump_root(struct nameidata *nd)
 		path_get(&nd->path);
 		nd->inode = nd->path.dentry->d_inode;
 	}
-	if (unlikely(nd->flags & LOOKUP_NO_JUMPS))
-		return -ELOOP;
 	nd->flags |= LOOKUP_JUMPED;
 	return 0;
 }
@@ -1056,18 +1054,14 @@ const char *get_link(struct nameidata *nd)
 		} else {
 			res = get(dentry, inode, &last->done);
 		}
-		if (unlikely(nd->flags & LOOKUP_NO_JUMPS) &&
-		    unlikely(nd->flags & LOOKUP_JUMPED))
-			return ERR_PTR(-ELOOP);
 		if (IS_ERR_OR_NULL(res))
 			return res;
 	}
 	if (*res == '/') {
 		if (!nd->root.mnt)
 			set_root(nd);
-		error = nd_jump_root(nd);
-		if (unlikely(error))
-			return ERR_PTR(error);
+		if (unlikely(nd_jump_root(nd)))
+			return ERR_PTR(-ECHILD);
 		while (unlikely(*++res == '/'))
 			;
 	}
@@ -1251,16 +1245,12 @@ static int follow_managed(struct path *path, struct nameidata *nd)
 		break;
 	}
 
-	if (need_mntput) {
-		if (path->mnt == mnt)
-			mntput(path->mnt);
-		if (unlikely(nd->flags & LOOKUP_NO_JUMPS))
-			ret = -ELOOP;
-		else
-			nd->flags |= LOOKUP_JUMPED;
-	}
+	if (need_mntput && path->mnt == mnt)
+		mntput(path->mnt);
 	if (ret == -EISDIR || !ret)
 		ret = 1;
+	if (need_mntput)
+		nd->flags |= LOOKUP_JUMPED;
 	if (unlikely(ret < 0))
 		path_put_conditional(path, nd);
 	return ret;
@@ -1317,8 +1307,6 @@ static bool __follow_mount_rcu(struct nameidata *nd, struct path *path,
 		mounted = __lookup_mnt(path->mnt, path->dentry);
 		if (!mounted)
 			break;
-		if (unlikely(nd->flags & LOOKUP_NO_JUMPS))
-			return false;
 		path->mnt = &mounted->mnt;
 		path->dentry = mounted->mnt.mnt_root;
 		nd->flags |= LOOKUP_JUMPED;
@@ -1339,11 +1327,8 @@ static int follow_dotdot_rcu(struct nameidata *nd)
 	struct inode *inode = nd->inode;
 
 	while (1) {
-		if (unlikely(path_equal(&nd->path, &nd->root))) {
-			if (nd->flags & LOOKUP_NO_JUMPS)
-				return -ELOOP;
+		if (path_equal(&nd->path, &nd->root))
 			break;
-		}
 		if (nd->path.dentry != nd->path.mnt->mnt_root) {
 			struct dentry *old = nd->path.dentry;
 			struct dentry *parent = old->d_parent;
@@ -1470,9 +1455,8 @@ static int path_parent_directory(struct path *path)
 static int follow_dotdot(struct nameidata *nd)
 {
 	while(1) {
-		if (unlikely(path_equal(&nd->path, &nd->root))) {
-			if (nd->flags & LOOKUP_NO_JUMPS)
-				return -ELOOP;
+		if (nd->path.dentry == nd->root.dentry &&
+		    nd->path.mnt == nd->root.mnt) {
 			break;
 		}
 		if (nd->path.dentry != nd->path.mnt->mnt_root) {
@@ -2190,16 +2174,14 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 
 	nd->m_seq = read_seqbegin(&mount_lock);
 	if (*s == '/') {
-		int error;
 		if (flags & LOOKUP_RCU)
 			rcu_read_lock();
 		set_root(nd);
-		error = nd_jump_root(nd);
-		if (unlikely(error)) {
-			terminate_walk(nd);
-			s = ERR_PTR(error);
-		}
-		return s;
+		if (likely(!nd_jump_root(nd)))
+			return s;
+		nd->root.mnt = NULL;
+		rcu_read_unlock();
+		return ERR_PTR(-ECHILD);
 	} else if (nd->dfd == AT_FDCWD) {
 		if (flags & LOOKUP_RCU) {
 			struct fs_struct *fs = current->fs;
@@ -2216,11 +2198,6 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 		} else {
 			get_fs_pwd(current->fs, &nd->path);
 			nd->inode = nd->path.dentry->d_inode;
-		}
-		if (unlikely(flags & LOOKUP_NO_JUMPS)) {
-			nd->root = nd->path;
-			if (!(flags & LOOKUP_RCU))
-				path_get(&nd->root);
 		}
 		return s;
 	} else {
@@ -2248,11 +2225,6 @@ static const char *path_init(struct nameidata *nd, unsigned flags)
 		} else {
 			path_get(&nd->path);
 			nd->inode = nd->path.dentry->d_inode;
-		}
-		if (unlikely(flags & LOOKUP_NO_JUMPS)) {
-			nd->root = nd->path;
-			if (!(flags & LOOKUP_RCU))
-				path_get(&nd->root);
 		}
 		fdput(f);
 		return s;
@@ -4360,7 +4332,6 @@ SYSCALL_DEFINE2(link, const char __user *, oldname, const char __user *, newname
  * The worst of all namespace operations - renaming directory. "Perverted"
  * doesn't even start to describe it. Somebody in UCB had a heck of a trip...
  * Problems:
- *
  *	a) we can get into loop creation.
  *	b) race potential - two innocent renames can create a loop together.
  *	   That's where 4.4 screws up. Current fix: serialization on
@@ -4391,11 +4362,11 @@ int vfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 {
 	int error;
 	bool is_dir = d_is_dir(old_dentry);
-	const unsigned char *old_name;
 	struct inode *source = old_dentry->d_inode;
 	struct inode *target = new_dentry->d_inode;
 	bool new_is_dir = false;
 	unsigned max_links = new_dir->i_sb->s_max_links;
+	struct name_snapshot old_name;
 
 	if (source == target)
 		return 0;
@@ -4442,7 +4413,7 @@ int vfs_rename(struct inode *old_dir, struct dentry *old_dentry,
 	if (error)
 		return error;
 
-	old_name = fsnotify_oldname_init(old_dentry->d_name.name);
+	take_dentry_name_snapshot(&old_name, old_dentry);
 	dget(new_dentry);
 	if (!is_dir || (flags & RENAME_EXCHANGE))
 		lock_two_nondirectories(source, target);
@@ -4497,14 +4468,14 @@ out:
 		inode_unlock(target);
 	dput(new_dentry);
 	if (!error) {
-		fsnotify_move(old_dir, new_dir, old_name, is_dir,
+		fsnotify_move(old_dir, new_dir, old_name.name, is_dir,
 			      !(flags & RENAME_EXCHANGE) ? target : NULL, old_dentry);
 		if (flags & RENAME_EXCHANGE) {
 			fsnotify_move(new_dir, old_dir, old_dentry->d_name.name,
 				      new_is_dir, NULL, new_dentry);
 		}
 	}
-	fsnotify_oldname_free(old_name);
+	release_dentry_name_snapshot(&old_name);
 
 	return error;
 }

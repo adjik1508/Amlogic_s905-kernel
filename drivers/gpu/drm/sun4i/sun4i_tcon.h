@@ -17,7 +17,6 @@
 #include <drm/drm_crtc.h>
 
 #include <linux/kernel.h>
-#include <linux/list.h>
 #include <linux/reset.h>
 
 #define SUN4I_TCON_GCTL_REG			0x0
@@ -173,11 +172,6 @@ struct sun4i_tcon {
 
 	/* Associated crtc */
 	struct sun4i_crtc		*crtc;
-
-	int				id;
-
-	/* TCON list management */
-	struct list_head		list;
 };
 
 struct drm_bridge *sun4i_tcon_find_bridge(struct device_node *node);

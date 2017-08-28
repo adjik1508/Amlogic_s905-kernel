@@ -1235,8 +1235,7 @@ mwifiex_queuing_ra_based(struct mwifiex_private *priv)
 	 * Currently we assume if we are in Infra, then DA=RA. This might not be
 	 * true in the future
 	 */
-	if ((priv->bss_mode == NL80211_IFTYPE_STATION ||
-	     priv->bss_mode == NL80211_IFTYPE_P2P_CLIENT) &&
+	if ((priv->bss_mode == NL80211_IFTYPE_STATION) &&
 	    (GET_BSS_ROLE(priv) == MWIFIEX_BSS_ROLE_STA))
 		return false;
 

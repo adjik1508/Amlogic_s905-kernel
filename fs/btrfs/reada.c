@@ -66,6 +66,7 @@ struct reada_extctl {
 struct reada_extent {
 	u64			logical;
 	struct btrfs_key	top;
+	int			err;
 	struct list_head	extctl;
 	int 			refcnt;
 	spinlock_t		lock;
