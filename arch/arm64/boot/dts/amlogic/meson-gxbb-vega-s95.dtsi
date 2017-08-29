@@ -41,6 +41,7 @@
  */
 
 #include "meson-gxbb.dtsi"
+#include <dt-bindings/gpio/gpio.h>
 
 / {
 	compatible = "tronsmart,vega-s95", "amlogic,meson-gxbb";
@@ -53,9 +54,21 @@
 		stdout-path = "serial0:115200n8";
 	};
 
+
+	usb_otg_pwr: regulator-usb-pwrs {
+		compatible = "regulator-fixed";
+
+		regulator-name = "USB_OTG_PWR";
+
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+
+		gpio = <&gpio_ao GPIOAO_5 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+	};
+
 	leds {
 		compatible = "gpio-leds";
-
 		blue {
 			label = "vega-s95:blue:on";
 			gpios = <&gpio_ao GPIOAO_13 GPIO_ACTIVE_HIGH>;
@@ -64,30 +77,49 @@
 		};
 	};
 
-	usb_vbus: regulator-usb0-vbus {
+	tflash_vdd: regulator-tflash_vdd {
+		/*
+		 * signal name from schematics: TFLASH_VDD_EN
+		 */
 		compatible = "regulator-fixed";
 
-		regulator-name = "USB0_VBUS";
+		regulator-name = "TFLASH_VDD";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
 
-		regulator-min-microvolt = <5000000>;
-		regulator-max-microvolt = <5000000>;
-
-		gpio = <&gpio GPIODV_24 GPIO_ACTIVE_HIGH>;
+		gpio = <&gpio GPIOY_12 GPIO_ACTIVE_HIGH>;
 		enable-active-high;
 	};
 
-	vcc_3v3: regulator-vcc_3v3 {
-		compatible = "regulator-fixed";
-		regulator-name = "VCC_3V3";
-		regulator-min-microvolt = <3300000>;
+	tf_io: gpio-regulator-tf_io {
+		compatible = "regulator-gpio";
+
+		regulator-name = "TF_IO";
+		regulator-min-microvolt = <1800000>;
 		regulator-max-microvolt = <3300000>;
+
+		/*
+		 * signal name from schematics: TF_3V3N_1V8_EN
+		 */
+		gpios = <&gpio_ao GPIOAO_3 GPIO_ACTIVE_HIGH>;
+		gpios-states = <0>;
+
+		states = <3300000 0
+			  1800000 1>;
 	};
 
-	vcc_1v8: regulator-vcc_1v8 {
+	vcc1v8: regulator-vcc1v8 {
 		compatible = "regulator-fixed";
-		regulator-name = "VCC_1V8";
+		regulator-name = "VCC1V8";
 		regulator-min-microvolt = <1800000>;
 		regulator-max-microvolt = <1800000>;
+	};
+
+	vcc3v3: regulator-vcc3v3 {
+		compatible = "regulator-fixed";
+		regulator-name = "VCC3V3";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
 	};
 
 	emmc_pwrseq: emmc-pwrseq {
@@ -122,6 +154,10 @@
 	};
 };
 
+&scpi_clocks {
+	status = "disabled";
+};
+
 &uart_AO {
 	status = "okay";
 	pinctrl-0 = <&uart_ao_a_pins>;
@@ -153,16 +189,30 @@
 		#size-cells = <0>;
 
 		eth_phy0: ethernet-phy@0 {
-			/* Realtek RTL8211F (0x001cc916) */
 			reg = <0>;
 			eee-broken-1000t;
 		};
 	};
 };
 
+&gpio_ao {
+	/*
+	 * WARNING: The USB Hub on the Odroid-C2 needs a reset signal
+	 * to be turned high in order to be detected by the USB Controller
+	 * This signal should be handled by a USB specific power sequence
+	 * in order to reset the Hub when USB bus is powered down.
+	 */
+	usb-hub {
+		gpio-hog;
+		gpios = <GPIOAO_4 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "usb-hub-reset";
+	};
+};
+
 &usb0_phy {
 	status = "okay";
-	phy-supply = <&usb_vbus>;
+	phy-supply = <&usb_otg_pwr>;
 };
 
 &usb1_phy {
@@ -175,6 +225,13 @@
 
 &usb1 {
 	status = "okay";
+
+	hub@1 {
+		compatible = "usb5e3,610";
+		reg = <1>;
+		reset-gpios = <&gpio GPIOAO_4 GPIO_ACTIVE_LOW>;
+		reset-duration-us = <3000>;
+	};
 };
 
 /* Wireless SDIO Module */
@@ -194,8 +251,8 @@
 
 	mmc-pwrseq = <&sdio_pwrseq>;
 
-	vmmc-supply = <&vcc_3v3>;
-	vqmmc-supply = <&vcc_1v8>;
+	vmmc-supply = <&vcc3v3>;
+	vqmmc-supply = <&vcc1v8>;
 
 	brcmf: bcrmf@1 {
 		reg = <1>;
@@ -203,7 +260,12 @@
 	};
 };
 
-/* SD card */
+&saradc {
+	status = "okay";
+	vref-supply = <&vcc1v8>;
+};
+
+/* SD */
 &sd_emmc_b {
 	status = "okay";
 	pinctrl-0 = <&sdcard_pins>;
@@ -217,7 +279,8 @@
 	cd-gpios = <&gpio CARD_6 GPIO_ACTIVE_HIGH>;
 	cd-inverted;
 
-	vmmc-supply = <&vcc_3v3>;
+	vmmc-supply = <&tflash_vdd>;
+	vqmmc-supply = <&tf_io>;
 };
 
 /* eMMC */
@@ -228,16 +291,16 @@
 
 	bus-width = <8>;
 	cap-sd-highspeed;
-	cap-mmc-highspeed;
 	max-frequency = <200000000>;
 	non-removable;
 	disable-wp;
+	cap-mmc-highspeed;
 	mmc-ddr-1_8v;
 	mmc-hs200-1_8v;
 
 	mmc-pwrseq = <&emmc_pwrseq>;
-	vmmc-supply = <&vcc_3v3>;
-	vmmcq-sumpply = <&vcc_1v8>;
+	vmmc-supply = <&vcc3v3>;
+	vqmmc-supply = <&vcc1v8>;
 };
 
 &pwm_ef {
