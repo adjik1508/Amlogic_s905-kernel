@@ -1981,7 +1981,7 @@ static void nilfs_segctor_drop_written_files(struct nilfs_sc_info *sci,
 					     struct the_nilfs *nilfs)
 {
 	struct nilfs_inode_info *ii, *n;
-	int during_mount = !(sci->sc_super->s_flags & MS_ACTIVE);
+	int during_mount = !(sci->sc_super->s_flags & SB_ACTIVE);
 	int defer_iput = false;
 
 	spin_lock(&nilfs->ns_inode_lock);
@@ -2161,7 +2161,7 @@ void nilfs_flush_segment(struct super_block *sb, ino_t ino)
 }
 
 struct nilfs_segctor_wait_request {
-	wait_queue_t	wq;
+	wait_queue_entry_t	wq;
 	__u32		seq;
 	int		err;
 	atomic_t	done;
@@ -2206,8 +2206,7 @@ static void nilfs_segctor_wakeup(struct nilfs_sc_info *sci, int err)
 	unsigned long flags;
 
 	spin_lock_irqsave(&sci->sc_wait_request.lock, flags);
-	list_for_each_entry_safe(wrq, n, &sci->sc_wait_request.task_list,
-				 wq.task_list) {
+	list_for_each_entry_safe(wrq, n, &sci->sc_wait_request.head, wq.entry) {
 		if (!atomic_read(&wrq->done) &&
 		    nilfs_cnt32_ge(sci->sc_seq_done, wrq->seq)) {
 			wrq->err = err;

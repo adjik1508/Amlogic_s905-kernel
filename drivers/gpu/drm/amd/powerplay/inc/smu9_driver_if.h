@@ -30,7 +30,7 @@
  * SMU TEAM: Always increment the interface version if
  * any structure is changed in this file
  */
-#define SMU9_DRIVER_IF_VERSION 0xD
+#define SMU9_DRIVER_IF_VERSION 0xE
 
 #define PPTABLE_V10_SMU_VERSION 1
 
@@ -312,7 +312,10 @@ typedef struct {
 
   PllSetting_t GfxBoostState;
 
-  uint32_t     Reserved[14];
+  uint8_t      AcgEnable[NUM_GFXCLK_DPM_LEVELS];
+  GbVdroopTable_t AcgBtcGbVdroopTable;
+  QuadraticInt_t  AcgAvfsGb;
+  uint32_t     Reserved[4];
 
   /* Padding - ignore */
   uint32_t     MmHubPadding[7]; /* SMU internal use */
@@ -380,25 +383,25 @@ typedef struct {
   uint8_t  AvfsVersion;
   uint8_t  Padding[2];
 
-  uint32_t VFT0_m1; /* Q16.16 */
-  uint32_t VFT0_m2; /* Q16.16 */
-  uint32_t VFT0_b;  /* Q16.16 */
+  int32_t VFT0_m1; /* Q8.24 */
+  int32_t VFT0_m2; /* Q12.12 */
+  int32_t VFT0_b;  /* Q32 */
 
-  uint32_t VFT1_m1; /* Q16.16 */
-  uint32_t VFT1_m2; /* Q16.16 */
-  uint32_t VFT1_b;  /* Q16.16 */
+  int32_t VFT1_m1; /* Q8.16 */
+  int32_t VFT1_m2; /* Q12.12 */
+  int32_t VFT1_b;  /* Q32 */
 
-  uint32_t VFT2_m1; /* Q16.16 */
-  uint32_t VFT2_m2; /* Q16.16 */
-  uint32_t VFT2_b;  /* Q16.16 */
+  int32_t VFT2_m1; /* Q8.16 */
+  int32_t VFT2_m2; /* Q12.12 */
+  int32_t VFT2_b;  /* Q32 */
 
-  uint32_t AvfsGb0_m1; /* Q16.16 */
-  uint32_t AvfsGb0_m2; /* Q16.16 */
-  uint32_t AvfsGb0_b;  /* Q16.16 */
+  int32_t AvfsGb0_m1; /* Q8.16 */
+  int32_t AvfsGb0_m2; /* Q12.12 */
+  int32_t AvfsGb0_b;  /* Q32 */
 
-  uint32_t AcBtcGb_m1; /* Q16.16 */
-  uint32_t AcBtcGb_m2; /* Q16.16 */
-  uint32_t AcBtcGb_b;  /* Q16.16 */
+  int32_t AcBtcGb_m1; /* Q8.24 */
+  int32_t AcBtcGb_m2; /* Q12.12 */
+  int32_t AcBtcGb_b;  /* Q32 */
 
   uint32_t AvfsTempCold;
   uint32_t AvfsTempMid;
@@ -406,9 +409,9 @@ typedef struct {
 
   uint32_t InversionVoltage; /*  in mV with 2 fractional bits */
 
-  uint32_t P2V_m1; /* Q16.16 */
-  uint32_t P2V_m2; /* Q16.16 */
-  uint32_t P2V_b;  /* Q16.16 */
+  int32_t P2V_m1; /* Q8.24 */
+  int32_t P2V_m2; /* Q12.12 */
+  int32_t P2V_b;  /* Q32 */
 
   uint32_t P2VCharzFreq; /* in 10KHz units */
 

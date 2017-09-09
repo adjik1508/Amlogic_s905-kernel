@@ -17,7 +17,8 @@ Description:
 
 		rule format: action [condition ...]
 
-		action: measure | dont_measure | appraise | dont_appraise | audit
+		action: measure | dont_meaure | appraise | dont_appraise |
+			audit | dont_failsafe
 		condition:= base | lsm  [option]
 			base:	[[func=] [mask=] [fsmagic=] [fsuuid=] [uid=]
 				[euid=] [fowner=]]
@@ -34,9 +35,10 @@ Description:
 			fsuuid:= file system UUID (e.g 8bcbe394-4f13-4144-be8e-5aa9ea2ce2f6)
 			uid:= decimal value
 			euid:= decimal value
-			fowner:=decimal value
+			fowner:= decimal value
 		lsm:  	are LSM specific
 		option:	appraise_type:= [imasig]
+			pcr:= decimal value
 
 		default policy:
 			# PROC_SUPER_MAGIC
@@ -96,3 +98,8 @@ Description:
 
 		Smack:
 			measure subj_user=_ func=FILE_CHECK mask=MAY_READ
+
+		Example of measure rules using alternate PCRs:
+
+			measure func=KEXEC_KERNEL_CHECK pcr=4
+			measure func=KEXEC_INITRAMFS_CHECK pcr=5

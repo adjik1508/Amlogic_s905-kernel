@@ -1377,7 +1377,7 @@ static struct attribute *elantech_attrs[] = {
 	NULL
 };
 
-static struct attribute_group elantech_attr_group = {
+static const struct attribute_group elantech_attr_group = {
 	.attrs = elantech_attrs,
 };
 
@@ -1709,6 +1709,17 @@ int elantech_init(struct psmouse *psmouse)
 		psmouse_info(psmouse,
 			     "Elan sample query result %02x, %02x, %02x\n",
 			     etd->samples[0], etd->samples[1], etd->samples[2]);
+	}
+
+	if (etd->samples[1] == 0x74 && etd->hw_version == 0x03) {
+		/*
+		 * This module has a bug which makes absolute mode
+		 * unusable, so let's abort so we'll be using standard
+		 * PS/2 protocol.
+		 */
+		psmouse_info(psmouse,
+			     "absolute mode broken, forcing standard PS/2 protocol\n");
+		goto init_fail;
 	}
 
 	if (elantech_set_absolute_mode(psmouse)) {

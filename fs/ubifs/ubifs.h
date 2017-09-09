@@ -1202,7 +1202,7 @@ struct ubifs_debug_info;
  * @need_recovery: %1 if the file-system needs recovery
  * @replaying: %1 during journal replay
  * @mounting: %1 while mounting
- * @probing: %1 while attempting to mount if MS_SILENT mount flag is set
+ * @probing: %1 while attempting to mount if SB_SILENT mount flag is set
  * @remounting_rw: %1 while re-mounting from R/O mode to R/W mode
  * @replay_list: temporary list used during journal replay
  * @replay_buds: list of buds to replay
@@ -1451,7 +1451,6 @@ struct ubifs_info {
 extern struct list_head ubifs_infos;
 extern spinlock_t ubifs_infos_lock;
 extern atomic_long_t ubifs_clean_zn_cnt;
-extern struct kmem_cache *ubifs_inode_slab;
 extern const struct super_operations ubifs_super_operations;
 extern const struct address_space_operations ubifs_file_address_operations;
 extern const struct file_operations ubifs_file_operations;
@@ -1590,6 +1589,8 @@ int ubifs_tnc_add_nm(struct ubifs_info *c, const union ubifs_key *key,
 int ubifs_tnc_remove(struct ubifs_info *c, const union ubifs_key *key);
 int ubifs_tnc_remove_nm(struct ubifs_info *c, const union ubifs_key *key,
 			const struct fscrypt_name *nm);
+int ubifs_tnc_remove_dh(struct ubifs_info *c, const union ubifs_key *key,
+			uint32_t cookie);
 int ubifs_tnc_remove_range(struct ubifs_info *c, union ubifs_key *from_key,
 			   union ubifs_key *to_key);
 int ubifs_tnc_remove_ino(struct ubifs_info *c, ino_t inum);
@@ -1754,7 +1755,7 @@ int ubifs_check_dir_empty(struct inode *dir);
 extern const struct xattr_handler *ubifs_xattr_handlers[];
 ssize_t ubifs_listxattr(struct dentry *dentry, char *buffer, size_t size);
 int ubifs_xattr_set(struct inode *host, const char *name, const void *value,
-		    size_t size, int flags);
+		    size_t size, int flags, bool check_lock);
 ssize_t ubifs_xattr_get(struct inode *host, const char *name, void *buf,
 			size_t size);
 void ubifs_evict_xattr_inode(struct ubifs_info *c, ino_t xattr_inum);
@@ -1855,7 +1856,7 @@ __printf(2, 3)
 void ubifs_warn(const struct ubifs_info *c, const char *fmt, ...);
 /*
  * A conditional variant of 'ubifs_err()' which doesn't output anything
- * if probing (ie. MS_SILENT set).
+ * if probing (ie. SB_SILENT set).
  */
 #define ubifs_errc(c, fmt, ...)						\
 do {									\

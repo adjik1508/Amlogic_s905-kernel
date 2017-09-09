@@ -54,9 +54,6 @@ struct memblock memblock __initdata_memblock = {
 };
 
 int memblock_debug __initdata_memblock;
-#ifdef CONFIG_MOVABLE_NODE
-bool movable_node_enabled __initdata_memblock = false;
-#endif
 static bool system_has_some_mirror __initdata_memblock = false;
 static int memblock_can_resize __initdata_memblock;
 static int memblock_memory_in_slab __initdata_memblock = 0;
@@ -302,7 +299,7 @@ void __init memblock_discard(void)
 		__memblock_free_late(addr, size);
 	}
 
-	if (memblock.memory.regions == memblock_memory_init_regions) {
+	if (memblock.memory.regions != memblock_memory_init_regions) {
 		addr = __pa(memblock.memory.regions);
 		size = PAGE_ALIGN(sizeof(struct memblock_region) *
 				  memblock.memory.max);

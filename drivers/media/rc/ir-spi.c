@@ -59,7 +59,7 @@ static int ir_spi_tx(struct rc_dev *dev,
 	for (i = 0; i < count; i++) {
 		unsigned int periods;
 		int j;
-		u16 val = ((i + 1) % 2) ? idata->pulse : idata->space;
+		u16 val;
 
 		periods = DIV_ROUND_CLOSEST(buffer[i] * idata->freq, 1000000);
 
@@ -155,6 +155,7 @@ static int ir_spi_probe(struct spi_device *spi)
 	idata->rc->tx_ir           = ir_spi_tx;
 	idata->rc->s_tx_carrier    = ir_spi_set_tx_carrier;
 	idata->rc->s_tx_duty_cycle = ir_spi_set_duty_cycle;
+	idata->rc->device_name	   = "IR SPI";
 	idata->rc->driver_name     = IR_SPI_DRIVER_NAME;
 	idata->rc->priv            = idata;
 	idata->spi                 = spi;

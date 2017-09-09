@@ -2234,14 +2234,16 @@ cifs_writepage_locked(struct page *page, struct writeback_control *wbc)
 	set_page_writeback(page);
 retry_write:
 	rc = cifs_partialpagewrite(page, 0, PAGE_SIZE);
-	if (rc == -EAGAIN && wbc->sync_mode == WB_SYNC_ALL)
-		goto retry_write;
-	else if (rc == -EAGAIN)
+	if (rc == -EAGAIN) {
+		if (wbc->sync_mode == WB_SYNC_ALL)
+			goto retry_write;
 		redirty_page_for_writepage(wbc, page);
-	else if (rc != 0)
+	} else if (rc != 0) {
 		SetPageError(page);
-	else
+		mapping_set_error(page->mapping, rc);
+	} else {
 		SetPageUptodate(page);
+	}
 	end_page_writeback(page);
 	put_page(page);
 	free_xid(xid);
@@ -2327,7 +2329,7 @@ int cifs_strict_fsync(struct file *file, loff_t start, loff_t end,
 	struct inode *inode = file_inode(file);
 	struct cifs_sb_info *cifs_sb = CIFS_SB(inode->i_sb);
 
-	rc = filemap_write_and_wait_range(inode->i_mapping, start, end);
+	rc = file_write_and_wait_range(file, start, end);
 	if (rc)
 		return rc;
 	inode_lock(inode);
@@ -2369,7 +2371,7 @@ int cifs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	struct cifs_sb_info *cifs_sb = CIFS_FILE_SB(file);
 	struct inode *inode = file->f_mapping->host;
 
-	rc = filemap_write_and_wait_range(inode->i_mapping, start, end);
+	rc = file_write_and_wait_range(file, start, end);
 	if (rc)
 		return rc;
 	inode_lock(inode);
@@ -2810,12 +2812,12 @@ cifs_writev(struct kiocb *iocb, struct iov_iter *from)
 	struct TCP_Server_Info *server = tlink_tcon(cfile->tlink)->ses->server;
 	ssize_t rc;
 
+	inode_lock(inode);
 	/*
 	 * We need to hold the sem to be sure nobody modifies lock list
 	 * with a brlock that prevents writing.
 	 */
 	down_read(&cinode->lock_sem);
-	inode_lock(inode);
 
 	rc = generic_write_checks(iocb, from);
 	if (rc <= 0)
@@ -2828,11 +2830,11 @@ cifs_writev(struct kiocb *iocb, struct iov_iter *from)
 	else
 		rc = -EACCES;
 out:
+	up_read(&cinode->lock_sem);
 	inode_unlock(inode);
 
 	if (rc > 0)
 		rc = generic_write_sync(iocb, rc);
-	up_read(&cinode->lock_sem);
 	return rc;
 }
 

@@ -256,7 +256,7 @@ static void dccp_v4_err(struct sk_buff *skb, u32 info)
 	sk = __inet_lookup_established(net, &dccp_hashinfo,
 				       iph->daddr, dh->dccph_dport,
 				       iph->saddr, ntohs(dh->dccph_sport),
-				       inet_iif(skb));
+				       inet_iif(skb), 0);
 	if (!sk) {
 		__ICMP_INC_STATS(net, ICMP_MIB_INERRORS);
 		return;
@@ -804,7 +804,7 @@ static int dccp_v4_rcv(struct sk_buff *skb)
 
 lookup:
 	sk = __inet_lookup_skb(&dccp_hashinfo, skb, __dccp_hdr_len(dh),
-			       dh->dccph_sport, dh->dccph_dport, &refcounted);
+			       dh->dccph_sport, dh->dccph_dport, 0, &refcounted);
 	if (!sk) {
 		dccp_pr_debug("failed to look up flow ID in table and "
 			      "get corresponding socket\n");
@@ -1034,33 +1034,34 @@ static int __init dccp_v4_init(void)
 {
 	int err = proto_register(&dccp_v4_prot, 1);
 
-	if (err != 0)
+	if (err)
 		goto out;
-
-	err = inet_add_protocol(&dccp_v4_protocol, IPPROTO_DCCP);
-	if (err != 0)
-		goto out_proto_unregister;
 
 	inet_register_protosw(&dccp_v4_protosw);
 
 	err = register_pernet_subsys(&dccp_v4_ops);
 	if (err)
 		goto out_destroy_ctl_sock;
+
+	err = inet_add_protocol(&dccp_v4_protocol, IPPROTO_DCCP);
+	if (err)
+		goto out_proto_unregister;
+
 out:
 	return err;
+out_proto_unregister:
+	unregister_pernet_subsys(&dccp_v4_ops);
 out_destroy_ctl_sock:
 	inet_unregister_protosw(&dccp_v4_protosw);
-	inet_del_protocol(&dccp_v4_protocol, IPPROTO_DCCP);
-out_proto_unregister:
 	proto_unregister(&dccp_v4_prot);
 	goto out;
 }
 
 static void __exit dccp_v4_exit(void)
 {
+	inet_del_protocol(&dccp_v4_protocol, IPPROTO_DCCP);
 	unregister_pernet_subsys(&dccp_v4_ops);
 	inet_unregister_protosw(&dccp_v4_protosw);
-	inet_del_protocol(&dccp_v4_protocol, IPPROTO_DCCP);
 	proto_unregister(&dccp_v4_prot);
 }
 

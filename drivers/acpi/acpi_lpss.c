@@ -465,7 +465,8 @@ static int acpi_lpss_create_device(struct acpi_device *adev,
 	acpi_dev_free_resource_list(&resource_list);
 
 	if (!pdata->mmio_base) {
-		ret = -ENOMEM;
+		/* Skip the device, but continue the namespace scan. */
+		ret = 0;
 		goto err_out;
 	}
 
@@ -590,7 +591,7 @@ static struct attribute *lpss_attrs[] = {
 	NULL,
 };
 
-static struct attribute_group lpss_attr_group = {
+static const struct attribute_group lpss_attr_group = {
 	.attrs = lpss_attrs,
 	.name = "lpss_ltr",
 };

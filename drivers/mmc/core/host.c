@@ -30,6 +30,7 @@
 #include "host.h"
 #include "slot-gpio.h"
 #include "pwrseq.h"
+#include "sdio_ops.h"
 
 #define cls_dev_to_mmc_host(d)	container_of(d, struct mmc_host, class_dev)
 
@@ -107,6 +108,12 @@ void mmc_retune_hold(struct mmc_host *host)
 {
 	if (!host->hold_retune)
 		host->retune_now = 1;
+	host->hold_retune += 1;
+}
+
+void mmc_retune_hold_now(struct mmc_host *host)
+{
+	host->retune_now = 0;
 	host->hold_retune += 1;
 }
 
@@ -377,6 +384,7 @@ struct mmc_host *mmc_alloc_host(int extra, struct device *dev)
 	spin_lock_init(&host->lock);
 	init_waitqueue_head(&host->wq);
 	INIT_DELAYED_WORK(&host->detect, mmc_rescan);
+	INIT_DELAYED_WORK(&host->sdio_irq_work, sdio_irq_work);
 	setup_timer(&host->retune_timer, mmc_retune_timer, (unsigned long)host);
 
 	/*

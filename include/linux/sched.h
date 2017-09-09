@@ -426,7 +426,7 @@ struct sched_rt_entity {
 	/* rq "owned" by this entity/group: */
 	struct rt_rq			*my_q;
 #endif
-};
+} __randomize_layout;
 
 struct sched_dl_entity {
 	struct rb_node			rb_node;
@@ -439,7 +439,8 @@ struct sched_dl_entity {
 	u64				dl_runtime;	/* Maximum runtime for each instance	*/
 	u64				dl_deadline;	/* Relative deadline of each instance	*/
 	u64				dl_period;	/* Separation of two instances (period) */
-	u64				dl_bw;		/* dl_runtime / dl_deadline		*/
+	u64				dl_bw;		/* dl_runtime / dl_period		*/
+	u64				dl_density;	/* dl_runtime / dl_deadline		*/
 
 	/*
 	 * Actual scheduling parameters. Initialized with the values above,
@@ -463,16 +464,33 @@ struct sched_dl_entity {
 	 *
 	 * @dl_yielded tells if task gave up the CPU before consuming
 	 * all its available runtime during the last job.
+	 *
+	 * @dl_non_contending tells if the task is inactive while still
+	 * contributing to the active utilization. In other words, it
+	 * indicates if the inactive timer has been armed and its handler
+	 * has not been executed yet. This flag is useful to avoid race
+	 * conditions between the inactive timer handler and the wakeup
+	 * code.
 	 */
 	int				dl_throttled;
 	int				dl_boosted;
 	int				dl_yielded;
+	int				dl_non_contending;
 
 	/*
 	 * Bandwidth enforcement timer. Each -deadline task has its
 	 * own bandwidth to be enforced, thus we need one timer per task.
 	 */
 	struct hrtimer			dl_timer;
+
+	/*
+	 * Inactive timer, responsible for decreasing the active utilization
+	 * at the "0-lag time". When a -deadline task blocks, it contributes
+	 * to GRUB's active utilization until the "0-lag time", hence a
+	 * timer is needed to decrease the active utilization at the correct
+	 * time.
+	 */
+	struct hrtimer inactive_timer;
 };
 
 union rcu_special {
@@ -508,6 +526,13 @@ struct task_struct {
 #endif
 	/* -1 unrunnable, 0 runnable, >0 stopped: */
 	volatile long			state;
+
+	/*
+	 * This begins the randomizable portion of task_struct. Only
+	 * scheduling-critical items should be added above here.
+	 */
+	randomized_struct_fields_start
+
 	void				*stack;
 	atomic_t			usage;
 	/* Per task flags (PF_*), defined further below: */
@@ -564,9 +589,10 @@ struct task_struct {
 
 #ifdef CONFIG_TASKS_RCU
 	unsigned long			rcu_tasks_nvcsw;
-	bool				rcu_tasks_holdout;
-	struct list_head		rcu_tasks_holdout_list;
+	u8				rcu_tasks_holdout;
+	u8				rcu_tasks_idx;
 	int				rcu_tasks_idle_cpu;
+	struct list_head		rcu_tasks_holdout_list;
 #endif /* #ifdef CONFIG_TASKS_RCU */
 
 	struct sched_info		sched_info;
@@ -786,8 +812,7 @@ struct task_struct {
 
 #ifdef CONFIG_RT_MUTEXES
 	/* PI waiters blocked on a rt_mutex held by this task: */
-	struct rb_root			pi_waiters;
-	struct rb_node			*pi_waiters_leftmost;
+	struct rb_root_cached		pi_waiters;
 	/* Updated under owner's pi_lock and rq lock */
 	struct task_struct		*pi_top_task;
 	/* Deadlock detection and priority inheritance handling: */
@@ -821,7 +846,17 @@ struct task_struct {
 	int				lockdep_depth;
 	unsigned int			lockdep_recursion;
 	struct held_lock		held_locks[MAX_LOCK_DEPTH];
-	gfp_t				lockdep_reclaim_gfp;
+#endif
+
+#ifdef CONFIG_LOCKDEP_CROSSRELEASE
+#define MAX_XHLOCKS_NR 64UL
+	struct hist_lock *xhlocks; /* Crossrelease history locks */
+	unsigned int xhlock_idx;
+	/* For restoring at history boundaries */
+	unsigned int xhlock_idx_hist[XHLOCK_CTX_NR];
+	unsigned int hist_id;
+	/* For overwrite check at each context exit */
+	unsigned int hist_id_save[XHLOCK_CTX_NR];
 #endif
 
 #ifdef CONFIG_UBSAN
@@ -873,8 +908,9 @@ struct task_struct {
 	/* cg_list protected by css_set_lock and tsk->alloc_lock: */
 	struct list_head		cg_list;
 #endif
-#ifdef CONFIG_INTEL_RDT_A
-	int				closid;
+#ifdef CONFIG_INTEL_RDT
+	u32				closid;
+	u32				rmid;
 #endif
 #ifdef CONFIG_FUTEX
 	struct robust_list_head __user	*robust_list;
@@ -895,7 +931,7 @@ struct task_struct {
 #ifdef CONFIG_NUMA
 	/* Protected by alloc_lock: */
 	struct mempolicy		*mempolicy;
-	short				il_next;
+	short				il_prev;
 	short				pref_node_fork;
 #endif
 #ifdef CONFIG_NUMA_BALANCING
@@ -956,6 +992,7 @@ struct task_struct {
 
 #ifdef CONFIG_FAULT_INJECTION
 	int				make_it_fail;
+	unsigned int			fail_nth;
 #endif
 	/*
 	 * When (nr_dirtied >= nr_dirtied_pause), it's time to call
@@ -1060,6 +1097,13 @@ struct task_struct {
 	/* Used by LSM modules for access restriction: */
 	void				*security;
 #endif
+
+	/*
+	 * New fields for task_struct should be added above here, so that
+	 * they are included in the randomized portion of task_struct.
+	 */
+	randomized_struct_fields_end
+
 	/* CPU-specific state of this task: */
 	struct thread_struct		thread;
 
@@ -1104,8 +1148,6 @@ static inline struct pid *task_session(struct task_struct *task)
  * task_xid_vnr()    : virtual id, i.e. the id seen from the pid namespace of
  *                     current.
  * task_xid_nr_ns()  : id seen from the ns specified;
- *
- * set_task_vxid()   : assigns a virtual id to a task;
  *
  * see also pid_nr() etc in include/linux/pid.h
  */
@@ -1201,6 +1243,19 @@ static inline pid_t task_pgrp_nr(struct task_struct *tsk)
 	return task_pgrp_nr_ns(tsk, &init_pid_ns);
 }
 
+static inline char task_state_to_char(struct task_struct *task)
+{
+	const char stat_nam[] = TASK_STATE_TO_CHAR_STR;
+	unsigned long state = task->state;
+
+	state = state ? __ffs(state) + 1 : 0;
+
+	/* Make sure the string lines up properly with the number of task states: */
+	BUILD_BUG_ON(sizeof(TASK_STATE_TO_CHAR_STR)-1 != ilog2(TASK_STATE_MAX)+1);
+
+	return state < sizeof(stat_nam) - 1 ? stat_nam[state] : '?';
+}
+
 /**
  * is_global_init - check if a task structure is init. Since init
  * is free to have sub-threads we need to check tgid.
@@ -1276,6 +1331,16 @@ extern struct pid *cad_pid;
 /* NOTE: this will return 0 or PF_USED_MATH, it will never return 1 */
 #define tsk_used_math(p)			((p)->flags & PF_USED_MATH)
 #define used_math()				tsk_used_math(current)
+
+static inline bool is_percpu_thread(void)
+{
+#ifdef CONFIG_SMP
+	return (current->flags & PF_NO_SETAFFINITY) &&
+		(current->nr_cpus_allowed  == 1);
+#else
+	return true;
+#endif
+}
 
 /* Per-process atomic flags. */
 #define PFA_NO_NEW_PRIVS		0	/* May not gain new privileges. */

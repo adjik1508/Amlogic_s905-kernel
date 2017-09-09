@@ -917,7 +917,7 @@ static int smack_bprm_set_creds(struct linux_binprm *bprm)
 	struct superblock_smack *sbsp;
 	int rc;
 
-	if (bprm->cred_prepared)
+	if (bprm->called_set_creds)
 		return 0;
 
 	isp = inode->i_security;
@@ -950,35 +950,9 @@ static int smack_bprm_set_creds(struct linux_binprm *bprm)
 	bsp->smk_task = isp->smk_task;
 	bprm->per_clear |= PER_CLEAR_ON_SETID;
 
-	return 0;
-}
-
-/**
- * smack_bprm_committing_creds - Prepare to install the new credentials
- * from bprm.
- *
- * @bprm: binprm for exec
- */
-static void smack_bprm_committing_creds(struct linux_binprm *bprm)
-{
-	struct task_smack *bsp = bprm->cred->security;
-
+	/* Decide if this is a secure exec. */
 	if (bsp->smk_task != bsp->smk_forked)
-		current->pdeath_signal = 0;
-}
-
-/**
- * smack_bprm_secureexec - Return the decision to use secureexec.
- * @bprm: binprm for exec
- *
- * Returns 0 on success.
- */
-static int smack_bprm_secureexec(struct linux_binprm *bprm)
-{
-	struct task_smack *tsp = current_security();
-
-	if (tsp->smk_task != tsp->smk_forked)
-		return 1;
+		bprm->secureexec = 1;
 
 	return 0;
 }
@@ -1915,7 +1889,7 @@ static int smack_file_receive(struct file *file)
 	smk_ad_init(&ad, __func__, LSM_AUDIT_DATA_PATH);
 	smk_ad_setfield_u_fs_path(&ad, file->f_path);
 
-	if (S_ISSOCK(inode->i_mode)) {
+	if (inode->i_sb->s_magic == SOCKFS_MAGIC) {
 		sock = SOCKET_I(inode);
 		ssp = sock->sk->sk_security;
 		tsp = current_security();
@@ -4645,8 +4619,6 @@ static struct security_hook_list smack_hooks[] __lsm_ro_after_init = {
 	LSM_HOOK_INIT(sb_parse_opts_str, smack_parse_opts_str),
 
 	LSM_HOOK_INIT(bprm_set_creds, smack_bprm_set_creds),
-	LSM_HOOK_INIT(bprm_committing_creds, smack_bprm_committing_creds),
-	LSM_HOOK_INIT(bprm_secureexec, smack_bprm_secureexec),
 
 	LSM_HOOK_INIT(inode_alloc_security, smack_inode_alloc_security),
 	LSM_HOOK_INIT(inode_free_security, smack_inode_free_security),

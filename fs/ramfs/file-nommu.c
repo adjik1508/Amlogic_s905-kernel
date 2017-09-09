@@ -50,6 +50,7 @@ const struct file_operations ramfs_file_operations = {
 	.splice_read		= generic_file_splice_read,
 	.splice_write		= iter_file_splice_write,
 	.llseek			= generic_file_llseek,
+	.integrity_read		= generic_file_read_iter,
 };
 
 const struct inode_operations ramfs_file_inode_operations = {
@@ -228,7 +229,7 @@ static unsigned long ramfs_nommu_get_unmapped_area(struct file *file,
 	if (!pages)
 		goto out_free;
 
-	nr = find_get_pages(inode->i_mapping, pgoff, lpages, pages);
+	nr = find_get_pages(inode->i_mapping, &pgoff, lpages, pages);
 	if (nr != lpages)
 		goto out_free_pages; /* leave if some pages were missing */
 

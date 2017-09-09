@@ -24,6 +24,7 @@
 #include <linux/pagemap.h>
 #include <linux/freezer.h>
 #include <linux/sched/signal.h>
+#include <linux/wait_bit.h>
 
 #include <asm/div64.h>
 #include "cifsfs.h"
@@ -982,7 +983,7 @@ retry_iget5_locked:
 		}
 
 		cifs_fattr_to_inode(inode, fattr);
-		if (sb->s_flags & MS_NOATIME)
+		if (sb->s_flags & SB_NOATIME)
 			inode->i_flags |= S_NOATIME | S_NOCMTIME;
 		if (inode->i_state & I_NEW) {
 			inode->i_ino = hash;

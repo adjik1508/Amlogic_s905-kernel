@@ -51,9 +51,7 @@
 #include <linux/key-type.h>
 #include "cifs_spnego.h"
 #include "fscache.h"
-#ifdef CONFIG_CIFS_SMB2
 #include "smb2pdu.h"
-#endif
 
 int cifsFYI = 0;
 bool traceSMB;
@@ -127,7 +125,7 @@ cifs_read_super(struct super_block *sb)
 	tcon = cifs_sb_master_tcon(cifs_sb);
 
 	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_POSIXACL)
-		sb->s_flags |= MS_POSIXACL;
+		sb->s_flags |= SB_POSIXACL;
 
 	if (tcon->ses->capabilities & tcon->ses->server->vals->cap_large_files)
 		sb->s_maxbytes = MAX_LFS_FILESIZE;
@@ -277,9 +275,8 @@ cifs_alloc_inode(struct super_block *sb)
 	cifs_inode->uniqueid = 0;
 	cifs_inode->createtime = 0;
 	cifs_inode->epoch = 0;
-#ifdef CONFIG_CIFS_SMB2
 	generate_random_uuid(cifs_inode->lease_key);
-#endif
+
 	/*
 	 * Can not set i_flags here - they get immediately overwritten to zero
 	 * by the VFS.
@@ -498,7 +495,7 @@ cifs_show_options(struct seq_file *s, struct dentry *root)
 		seq_puts(s, ",cifsacl");
 	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_DYNPERM)
 		seq_puts(s, ",dynperm");
-	if (root->d_sb->s_flags & MS_POSIXACL)
+	if (root->d_sb->s_flags & SB_POSIXACL)
 		seq_puts(s, ",acl");
 	if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_MF_SYMLINKS)
 		seq_puts(s, ",mfsymlinks");
@@ -574,7 +571,7 @@ static int cifs_show_stats(struct seq_file *s, struct dentry *root)
 static int cifs_remount(struct super_block *sb, int *flags, char *data)
 {
 	sync_filesystem(sb);
-	*flags |= MS_NODIRATIME;
+	*flags |= SB_NODIRATIME;
 	return 0;
 }
 
@@ -709,7 +706,7 @@ cifs_do_mount(struct file_system_type *fs_type,
 
 	rc = cifs_mount(cifs_sb, volume_info);
 	if (rc) {
-		if (!(flags & MS_SILENT))
+		if (!(flags & SB_SILENT))
 			cifs_dbg(VFS, "cifs_mount failed w/return code = %d\n",
 				 rc);
 		root = ERR_PTR(rc);
@@ -721,7 +718,7 @@ cifs_do_mount(struct file_system_type *fs_type,
 	mnt_data.flags = flags;
 
 	/* BB should we make this contingent on mount parm? */
-	flags |= MS_NODIRATIME | MS_NOATIME;
+	flags |= SB_NODIRATIME | SB_NOATIME;
 
 	sb = sget(fs_type, cifs_match_super, cifs_set_super, flags, &mnt_data);
 	if (IS_ERR(sb)) {
@@ -740,7 +737,7 @@ cifs_do_mount(struct file_system_type *fs_type,
 			goto out_super;
 		}
 
-		sb->s_flags |= MS_ACTIVE;
+		sb->s_flags |= SB_ACTIVE;
 	}
 
 	root = cifs_get_root(volume_info, sb);
@@ -1213,14 +1210,12 @@ cifs_destroy_inodecache(void)
 static int
 cifs_init_request_bufs(void)
 {
-	size_t max_hdr_size = MAX_CIFS_HDR_SIZE;
-#ifdef CONFIG_CIFS_SMB2
 	/*
 	 * SMB2 maximum header size is bigger than CIFS one - no problems to
 	 * allocate some more bytes for CIFS.
 	 */
-	max_hdr_size = MAX_SMB2_HDR_SIZE;
-#endif
+	size_t max_hdr_size = MAX_SMB2_HDR_SIZE;
+
 	if (CIFSMaxBufSize < 8192) {
 	/* Buffer size can not be smaller than 2 * PATH_MAX since maximum
 	Unicode path name has to fit in any SMB/CIFS path based frames */
@@ -1359,7 +1354,7 @@ init_cifs(void)
 	spin_lock_init(&cifs_tcp_ses_lock);
 	spin_lock_init(&GlobalMid_Lock);
 
-	get_random_bytes(&cifs_lock_secret, sizeof(cifs_lock_secret));
+	cifs_lock_secret = get_random_u32();
 
 	if (cifs_max_pending < 2) {
 		cifs_max_pending = 2;
@@ -1476,12 +1471,10 @@ MODULE_SOFTDEP("pre: hmac");
 MODULE_SOFTDEP("pre: md4");
 MODULE_SOFTDEP("pre: md5");
 MODULE_SOFTDEP("pre: nls");
-#ifdef CONFIG_CIFS_SMB2
 MODULE_SOFTDEP("pre: aes");
 MODULE_SOFTDEP("pre: cmac");
 MODULE_SOFTDEP("pre: sha256");
 MODULE_SOFTDEP("pre: aead2");
 MODULE_SOFTDEP("pre: ccm");
-#endif /* CONFIG_CIFS_SMB2 */
 module_init(init_cifs)
 module_exit(exit_cifs)

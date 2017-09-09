@@ -8,6 +8,10 @@
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
  * version 2, as published by the Free Software Foundation.
+ *
+ * Contact Information: Nehal Shah <Nehal-bakulchandra.Shah@amd.com>
+ *			Shyam Sundar S K <Shyam-sundar.S-k@amd.com>
+ *
  */
 
 #include <linux/err.h>
@@ -756,8 +760,8 @@ static int amd_gpio_probe(struct platform_device *pdev)
 
 	irq_base = platform_get_irq(pdev, 0);
 	if (irq_base < 0) {
-		dev_err(&pdev->dev, "Failed to get gpio IRQ.\n");
-		return -EINVAL;
+		dev_err(&pdev->dev, "Failed to get gpio IRQ: %d\n", irq_base);
+		return irq_base;
 	}
 
 	gpio_dev->pdev = pdev;

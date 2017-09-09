@@ -319,9 +319,6 @@ __visible struct pv_irq_ops pv_irq_ops = {
 	.irq_enable = __PV_IS_CALLEE_SAVE(native_irq_enable),
 	.safe_halt = native_safe_halt,
 	.halt = native_halt,
-#ifdef CONFIG_X86_64
-	.adjust_exception_frame = paravirt_nop,
-#endif
 };
 
 __visible struct pv_cpu_ops pv_cpu_ops = {
@@ -391,7 +388,7 @@ struct pv_mmu_ops pv_mmu_ops __ro_after_init = {
 
 	.read_cr2 = native_read_cr2,
 	.write_cr2 = native_write_cr2,
-	.read_cr3 = native_read_cr3,
+	.read_cr3 = __native_read_cr3,
 	.write_cr3 = native_write_cr3,
 
 	.flush_tlb_user = native_flush_tlb,

@@ -117,12 +117,16 @@
 	};
 };
 
+&clkc_AO {
+	compatible = "amlogic,meson-gxm-aoclkc", "amlogic,meson-gx-aoclkc";
+};
+
 &apb {
 	usb2_phy2: phy@78040 {
 		compatible = "amlogic,meson-gxl-usb2-phy";
 		#phy-cells = <0>;
 		reg = <0x0 0x78040 0x0 0x20>;
-		status = "disabled";
+		status = "okay";
 	};
 };
 

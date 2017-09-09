@@ -40,12 +40,14 @@
 #define APPRAISE	0x0004	/* same as IMA_APPRAISE */
 #define DONT_APPRAISE	0x0008
 #define AUDIT		0x0040
+#define DONT_FAILSAFE	0x0400
 
 #define INVALID_PCR(a) (((a) < 0) || \
 	(a) >= (FIELD_SIZEOF(struct integrity_iint_cache, measured_pcrs) * 8))
 
 int ima_policy_flag;
 static int temp_ima_appraise;
+static bool temp_failsafe = 1;
 
 #define MAX_LSM_RULES 6
 enum lsm_rule_types { LSM_OBJ_USER, LSM_OBJ_ROLE, LSM_OBJ_TYPE,
@@ -61,7 +63,7 @@ struct ima_rule_entry {
 	enum ima_hooks func;
 	int mask;
 	unsigned long fsmagic;
-	u8 fsuuid[16];
+	uuid_t fsuuid;
 	kuid_t uid;
 	kuid_t fowner;
 	bool (*uid_op)(kuid_t, kuid_t);    /* Handlers for operators       */
@@ -95,6 +97,8 @@ static struct ima_rule_entry dont_measure_rules[] __ro_after_init = {
 	{.action = DONT_MEASURE, .fsmagic = SECURITYFS_MAGIC, .flags = IMA_FSMAGIC},
 	{.action = DONT_MEASURE, .fsmagic = SELINUX_MAGIC, .flags = IMA_FSMAGIC},
 	{.action = DONT_MEASURE, .fsmagic = CGROUP_SUPER_MAGIC,
+	 .flags = IMA_FSMAGIC},
+	{.action = DONT_MEASURE, .fsmagic = CGROUP2_SUPER_MAGIC,
 	 .flags = IMA_FSMAGIC},
 	{.action = DONT_MEASURE, .fsmagic = NSFS_MAGIC, .flags = IMA_FSMAGIC}
 };
@@ -139,6 +143,7 @@ static struct ima_rule_entry default_appraise_rules[] __ro_after_init = {
 	{.action = DONT_APPRAISE, .fsmagic = SELINUX_MAGIC, .flags = IMA_FSMAGIC},
 	{.action = DONT_APPRAISE, .fsmagic = NSFS_MAGIC, .flags = IMA_FSMAGIC},
 	{.action = DONT_APPRAISE, .fsmagic = CGROUP_SUPER_MAGIC, .flags = IMA_FSMAGIC},
+	{.action = DONT_APPRAISE, .fsmagic = CGROUP2_SUPER_MAGIC, .flags = IMA_FSMAGIC},
 #ifdef CONFIG_IMA_WRITE_POLICY
 	{.action = APPRAISE, .func = POLICY_CHECK,
 	.flags = IMA_FUNC | IMA_DIGSIG_REQUIRED},
@@ -151,6 +156,21 @@ static struct ima_rule_entry default_appraise_rules[] __ro_after_init = {
 	{.action = APPRAISE, .fowner = GLOBAL_ROOT_UID, .fowner_op = &uid_eq,
 	 .flags = IMA_FOWNER | IMA_DIGSIG_REQUIRED},
 #endif
+};
+
+static struct ima_rule_entry secure_boot_rules[] __ro_after_init = {
+	{.action = APPRAISE, .func = MODULE_CHECK,
+	 .flags = IMA_FUNC | IMA_DIGSIG_REQUIRED},
+	{.action = APPRAISE, .func = FIRMWARE_CHECK,
+	 .flags = IMA_FUNC | IMA_DIGSIG_REQUIRED},
+	{.action = APPRAISE, .func = KEXEC_KERNEL_CHECK,
+	 .flags = IMA_FUNC | IMA_DIGSIG_REQUIRED},
+	{.action = APPRAISE, .func = POLICY_CHECK,
+	 .flags = IMA_FUNC | IMA_DIGSIG_REQUIRED},
+};
+
+static struct ima_rule_entry dont_failsafe_rules[] __ro_after_init = {
+	{.action = DONT_FAILSAFE}
 };
 
 static LIST_HEAD(ima_default_rules);
@@ -170,19 +190,32 @@ static int __init default_measure_policy_setup(char *str)
 }
 __setup("ima_tcb", default_measure_policy_setup);
 
+static bool ima_use_appraise_tcb __initdata;
+static bool ima_use_secure_boot __initdata;
+static bool ima_use_dont_failsafe __initdata;
 static int __init policy_setup(char *str)
 {
-	if (ima_policy)
-		return 1;
+	char *p;
 
-	if (strcmp(str, "tcb") == 0)
-		ima_policy = DEFAULT_TCB;
+	while ((p = strsep(&str, " |\n")) != NULL) {
+		if (*p == ' ')
+			continue;
+		if ((strcmp(p, "tcb") == 0) && !ima_policy)
+			ima_policy = DEFAULT_TCB;
+		else if (strcmp(p, "appraise_tcb") == 0)
+			ima_use_appraise_tcb = 1;
+		else if (strcmp(p, "secure_boot") == 0)
+			ima_use_secure_boot = 1;
+		else if (strcmp(p, "fs_unsafe") == 0) {
+			ima_use_dont_failsafe = 1;
+			set_failsafe(0);
+		}
+	}
 
 	return 1;
 }
 __setup("ima_policy=", policy_setup);
 
-static bool ima_use_appraise_tcb __initdata;
 static int __init default_appraise_policy_setup(char *str)
 {
 	ima_use_appraise_tcb = 1;
@@ -244,7 +277,7 @@ static bool ima_match_rules(struct ima_rule_entry *rule, struct inode *inode,
 	    && rule->fsmagic != inode->i_sb->s_magic)
 		return false;
 	if ((rule->flags & IMA_FSUUID) &&
-	    memcmp(rule->fsuuid, inode->i_sb->s_uuid, sizeof(rule->fsuuid)))
+	    !uuid_equal(&rule->fsuuid, &inode->i_sb->s_uuid))
 		return false;
 	if ((rule->flags & IMA_UID) && !rule->uid_op(cred->uid, rule->uid))
 		return false;
@@ -405,12 +438,14 @@ void ima_update_policy_flag(void)
  */
 void __init ima_init_policy(void)
 {
-	int i, measure_entries, appraise_entries;
+	int i, measure_entries, appraise_entries, secure_boot_entries;
 
 	/* if !ima_policy set entries = 0 so we load NO default rules */
 	measure_entries = ima_policy ? ARRAY_SIZE(dont_measure_rules) : 0;
 	appraise_entries = ima_use_appraise_tcb ?
 			 ARRAY_SIZE(default_appraise_rules) : 0;
+	secure_boot_entries = ima_use_secure_boot ?
+			ARRAY_SIZE(secure_boot_rules) : 0;
 
 	for (i = 0; i < measure_entries; i++)
 		list_add_tail(&dont_measure_rules[i].list, &ima_default_rules);
@@ -429,12 +464,23 @@ void __init ima_init_policy(void)
 		break;
 	}
 
+	/*
+	 * Insert the appraise rules requiring file signatures, prior to
+	 * any other appraise rules.
+	 */
+	for (i = 0; i < secure_boot_entries; i++)
+		list_add_tail(&secure_boot_rules[i].list,
+			      &ima_default_rules);
+
 	for (i = 0; i < appraise_entries; i++) {
 		list_add_tail(&default_appraise_rules[i].list,
 			      &ima_default_rules);
 		if (default_appraise_rules[i].func == POLICY_CHECK)
 			temp_ima_appraise |= IMA_APPRAISE_POLICY;
 	}
+
+	if (ima_use_dont_failsafe)
+		list_add_tail(&dont_failsafe_rules[0].list, &ima_default_rules);
 
 	ima_rules = &ima_default_rules;
 	ima_update_policy_flag();
@@ -481,6 +527,9 @@ void ima_update_policy(void)
 	if (ima_rules != policy) {
 		ima_policy_flag = 0;
 		ima_rules = policy;
+
+		/* Only update on initial policy replacement, not append */
+		set_failsafe(temp_failsafe);
 	}
 	ima_update_policy_flag();
 }
@@ -497,7 +546,7 @@ enum {
 	Opt_uid_gt, Opt_euid_gt, Opt_fowner_gt,
 	Opt_uid_lt, Opt_euid_lt, Opt_fowner_lt,
 	Opt_appraise_type, Opt_permit_directio,
-	Opt_pcr
+	Opt_pcr, Opt_dont_failsafe
 };
 
 static match_table_t policy_tokens = {
@@ -528,6 +577,7 @@ static match_table_t policy_tokens = {
 	{Opt_appraise_type, "appraise_type=%s"},
 	{Opt_permit_directio, "permit_directio"},
 	{Opt_pcr, "pcr=%s"},
+	{Opt_dont_failsafe, "dont_failsafe"},
 	{Opt_err, NULL}
 };
 
@@ -598,6 +648,11 @@ static int ima_parse_rule(char *rule, struct ima_rule_entry *entry)
 		if ((*p == '\0') || (*p == ' ') || (*p == '\t'))
 			continue;
 		token = match_token(p, policy_tokens, args);
+		if (entry->action == DONT_FAILSAFE) {
+			/* no args permitted, force invalid rule */
+			token = Opt_dont_failsafe;
+		}
+
 		switch (token) {
 		case Opt_measure:
 			ima_log_string(ab, "action", "measure");
@@ -638,6 +693,19 @@ static int ima_parse_rule(char *rule, struct ima_rule_entry *entry)
 				result = -EINVAL;
 
 			entry->action = AUDIT;
+			break;
+		case Opt_dont_failsafe:
+			ima_log_string(ab, "action", "dont_failsafe");
+
+			if (entry->action != UNKNOWN)
+				result = -EINVAL;
+
+			/* Permit on initial policy replacement only */
+			if (ima_rules != &ima_policy_rules)
+				temp_failsafe = 0;
+			else
+				result = -EINVAL;
+			entry->action = DONT_FAILSAFE;
 			break;
 		case Opt_func:
 			ima_log_string(ab, "func", args[0].from);
@@ -711,14 +779,12 @@ static int ima_parse_rule(char *rule, struct ima_rule_entry *entry)
 		case Opt_fsuuid:
 			ima_log_string(ab, "fsuuid", args[0].from);
 
-			if (memchr_inv(entry->fsuuid, 0x00,
-				       sizeof(entry->fsuuid))) {
+			if (uuid_is_null(&entry->fsuuid)) {
 				result = -EINVAL;
 				break;
 			}
 
-			result = blk_part_pack_uuid(args[0].from,
-						    entry->fsuuid);
+			result = uuid_parse(args[0].from, &entry->fsuuid);
 			if (!result)
 				entry->flags |= IMA_FSUUID;
 			break;
@@ -919,6 +985,7 @@ void ima_delete_rules(void)
 	int i;
 
 	temp_ima_appraise = 0;
+	temp_failsafe = 1;
 	list_for_each_entry_safe(entry, tmp, &ima_temp_rules, list) {
 		for (i = 0; i < MAX_LSM_RULES; i++)
 			kfree(entry->lsm[i].args_p);
@@ -933,30 +1000,17 @@ enum {
 	mask_exec = 0, mask_write, mask_read, mask_append
 };
 
-static char *mask_tokens[] = {
+static const char *const mask_tokens[] = {
 	"MAY_EXEC",
 	"MAY_WRITE",
 	"MAY_READ",
 	"MAY_APPEND"
 };
 
-enum {
-	func_file = 0, func_mmap, func_bprm,
-	func_module, func_firmware, func_post,
-	func_kexec_kernel, func_kexec_initramfs,
-	func_policy
-};
+#define __ima_hook_stringify(str)	(#str),
 
-static char *func_tokens[] = {
-	"FILE_CHECK",
-	"MMAP_CHECK",
-	"BPRM_CHECK",
-	"MODULE_CHECK",
-	"FIRMWARE_CHECK",
-	"POST_SETATTR",
-	"KEXEC_KERNEL_CHECK",
-	"KEXEC_INITRAMFS_CHECK",
-	"POLICY_CHECK"
+static const char *const func_tokens[] = {
+	__ima_hooks(__ima_hook_stringify)
 };
 
 void *ima_policy_start(struct seq_file *m, loff_t *pos)
@@ -993,49 +1047,16 @@ void ima_policy_stop(struct seq_file *m, void *v)
 
 #define pt(token)	policy_tokens[token + Opt_err].pattern
 #define mt(token)	mask_tokens[token]
-#define ft(token)	func_tokens[token]
 
 /*
  * policy_func_show - display the ima_hooks policy rule
  */
 static void policy_func_show(struct seq_file *m, enum ima_hooks func)
 {
-	char tbuf[64] = {0,};
-
-	switch (func) {
-	case FILE_CHECK:
-		seq_printf(m, pt(Opt_func), ft(func_file));
-		break;
-	case MMAP_CHECK:
-		seq_printf(m, pt(Opt_func), ft(func_mmap));
-		break;
-	case BPRM_CHECK:
-		seq_printf(m, pt(Opt_func), ft(func_bprm));
-		break;
-	case MODULE_CHECK:
-		seq_printf(m, pt(Opt_func), ft(func_module));
-		break;
-	case FIRMWARE_CHECK:
-		seq_printf(m, pt(Opt_func), ft(func_firmware));
-		break;
-	case POST_SETATTR:
-		seq_printf(m, pt(Opt_func), ft(func_post));
-		break;
-	case KEXEC_KERNEL_CHECK:
-		seq_printf(m, pt(Opt_func), ft(func_kexec_kernel));
-		break;
-	case KEXEC_INITRAMFS_CHECK:
-		seq_printf(m, pt(Opt_func), ft(func_kexec_initramfs));
-		break;
-	case POLICY_CHECK:
-		seq_printf(m, pt(Opt_func), ft(func_policy));
-		break;
-	default:
-		snprintf(tbuf, sizeof(tbuf), "%d", func);
-		seq_printf(m, pt(Opt_func), tbuf);
-		break;
-	}
-	seq_puts(m, " ");
+	if (func > 0 && func < MAX_CHECK)
+		seq_printf(m, "func=%s ", func_tokens[func]);
+	else
+		seq_printf(m, "func=%d ", func);
 }
 
 int ima_policy_show(struct seq_file *m, void *v)
@@ -1056,6 +1077,8 @@ int ima_policy_show(struct seq_file *m, void *v)
 		seq_puts(m, pt(Opt_dont_appraise));
 	if (entry->action & AUDIT)
 		seq_puts(m, pt(Opt_audit));
+	if (entry->action & DONT_FAILSAFE)
+		seq_puts(m, pt(Opt_dont_failsafe));
 
 	seq_puts(m, " ");
 
@@ -1087,7 +1110,7 @@ int ima_policy_show(struct seq_file *m, void *v)
 	}
 
 	if (entry->flags & IMA_FSUUID) {
-		seq_printf(m, "fsuuid=%pU", entry->fsuuid);
+		seq_printf(m, "fsuuid=%pU", &entry->fsuuid);
 		seq_puts(m, " ");
 	}
 

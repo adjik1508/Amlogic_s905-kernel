@@ -82,8 +82,48 @@
 				};
 			};
 		};
+
+		sound {
+			compatible = "simple-audio-card";
+			simple-audio-card,name = "meson-gxl";
+
+			simple-audio-card,dai-link@0 {
+				format = "i2s";
+				mclk-fs = <256>;
+				bitclock-master = <&i2s_dai>;
+				frame-master = <&i2s_dai>;
+
+				plat {
+					sound-dai = <&aiu_i2s_dma>;
+				};
+
+				cpu {
+					sound-dai = <&i2s_dai>;
+				};
+
+				codec {
+					sound-dai = <&hdmi_tx>;
+				};
+			};
+		};
+
 	};
 };
+
+&audio {
+	status = "okay";
+};
+
+&aiu_i2s_dma {
+	status = "okay";
+};
+
+&i2s_dai {
+	pinctrl-0 = <&i2s_am_clk_pins>, <&i2s_out_ao_clk_pins>,
+		    <&i2s_out_lr_clk_pins>, <&i2s_out_ch01_pins>;
+	pinctrl-names = "default";
+	status = "okay";
+ };
 
 &apb {
 	usb2_phy0: phy@78000 {
@@ -258,6 +298,52 @@
 	};
 };
 
+&cec_AO {
+	clocks = <&clkc_AO CLKID_AO_CEC_32K>;
+	clock-names = "core";
+};
+
+&clkc_AO {
+	compatible = "amlogic,meson-gxl-aoclkc", "amlogic,meson-gx-aoclkc";
+};
+
+&hdmi_tx {
+	compatible = "amlogic,meson-gxl-dw-hdmi", "amlogic,meson-gx-dw-hdmi";
+	resets = <&reset RESET_HDMITX_CAPB3>,
+		 <&reset RESET_HDMI_SYSTEM_RESET>,
+		 <&reset RESET_HDMI_TX>;
+	reset-names = "hdmitx_apb", "hdmitx", "hdmitx_phy";
+	clocks = <&clkc CLKID_HDMI_PCLK>,
+		 <&clkc CLKID_CLK81>,
+		 <&clkc CLKID_GCLK_VENCI_INT0>;
+	clock-names = "isfr", "iahb", "venci", "iahb", "venci";
+	#sound-dai-cells = <0>;
+};
+
+&hiubus {
+	clkc: clock-controller@0 {
+		compatible = "amlogic,gxl-clkc", "amlogic,gxbb-clkc";
+		#clock-cells = <1>;
+		reg = <0x0 0x0 0x0 0x3db>;
+	};
+};
+
+&i2c_A {
+	clocks = <&clkc CLKID_I2C>;
+};
+
+&i2c_AO {
+	clocks = <&clkc CLKID_AO_I2C>;
+};
+
+&i2c_B {
+	clocks = <&clkc CLKID_I2C>;
+};
+
+&i2c_C {
+	clocks = <&clkc CLKID_I2C>;
+};
+
 &audio {
 	clocks = <&clkc CLKID_AIU>,
 		 <&clkc CLKID_AIU_GLUE>,
@@ -288,12 +374,12 @@
 		gpio: bank@4b0 {
 			reg = <0x0 0x004b0 0x0 0x28>,
 			      <0x0 0x004e8 0x0 0x14>,
-			      <0x0 0x00120 0x0 0x14>,
+			      <0x0 0x00520 0x0 0x14>,
 			      <0x0 0x00430 0x0 0x40>;
 			reg-names = "mux", "pull", "pull-enable", "gpio";
 			gpio-controller;
 			#gpio-cells = <2>;
-			gpio-ranges = <&pinctrl_periphs 0 14 101>;
+			gpio-ranges = <&pinctrl_periphs 0 10 101>;
 		};
 
 		emmc_pins: emmc {
@@ -303,6 +389,17 @@
 				       "emmc_clk",
 				       "emmc_ds";
 				function = "emmc";
+			};
+		};
+
+		emmc_clk_gate_pins: emmc_clk_gate {
+			mux {
+				groups = "BOOT_8";
+				function = "gpio_periphs";
+			};
+			cfg-pull-down {
+				pins = "BOOT_8";
+				bias-pull-down;
 			};
 		};
 
@@ -344,6 +441,17 @@
 			};
 		};
 
+		sdcard_clk_gate_pins: sdcard_clk_gate {
+			mux {
+				groups = "CARD_2";
+				function = "gpio_periphs";
+			};
+			cfg-pull-down {
+				pins = "CARD_2";
+				bias-pull-down;
+			};
+		};
+
 		sdio_pins: sdio {
 			mux {
 				groups = "sdio_d0",
@@ -353,6 +461,17 @@
 				       "sdio_cmd",
 				       "sdio_clk";
 				function = "sdio";
+			};
+		};
+
+		sdio_clk_gate_pins: sdio_clk_gate {
+			mux {
+				groups = "GPIOX_4";
+				function = "gpio_periphs";
+			};
+			cfg-pull-down {
+				pins = "GPIOX_4";
+				bias-pull-down;
 			};
 		};
 
@@ -616,30 +735,6 @@
 	};
 };
 
-&hiubus {
-	clkc: clock-controller@0 {
-		compatible = "amlogic,gxl-clkc", "amlogic,gxbb-clkc";
-		#clock-cells = <1>;
-		reg = <0x0 0x0 0x0 0x3db>;
-	};
-};
-
-&i2c_A {
-	clocks = <&clkc CLKID_I2C>;
-};
-
-&i2c_AO {
-	clocks = <&clkc CLKID_AO_I2C>;
-};
-
-&i2c_B {
-	clocks = <&clkc CLKID_I2C>;
-};
-
-&i2c_C {
-	clocks = <&clkc CLKID_I2C>;
-};
-
 &i2s_dai {
 	clocks = <&clkc CLKID_I2S_OUT>,
 		 <&clkc CLKID_MIXER_IFACE>,
@@ -660,23 +755,30 @@
 
 &sd_emmc_a {
 	clocks = <&clkc CLKID_SD_EMMC_A>,
-		 <&xtal>,
+		 <&clkc CLKID_SD_EMMC_A_CLK0>,
 		 <&clkc CLKID_FCLK_DIV2>;
 	clock-names = "core", "clkin0", "clkin1";
 };
 
 &sd_emmc_b {
 	clocks = <&clkc CLKID_SD_EMMC_B>,
-		 <&xtal>,
+		 <&clkc CLKID_SD_EMMC_B_CLK0>,
 		 <&clkc CLKID_FCLK_DIV2>;
        clock-names = "core", "clkin0", "clkin1";
 };
 
 &sd_emmc_c {
 	clocks = <&clkc CLKID_SD_EMMC_C>,
-		 <&xtal>,
+		 <&clkc CLKID_SD_EMMC_C_CLK0>,
 		 <&clkc CLKID_FCLK_DIV2>;
 	clock-names = "core", "clkin0", "clkin1";
+};
+
+&spicc {
+	clocks = <&clkc CLKID_SPICC>;
+	clock-names = "core";
+	resets = <&reset RESET_PERIPHS_SPICC>;
+	num-cs = <1>;
 };
 
 &spdif_dai {
@@ -692,24 +794,31 @@
 	clocks = <&clkc CLKID_SPI>;
 };
 
+&uart_A {
+	clocks = <&xtal>, <&clkc CLKID_UART0>, <&xtal>;
+	clock-names = "xtal", "core", "baud";
+};
+
+&uart_AO {
+	clocks = <&xtal>, <&clkc CLKID_CLK81>, <&xtal>;
+	clock-names = "xtal", "pclk", "baud";
+};
+
+&uart_AO_B {
+	clocks = <&xtal>, <&clkc CLKID_CLK81>, <&xtal>;
+	clock-names = "xtal", "pclk", "baud";
+};
+
+&uart_B {
+	clocks = <&xtal>, <&clkc CLKID_UART1>, <&xtal>;
+	clock-names = "xtal", "core", "baud";
+};
+
+&uart_C {
+	clocks = <&xtal>, <&clkc CLKID_UART2>, <&xtal>;
+	clock-names = "xtal", "core", "baud";
+};
+
 &vpu {
 	compatible = "amlogic,meson-gxl-vpu", "amlogic,meson-gx-vpu";
-};
-
-&cec_AO {
-	clocks = <&clkc_AO CLKID_AO_CEC_32K>;
-	clock-names = "core";
-};
-
-&hdmi_tx {
-	compatible = "amlogic,meson-gxl-dw-hdmi", "amlogic,meson-gx-dw-hdmi";
-	resets = <&reset RESET_HDMITX_CAPB3>,
-		 <&reset RESET_HDMI_SYSTEM_RESET>,
-		 <&reset RESET_HDMI_TX>;
-	reset-names = "hdmitx_apb", "hdmitx", "hdmitx_phy";
-	clocks = <&clkc CLKID_HDMI_PCLK>,
-		 <&clkc CLKID_CLK81>,
-		 <&clkc CLKID_GCLK_VENCI_INT0>;
-	clock-names = "isfr", "iahb", "venci", "iahb", "venci";
-	#sound-dai-cells = <0>;
 };

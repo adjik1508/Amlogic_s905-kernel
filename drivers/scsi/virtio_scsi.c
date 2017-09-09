@@ -547,7 +547,6 @@ static int virtscsi_queuecommand(struct virtio_scsi *vscsi,
 	dev_dbg(&sc->device->sdev_gendev,
 		"cmd %p CDB: %#02x\n", sc, sc->cmnd[0]);
 
-	memset(cmd, 0, sizeof(*cmd));
 	cmd->sc = sc;
 
 	BUG_ON(sc->cmd_len > VIRTIO_SCSI_CDB_SIZE);
@@ -819,7 +818,6 @@ static struct scsi_host_template virtscsi_host_template_single = {
 	.eh_timed_out = virtscsi_eh_timed_out,
 	.slave_alloc = virtscsi_device_alloc,
 
-	.can_queue = 1024,
 	.dma_boundary = UINT_MAX,
 	.use_clustering = ENABLE_CLUSTERING,
 	.target_alloc = virtscsi_target_alloc,
@@ -840,7 +838,6 @@ static struct scsi_host_template virtscsi_host_template_multi = {
 	.eh_timed_out = virtscsi_eh_timed_out,
 	.slave_alloc = virtscsi_device_alloc,
 
-	.can_queue = 1024,
 	.dma_boundary = UINT_MAX,
 	.use_clustering = ENABLE_CLUSTERING,
 	.target_alloc = virtscsi_target_alloc,
@@ -972,6 +969,8 @@ static int virtscsi_probe(struct virtio_device *vdev)
 	err = virtscsi_init(vdev, vscsi);
 	if (err)
 		goto virtscsi_init_failed;
+
+	shost->can_queue = virtqueue_get_vring_size(vscsi->req_vqs[0].vq);
 
 	cmd_per_lun = virtscsi_config_get(vdev, cmd_per_lun) ?: 1;
 	shost->cmd_per_lun = min_t(u32, cmd_per_lun, shost->can_queue);

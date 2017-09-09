@@ -457,7 +457,7 @@ int fuse_fsync_common(struct file *file, loff_t start, loff_t end,
 	 * wait for all outstanding writes, before sending the FSYNC
 	 * request.
 	 */
-	err = filemap_write_and_wait_range(inode->i_mapping, start, end);
+	err = file_write_and_wait_range(file, start, end);
 	if (err)
 		goto out;
 
@@ -465,10 +465,10 @@ int fuse_fsync_common(struct file *file, loff_t start, loff_t end,
 
 	/*
 	 * Due to implementation of fuse writeback
-	 * filemap_write_and_wait_range() does not catch errors.
+	 * file_write_and_wait_range() does not catch errors.
 	 * We have to do this directly after fuse_sync_writes()
 	 */
-	err = filemap_check_errors(file->f_mapping);
+	err = file_check_and_advance_wb_err(file);
 	if (err)
 		goto out;
 
@@ -609,7 +609,7 @@ static void fuse_aio_complete_req(struct fuse_conn *fc, struct fuse_req *req)
 	struct fuse_io_priv *io = req->io;
 	ssize_t pos = -1;
 
-	fuse_release_user_pages(req, !io->write);
+	fuse_release_user_pages(req, io->should_dirty);
 
 	if (io->write) {
 		if (req->misc.write.in.size != req->misc.write.out.size)
@@ -1316,7 +1316,6 @@ ssize_t fuse_direct_io(struct fuse_io_priv *io, struct iov_iter *iter,
 		       loff_t *ppos, int flags)
 {
 	int write = flags & FUSE_DIO_WRITE;
-	bool should_dirty = !write && iter_is_iovec(iter);
 	int cuse = flags & FUSE_DIO_CUSE;
 	struct file *file = io->file;
 	struct inode *inode = file->f_mapping->host;
@@ -1346,6 +1345,7 @@ ssize_t fuse_direct_io(struct fuse_io_priv *io, struct iov_iter *iter,
 			inode_unlock(inode);
 	}
 
+	io->should_dirty = !write && iter_is_iovec(iter);
 	while (count) {
 		size_t nres;
 		fl_owner_t owner = current->files;
@@ -1360,7 +1360,7 @@ ssize_t fuse_direct_io(struct fuse_io_priv *io, struct iov_iter *iter,
 			nres = fuse_send_read(req, io, pos, nbytes, owner);
 
 		if (!io->async)
-			fuse_release_user_pages(req, should_dirty);
+			fuse_release_user_pages(req, io->should_dirty);
 		if (req->out.h.error) {
 			err = req->out.h.error;
 			break;
@@ -1669,6 +1669,7 @@ err_nofile:
 err_free:
 	fuse_request_free(req);
 err:
+	mapping_set_error(page->mapping, error);
 	end_page_writeback(page);
 	return error;
 }
@@ -2101,11 +2102,11 @@ static int convert_fuse_file_lock(struct fuse_conn *fc,
 		fl->fl_end = ffl->end;
 
 		/*
-		 * Convert pid into the caller's pid namespace. If the pid
-		 * does not map into the namespace fl_pid will get set to 0.
+		 * Convert pid into init's pid namespace.  The locks API will
+		 * translate it into the caller's pid namespace.
 		 */
 		rcu_read_lock();
-		fl->fl_pid = pid_vnr(find_pid_ns(ffl->pid, fc->pid_ns));
+		fl->fl_pid = pid_nr_ns(find_pid_ns(ffl->pid, fc->pid_ns), &init_pid_ns);
 		rcu_read_unlock();
 		break;
 

@@ -142,6 +142,11 @@ static const unsigned int nor_q_pins[]		= { PIN(BOOT_12, EE_OFF) };
 static const unsigned int nor_c_pins[]		= { PIN(BOOT_13, EE_OFF) };
 static const unsigned int nor_cs_pins[]		= { PIN(BOOT_15, EE_OFF) };
 
+static const unsigned int spi_mosi_pins[]	= { PIN(GPIOX_8, EE_OFF) };
+static const unsigned int spi_miso_pins[]	= { PIN(GPIOX_9, EE_OFF) };
+static const unsigned int spi_ss0_pins[]	= { PIN(GPIOX_10, EE_OFF) };
+static const unsigned int spi_sclk_pins[]	= { PIN(GPIOX_11, EE_OFF) };
+
 static const unsigned int sdcard_d0_pins[] = { PIN(CARD_1, EE_OFF) };
 static const unsigned int sdcard_d1_pins[] = { PIN(CARD_0, EE_OFF) };
 static const unsigned int sdcard_d2_pins[] = { PIN(CARD_5, EE_OFF) };
@@ -237,6 +242,25 @@ static const unsigned int spdif_out_h_pins[]	= { PIN(GPIOH_4, EE_OFF) };
 
 static const unsigned int eth_link_led_pins[]	= { PIN(GPIOZ_14, EE_OFF) };
 static const unsigned int eth_act_led_pins[]	= { PIN(GPIOZ_15, EE_OFF) };
+
+static const unsigned int tsin_a_d0_pins[]	= { PIN(GPIODV_0, EE_OFF) };
+static const unsigned int tsin_a_d0_x_pins[]	= { PIN(GPIOX_10, EE_OFF) };
+static const unsigned int tsin_a_clk_pins[]	= { PIN(GPIODV_8, EE_OFF) };
+static const unsigned int tsin_a_clk_x_pins[]	= { PIN(GPIOX_11, EE_OFF) };
+static const unsigned int tsin_a_sop_pins[]	= { PIN(GPIODV_9, EE_OFF) };
+static const unsigned int tsin_a_sop_x_pins[]	= { PIN(GPIOX_8, EE_OFF) };
+static const unsigned int tsin_a_d_valid_pins[]	= { PIN(GPIODV_10, EE_OFF) };
+static const unsigned int tsin_a_d_valid_x_pins[] = { PIN(GPIOX_9, EE_OFF) };
+static const unsigned int tsin_a_fail_pins[]	= { PIN(GPIODV_11, EE_OFF) };
+static const unsigned int tsin_a_dp_pins[] = {
+	PIN(GPIODV_1, EE_OFF),
+	PIN(GPIODV_2, EE_OFF),
+	PIN(GPIODV_3, EE_OFF),
+	PIN(GPIODV_4, EE_OFF),
+	PIN(GPIODV_5, EE_OFF),
+	PIN(GPIODV_6, EE_OFF),
+	PIN(GPIODV_7, EE_OFF),
+};
 
 static const struct pinctrl_pin_desc meson_gxl_aobus_pins[] = {
 	MESON_PIN(GPIOAO_0, 0),
@@ -412,6 +436,14 @@ static struct meson_pmx_group meson_gxl_periphs_groups[] = {
 	GROUP(pwm_a,		5,	25),
 	GROUP(pwm_e,		5,	15),
 	GROUP(pwm_f_x,		5,	14),
+	GROUP(spi_mosi,		5,	3),
+	GROUP(spi_miso,		5,	2),
+	GROUP(spi_ss0,		5,	1),
+	GROUP(spi_sclk,		5,	0),
+	GROUP(tsin_a_sop_x,	6,	3),
+	GROUP(tsin_a_d_valid_x,	6,	2),
+	GROUP(tsin_a_d0_x,	6,	1),
+	GROUP(tsin_a_clk_x,	6,	0),
 
 	/* Bank Z */
 	GROUP(eth_mdio,		4,	23),
@@ -460,6 +492,12 @@ static struct meson_pmx_group meson_gxl_periphs_groups[] = {
 	GROUP(i2c_sck_c,	1,	10),
 	GROUP(pwm_b,		2,	11),
 	GROUP(pwm_d,		2,	12),
+	GROUP(tsin_a_d0,	2,	4),
+	GROUP(tsin_a_dp,	2,	3),
+	GROUP(tsin_a_clk,	2,	2),
+	GROUP(tsin_a_sop,	2,	1),
+	GROUP(tsin_a_d_valid,	2,	0),
+	GROUP(tsin_a_fail,	1,	31),
 
 	/* Bank BOOT */
 	GROUP(emmc_nand_d07,	7,	31),
@@ -571,6 +609,10 @@ static const char * const nor_groups[] = {
 	"nor_d", "nor_q", "nor_c", "nor_cs",
 };
 
+static const char * const spi_groups[] = {
+	"spi_mosi", "spi_miso", "spi_ss0", "spi_sclk",
+};
+
 static const char * const sdcard_groups[] = {
 	"sdcard_d0", "sdcard_d1", "sdcard_d2", "sdcard_d3",
 	"sdcard_cmd", "sdcard_clk",
@@ -662,6 +704,12 @@ static const char * const eth_led_groups[] = {
 	"eth_link_led", "eth_act_led",
 };
 
+static const char * const tsin_a_groups[] = {
+	"tsin_a_clk", "tsin_a_clk_x", "tsin_a_sop", "tsin_a_sop_x",
+	"tsin_a_d_valid", "tsin_a_d_valid_x", "tsin_a_d0", "tsin_a_d0_x",
+	"tsin_a_dp", "tsin_a_fail",
+};
+
 static const char * const gpio_aobus_groups[] = {
 	"GPIOAO_0", "GPIOAO_1", "GPIOAO_2", "GPIOAO_3", "GPIOAO_4",
 	"GPIOAO_5", "GPIOAO_6", "GPIOAO_7", "GPIOAO_8", "GPIOAO_9",
@@ -712,6 +760,7 @@ static struct meson_pmx_func meson_gxl_periphs_functions[] = {
 	FUNCTION(gpio_periphs),
 	FUNCTION(emmc),
 	FUNCTION(nor),
+	FUNCTION(spi),
 	FUNCTION(sdcard),
 	FUNCTION(sdio),
 	FUNCTION(nand),
@@ -733,6 +782,7 @@ static struct meson_pmx_func meson_gxl_periphs_functions[] = {
 	FUNCTION(i2s_out),
 	FUNCTION(spdif_out),
 	FUNCTION(eth_led),
+	FUNCTION(tsin_a),
 };
 
 static struct meson_pmx_func meson_gxl_aobus_functions[] = {
@@ -750,19 +800,19 @@ static struct meson_pmx_func meson_gxl_aobus_functions[] = {
 };
 
 static struct meson_bank meson_gxl_periphs_banks[] = {
-	/*   name    first                      last                    pullen  pull    dir     out     in  */
-	BANK("X",    PIN(GPIOX_0, EE_OFF),	PIN(GPIOX_18, EE_OFF),  4,  0,  4,  0,  12, 0,  13, 0,  14, 0),
-	BANK("DV",   PIN(GPIODV_0, EE_OFF),	PIN(GPIODV_29, EE_OFF), 0,  0,  0,  0,  0,  0,  1,  0,  2,  0),
-	BANK("H",    PIN(GPIOH_0, EE_OFF),	PIN(GPIOH_9, EE_OFF),   1, 20,  1, 20,  3, 20,  4, 20,  5, 20),
-	BANK("Z",    PIN(GPIOZ_0, EE_OFF),	PIN(GPIOZ_15, EE_OFF),  3,  0,  3,  0,  9,  0,  10, 0, 11,  0),
-	BANK("CARD", PIN(CARD_0, EE_OFF),	PIN(CARD_6, EE_OFF),    2, 20,  2, 20,  6, 20,  7, 20,  8, 20),
-	BANK("BOOT", PIN(BOOT_0, EE_OFF),	PIN(BOOT_15, EE_OFF),   2,  0,  2,  0,  6,  0,  7,  0,  8,  0),
-	BANK("CLK",  PIN(GPIOCLK_0, EE_OFF),	PIN(GPIOCLK_1, EE_OFF), 3, 28,  3, 28,  9, 28, 10, 28, 11, 28),
+	/*   name    first                      last                    irq	  pullen  pull    dir     out     in  */
+	BANK("X",    PIN(GPIOX_0, EE_OFF),	PIN(GPIOX_18, EE_OFF),   89, 107, 4,  0,  4,  0,  12, 0,  13, 0,  14, 0),
+	BANK("DV",   PIN(GPIODV_0, EE_OFF),	PIN(GPIODV_29, EE_OFF),  83,  88, 0,  0,  0,  0,  0,  0,  1,  0,  2,  0),
+	BANK("H",    PIN(GPIOH_0, EE_OFF),	PIN(GPIOH_9, EE_OFF),    26,  35, 1, 20,  1, 20,  3, 20,  4, 20,  5, 20),
+	BANK("Z",    PIN(GPIOZ_0, EE_OFF),	PIN(GPIOZ_15, EE_OFF),   10,  25, 3,  0,  3,  0,  9,  0,  10, 0, 11,  0),
+	BANK("CARD", PIN(CARD_0, EE_OFF),	PIN(CARD_6, EE_OFF),     52,  58, 2, 20,  2, 20,  6, 20,  7, 20,  8, 20),
+	BANK("BOOT", PIN(BOOT_0, EE_OFF),	PIN(BOOT_15, EE_OFF),    36,  51, 2,  0,  2,  0,  6,  0,  7,  0,  8,  0),
+	BANK("CLK",  PIN(GPIOCLK_0, EE_OFF),	PIN(GPIOCLK_1, EE_OFF), 108, 109, 3, 28,  3, 28,  9, 28, 10, 28, 11, 28),
 };
 
 static struct meson_bank meson_gxl_aobus_banks[] = {
-	/*   name    first              last              pullen  pull    dir     out     in  */
-	BANK("AO",   PIN(GPIOAO_0, 0),  PIN(GPIOAO_9, 0), 0,  0,  0, 16,  0,  0,  0, 16,  1,  0),
+	/*   name    first              last              irq	pullen  pull    dir     out     in  */
+	BANK("AO",   PIN(GPIOAO_0, 0),  PIN(GPIOAO_9, 0), 0, 9, 0,  0,  0, 16,  0,  0,  0, 16,  1,  0),
 };
 
 struct meson_pinctrl_data meson_gxl_periphs_pinctrl_data = {

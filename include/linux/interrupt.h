@@ -18,6 +18,7 @@
 #include <linux/atomic.h>
 #include <asm/ptrace.h>
 #include <asm/irq.h>
+#include <asm/sections.h>
 
 /*
  * These correspond to the IORESOURCE_IRQ_* defines in
@@ -152,8 +153,17 @@ request_any_context_irq(unsigned int irq, irq_handler_t handler,
 			unsigned long flags, const char *name, void *dev_id);
 
 extern int __must_check
+__request_percpu_irq(unsigned int irq, irq_handler_t handler,
+		     unsigned long flags, const char *devname,
+		     void __percpu *percpu_dev_id);
+
+static inline int __must_check
 request_percpu_irq(unsigned int irq, irq_handler_t handler,
-		   const char *devname, void __percpu *percpu_dev_id);
+		   const char *devname, void __percpu *percpu_dev_id)
+{
+	return __request_percpu_irq(irq, handler, 0,
+				    devname, percpu_dev_id);
+}
 
 extern const void *free_irq(unsigned int, void *);
 extern void free_percpu_irq(unsigned int, void __percpu *);
@@ -703,6 +713,12 @@ static inline void init_irq_proc(void)
 }
 #endif
 
+#ifdef CONFIG_IRQ_TIMINGS
+void irq_timings_enable(void);
+void irq_timings_disable(void);
+u64 irq_timings_next_event(u64 now);
+#endif
+
 struct seq_file;
 int show_interrupts(struct seq_file *p, void *v);
 int arch_show_interrupts(struct seq_file *p, int prec);
@@ -711,24 +727,11 @@ extern int early_irq_init(void);
 extern int arch_probe_nr_irqs(void);
 extern int arch_early_irq_init(void);
 
-#if defined(CONFIG_FUNCTION_GRAPH_TRACER) || defined(CONFIG_KASAN)
 /*
  * We want to know which function is an entrypoint of a hardirq or a softirq.
  */
 #define __irq_entry		 __attribute__((__section__(".irqentry.text")))
 #define __softirq_entry  \
 	__attribute__((__section__(".softirqentry.text")))
-
-/* Limits of hardirq entrypoints */
-extern char __irqentry_text_start[];
-extern char __irqentry_text_end[];
-/* Limits of softirq entrypoints */
-extern char __softirqentry_text_start[];
-extern char __softirqentry_text_end[];
-
-#else
-#define __irq_entry
-#define __softirq_entry
-#endif
 
 #endif

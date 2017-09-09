@@ -50,7 +50,7 @@
 / {
 	compatible = "hardkernel,odroid-c2", "amlogic,meson-gxbb";
 	model = "Hardkernel ODROID-C2";
-	
+
 	aliases {
 		serial0 = &uart_AO;
 	};
@@ -175,16 +175,6 @@
 	};
 };
 
-&scpi_clocks {
-	status = "disabled";
-};
-
-&uart_AO {
-	status = "okay";
-	pinctrl-0 = <&uart_ao_a_pins>;
-	pinctrl-names = "default";
-};
-
 &ethmac {
 	status = "okay";
 	pinctrl-0 = <&eth_rgmii_pins>;
@@ -208,6 +198,33 @@
 			eee-broken-1000t;
 		};
 	};
+};
+
+&gpio_ao {
+	/*
+	 * WARNING: The USB Hub on the Odroid-C2 needs a reset signal
+	 * to be turned high in order to be detected by the USB Controller
+	 * This signal should be handled by a USB specific power sequence
+	 * in order to reset the Hub when USB bus is powered down.
+	 */
+	usb-hub {
+		gpio-hog;
+		gpios = <GPIOAO_4 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "usb-hub-reset";
+	};
+};
+
+&i2c_A {
+	status = "okay";
+	pinctrl-0 = <&i2c_a_pins>;
+	pinctrl-names = "default";
+};
+
+&ir {
+	status = "okay";
+	pinctrl-0 = <&remote_input_ao_pins>;
+	pinctrl-names = "default";
 };
 
 &pinctrl_aobus {
@@ -261,31 +278,58 @@
 			  "";
 };
 
-&ir {
+&saradc {
 	status = "okay";
-	pinctrl-0 = <&remote_input_ao_pins>;
-	pinctrl-names = "default";
+	vref-supply = <&vcc1v8>;
 };
 
-&i2c_A {
-	status = "okay";
-	pinctrl-0 = <&i2c_a_pins>;
-	pinctrl-names = "default";
+&scpi_clocks {
+	status = "disabled";
 };
 
-&gpio_ao {
-	/*
-	 * WARNING: The USB Hub on the Odroid-C2 needs a reset signal
-	 * to be turned high in order to be detected by the USB Controller
-	 * This signal should be handled by a USB specific power sequence
-	 * in order to reset the Hub when USB bus is powered down.
-	 */
-	usb-hub {
-		gpio-hog;
-		gpios = <GPIOAO_4 GPIO_ACTIVE_HIGH>;
-		output-high;
-		line-name = "usb-hub-reset";
-	};
+/* SD */
+&sd_emmc_b {
+	status = "okay";
+	pinctrl-0 = <&sdcard_pins>;
+	pinctrl-1 = <&sdcard_clk_gate_pins>;
+	pinctrl-names = "default", "clk-gate";
+
+	bus-width = <4>;
+	cap-sd-highspeed;
+	max-frequency = <100000000>;
+	disable-wp;
+
+	cd-gpios = <&gpio CARD_6 GPIO_ACTIVE_HIGH>;
+	cd-inverted;
+
+	vmmc-supply = <&tflash_vdd>;
+	vqmmc-supply = <&tf_io>;
+};
+
+/* eMMC */
+&sd_emmc_c {
+	status = "okay";
+	pinctrl-0 = <&emmc_pins>;
+	pinctrl-1 = <&emmc_clk_gate_pins>;
+	pinctrl-names = "default", "clk-gate";
+
+	bus-width = <8>;
+	max-frequency = <200000000>;
+	non-removable;
+	disable-wp;
+	cap-mmc-highspeed;
+	mmc-ddr-1_8v;
+	mmc-hs200-1_8v;
+
+	mmc-pwrseq = <&emmc_pwrseq>;
+	vmmc-supply = <&vcc3v3>;
+	vqmmc-supply = <&vcc1v8>;
+};
+
+&uart_AO {
+	status = "okay";
+	pinctrl-0 = <&uart_ao_a_pins>;
+	pinctrl-names = "default";
 };
 
 &usb0_phy {
@@ -310,49 +354,6 @@
 		reset-gpios = <&gpio GPIOAO_4 GPIO_ACTIVE_LOW>;
 		reset-duration-us = <3000>;
 	};
-};
-
-&saradc {
-	status = "okay";
-	vref-supply = <&vcc1v8>;
-};
-
-/* SD */
-&sd_emmc_b {
-	status = "okay";
-	pinctrl-0 = <&sdcard_pins>;
-	pinctrl-names = "default";
-
-	bus-width = <4>;
-	cap-sd-highspeed;
-	max-frequency = <100000000>;
-	disable-wp;
-
-	cd-gpios = <&gpio CARD_6 GPIO_ACTIVE_HIGH>;
-	cd-inverted;
-
-	vmmc-supply = <&tflash_vdd>;
-	vqmmc-supply = <&tf_io>;
-};
-
-/* eMMC */
-&sd_emmc_c {
-	status = "okay";
-	pinctrl-0 = <&emmc_pins>;
-	pinctrl-names = "default";
-
-	bus-width = <8>;
-	cap-sd-highspeed;
-	max-frequency = <200000000>;
-	non-removable;
-	disable-wp;
-	cap-mmc-highspeed;
-	mmc-ddr-1_8v;
-	mmc-hs200-1_8v;
-
-	mmc-pwrseq = <&emmc_pwrseq>;
-	vmmc-supply = <&vcc3v3>;
-	vqmmc-supply = <&vcc1v8>;
 };
 
 &cec_AO {

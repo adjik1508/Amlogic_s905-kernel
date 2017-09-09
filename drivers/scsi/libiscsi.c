@@ -1078,7 +1078,7 @@ static int iscsi_handle_reject(struct iscsi_conn *conn, struct iscsi_hdr *hdr,
 		if (opcode != ISCSI_OP_NOOP_OUT)
 			return 0;
 
-		 if (rejected_pdu.itt == cpu_to_be32(ISCSI_RESERVED_TAG)) {
+		if (rejected_pdu.itt == cpu_to_be32(ISCSI_RESERVED_TAG)) {
 			/*
 			 * nop-out in response to target's nop-out rejected.
 			 * Just resend.
@@ -2556,7 +2556,7 @@ iscsi_pool_init(struct iscsi_pool *q, int max, void ***items, int item_size)
 	 * the array. */
 	if (items)
 		num_arrays++;
-	q->pool = kzalloc(num_arrays * max * sizeof(void*), GFP_KERNEL);
+	q->pool = kvzalloc(num_arrays * max * sizeof(void*), GFP_KERNEL);
 	if (q->pool == NULL)
 		return -ENOMEM;
 
@@ -2590,7 +2590,7 @@ void iscsi_pool_free(struct iscsi_pool *q)
 
 	for (i = 0; i < q->max; i++)
 		kfree(q->pool[i]);
-	kfree(q->pool);
+	kvfree(q->pool);
 }
 EXPORT_SYMBOL_GPL(iscsi_pool_free);
 

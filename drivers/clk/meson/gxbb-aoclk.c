@@ -69,7 +69,7 @@ static DEFINE_SPINLOCK(gxbb_aoclk_lock);
 struct gxbb_aoclk_reset_controller {
 	struct reset_controller_dev reset;
 	unsigned int *data;
-	void __iomem *base;
+	struct regmap *regmap;
 };
 
 static int gxbb_aoclk_do_reset(struct reset_controller_dev *rcdev,
@@ -78,9 +78,8 @@ static int gxbb_aoclk_do_reset(struct reset_controller_dev *rcdev,
 	struct gxbb_aoclk_reset_controller *reset =
 		container_of(rcdev, struct gxbb_aoclk_reset_controller, reset);
 
-	writel(BIT(reset->data[id]), reset->base);
-
-	return 0;
+	return regmap_write(reset->regmap, AO_RTI_GEN_CNTL_REG0,
+			    BIT(reset->data[id]));
 }
 
 static const struct reset_control_ops gxbb_aoclk_reset_ops = {
@@ -88,13 +87,12 @@ static const struct reset_control_ops gxbb_aoclk_reset_ops = {
 };
 
 #define GXBB_AO_GATE(_name, _bit)					\
-static struct clk_gate _name##_ao = {					\
-	.reg = (void __iomem *)0,					\
+static struct aoclk_gate_regmap _name##_ao = {				\
 	.bit_idx = (_bit),						\
 	.lock = &gxbb_aoclk_lock,					\
 	.hw.init = &(struct clk_init_data) {				\
 		.name = #_name "_ao",					\
-		.ops = &clk_gate_ops,					\
+		.ops = &meson_aoclk_gate_regmap_ops,			\
 		.parent_names = (const char *[]){ "clk81" },		\
 		.num_parents = 1,					\
 		.flags = (CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED),	\
@@ -128,7 +126,7 @@ static unsigned int gxbb_aoclk_reset[] = {
 	[RESET_AO_IR_BLASTER] = 23,
 };
 
-static struct clk_gate *gxbb_aoclk_gate[] = {
+static struct aoclk_gate_regmap *gxbb_aoclk_gate[] = {
 	[CLKID_AO_REMOTE] = &remote_ao,
 	[CLKID_AO_I2C_MASTER] = &i2c_master_ao,
 	[CLKID_AO_I2C_SLAVE] = &i2c_slave_ao,
@@ -154,45 +152,21 @@ static int gxbb_aoclkc_probe(struct platform_device *pdev)
 {
 	struct gxbb_aoclk_reset_controller *rstc;
 	struct device *dev = &pdev->dev;
-	struct regmap *regmap_pwr;
-	void __iomem *base_crt;
-	void __iomem *base_rtc;
-	void __iomem *base;
-	struct resource *res;
+	struct regmap *regmap;
 	int ret, clkid;
 
 	rstc = devm_kzalloc(dev, sizeof(*rstc), GFP_KERNEL);
 	if (!rstc)
 		return -ENOMEM;
 
-	/* Generic clocks */
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "aoclk");
-	base = devm_ioremap_resource(dev, res);
-	if (IS_ERR(base))
-		return PTR_ERR(base);
-
-	/* CRT base */
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "aocrt");
-	base_crt = devm_ioremap_resource(dev, res);
-	if (IS_ERR(base_crt))
-		return PTR_ERR(base_crt);
-
-	/* RTC base */
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "aortc");
-	base_rtc = devm_ioremap_resource(dev, res);
-	if (IS_ERR(base_rtc))
-		return PTR_ERR(base_rtc);
-
-	/* PWR regmap */
-	regmap_pwr = syscon_regmap_lookup_by_phandle(dev->of_node,
-						     "amlogic,pwr-ctrl");
-	if (IS_ERR(regmap_pwr)) {
-		dev_err(dev, "failed to get PWR regmap\n");
+	regmap = syscon_node_to_regmap(of_get_parent(dev->of_node));
+	if (IS_ERR(regmap)) {
+		dev_err(dev, "failed to get regmap\n");
 		return -ENODEV;
 	}
 
 	/* Reset Controller */
-	rstc->base = base;
+	rstc->regmap = regmap;
 	rstc->data = gxbb_aoclk_reset;
 	rstc->reset.ops = &gxbb_aoclk_reset_ops;
 	rstc->reset.nr_resets = ARRAY_SIZE(gxbb_aoclk_reset);
@@ -200,10 +174,10 @@ static int gxbb_aoclkc_probe(struct platform_device *pdev)
 	ret = devm_reset_controller_register(dev, &rstc->reset);
 
 	/*
-	 * Populate base address and register all clks
+	 * Populate regmap and register all clks
 	 */
 	for (clkid = 0; clkid < ARRAY_SIZE(gxbb_aoclk_gate); clkid++) {
-		gxbb_aoclk_gate[clkid]->reg = base;
+		gxbb_aoclk_gate[clkid]->regmap = regmap;
 
 		ret = devm_clk_hw_register(dev,
 					gxbb_aoclk_onecell_data.hws[clkid]);
@@ -212,9 +186,7 @@ static int gxbb_aoclkc_probe(struct platform_device *pdev)
 	}
 
 	/* Specific clocks */
-	cec_32k_ao.crt_base = base_crt;
-	cec_32k_ao.rtc_base = base_rtc;
-	cec_32k_ao.pwr_regmap = regmap_pwr;
+	cec_32k_ao.regmap = regmap;
 	ret = devm_clk_hw_register(dev, &cec_32k_ao.hw);
 	if (ret)
 		return ret;
@@ -224,7 +196,7 @@ static int gxbb_aoclkc_probe(struct platform_device *pdev)
 }
 
 static const struct of_device_id gxbb_aoclkc_match_table[] = {
-	{ .compatible = "amlogic,gxbb-aoclkc" },
+	{ .compatible = "amlogic,meson-gx-aoclkc" },
 	{ }
 };
 

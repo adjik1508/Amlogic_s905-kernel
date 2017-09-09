@@ -51,6 +51,8 @@
 #include <xen/interface/platform.h>
 #include <xen/interface/xen-mca.h>
 
+struct xen_dm_op_buf;
+
 /*
  * The hypercall asms have to meet several constraints:
  * - Work on 32- and 64-bit.
@@ -477,7 +479,7 @@ HYPERVISOR_xenpmu_op(unsigned int op, void *arg)
 
 static inline int
 HYPERVISOR_dm_op(
-	domid_t dom, unsigned int nr_bufs, void *bufs)
+	domid_t dom, unsigned int nr_bufs, struct xen_dm_op_buf *bufs)
 {
 	int ret;
 	stac();
@@ -550,6 +552,8 @@ static inline void
 MULTI_update_descriptor(struct multicall_entry *mcl, u64 maddr,
 			struct desc_struct desc)
 {
+	u32 *p = (u32 *) &desc;
+
 	mcl->op = __HYPERVISOR_update_descriptor;
 	if (sizeof(maddr) == sizeof(long)) {
 		mcl->args[0] = maddr;
@@ -557,8 +561,8 @@ MULTI_update_descriptor(struct multicall_entry *mcl, u64 maddr,
 	} else {
 		mcl->args[0] = maddr;
 		mcl->args[1] = maddr >> 32;
-		mcl->args[2] = desc.a;
-		mcl->args[3] = desc.b;
+		mcl->args[2] = *p++;
+		mcl->args[3] = *p;
 	}
 
 	trace_xen_mc_entry(mcl, sizeof(maddr) == sizeof(long) ? 2 : 4);
