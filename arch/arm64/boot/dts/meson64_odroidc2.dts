@@ -206,6 +206,7 @@
                 interrupt-names = "macirq";
                 clocks = <&clock CLK_81>;
                 clock-names = "ethclk81";
+				max-frame-size = <3582>;
         };
 
 	mesonstream {

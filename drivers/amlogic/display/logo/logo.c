@@ -76,6 +76,7 @@ static struct para_pair_s mode_infos[] = {
 	{"2560x1600p60hz", TVMODE_2560x1600p60hz},
 	{"2560x1080p60hz", TVMODE_2560x1080p60hz},
 	{"3440x1440p60hz", TVMODE_3440x1440p60hz},
+	{"480x320p60hz", TVMODE_480x320p60hz},
 	{"480cvbs", VMODE_480CVBS},
 	{"576cvbs", VMODE_576CVBS},
 	{"480i60hz", VMODE_480I},
@@ -95,7 +96,7 @@ static struct para_pair_s mode_infos[] = {
 	{"smpte24hz", VMODE_4K2K_SMPTE},
 	{"2160p50hz420", VMODE_4K2K_50HZ_Y420},
 	{"2160p60hz420", VMODE_4K2K_60HZ_Y420},
-	{"custombuilt", TVMODE_CUSTOMBUILT},
+	{"custombuilt", VMODE_CUSTOMBUILT},
 };
 
 struct logo_info_s {
@@ -245,7 +246,7 @@ static int refresh_mode_and_logo(bool first)
 		}
 	}
 
-	if (cur_mode != last_mode) {
+	if ((cur_mode != last_mode) && (cur_mode != VMODE_CUSTOMBUILT)) {
 		pr_info("mode chang\n");
 		osd_enable_hw(logo_info.index, 0);
 		if (!first) {

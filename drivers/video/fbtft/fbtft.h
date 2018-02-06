@@ -254,7 +254,17 @@ struct fbtft_par {
 	struct timespec update_time;
 	bool bgr;
 	void *extra;
+#if defined(CONFIG_ARCH_MESON64_ODROIDC2)
+	void __iomem *reg_gpiox;
+#endif
 };
+
+#if defined(CONFIG_ARCH_MESON64_ODROIDC2)
+	#define	ODROIDC2_GPIO_START	0xC8834400
+	#define	ODROIDC2_GPIOX_START	(ODROIDC2_GPIO_START + 0x60)
+	#define	OFFSET_GPIOX_OUT	0x04
+	#define	OFFSET_GPIOX_IN		0x08
+#endif
 
 #define NUMARGS(...)  (sizeof((int[]){__VA_ARGS__})/sizeof(int))
 
@@ -287,6 +297,10 @@ extern int fbtft_write_gpio8_wr(struct fbtft_par *par, void *buf, size_t len);
 extern int fbtft_write_gpio16_wr(struct fbtft_par *par, void *buf, size_t len);
 extern int fbtft_write_gpio16_wr_latched(struct fbtft_par *par,
 	void *buf, size_t len);
+
+#if defined(CONFIG_ARCH_MESON64_ODROIDC2)
+extern int fbtft_write_reg_wr(struct fbtft_par *par, void *buf, size_t len);
+#endif
 
 /* fbtft-bus.c */
 extern int fbtft_write_vmem8_bus8(struct fbtft_par *par, size_t offset, size_t len);

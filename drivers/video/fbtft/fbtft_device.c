@@ -395,6 +395,23 @@ static struct fbtft_device_display displays[] = {
 			.dev = {
 			.release = fbtft_device_pdev_release,
 			.platform_data = &(struct fbtft_platform_data) {
+#if defined(CONFIG_ARCH_MESON64_ODROIDC2)
+				.bgr = true,
+				.gpios = (const struct fbtft_gpio []) {
+					{ "reset", 247 }, /* GPX.19 */
+					{ "dc",    228 }, /* GPX.0  */
+					{ "wr",    229 }, /* GPX.1  */
+					{ "cs",    238 }, /* GPX.10 */
+					{ "db00",  233 }, /* GPX.5  */
+					{ "db01",  231 }, /* GPX.3  */
+					{ "db02",  236 }, /* GPX.8  */
+					{ "db03",  230 }, /* GPX.2  */
+					{ "db04",  232 }, /* GPX.4  */
+					{ "db05",  235 }, /* GPX.7  */
+					{ "db06",  237 }, /* GPX.9  */
+					{ "db07",  239 }, /* GPX.11 */
+					{},
+#else
 				.gpios = (const struct fbtft_gpio []) {
 					{ "reset", 17 },
 					{ "dc", 1 },
@@ -410,6 +427,7 @@ static struct fbtft_device_display displays[] = {
 					{ "db07", 7 },
 					{ "led", 4 },
 					{},
+#endif
 				},
 			},
 			}

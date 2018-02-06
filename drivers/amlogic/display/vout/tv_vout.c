@@ -576,7 +576,7 @@ static struct vinfo_s *get_tv_info(enum vmode_e mode)
 
 	for (i = 0; i < ARRAY_SIZE(tv_info); i++) {
 		if (mode == tv_info[i].mode) {
-			if (mode == (enum vmode_e) TVMODE_CUSTOMBUILT) {
+			if (mode == VMODE_CUSTOMBUILT) {
 				tv_info[i].width = t->h_active;
 				tv_info[i].height = t->v_active;
 				/* check progressive or interlaced */
