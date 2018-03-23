@@ -117,6 +117,10 @@
 	};
 };
 
+&ethmac {
+    status = "okay";
+};
+
 &clkc_AO {
 	compatible = "amlogic,meson-gxm-aoclkc", "amlogic,meson-gx-aoclkc";
 };

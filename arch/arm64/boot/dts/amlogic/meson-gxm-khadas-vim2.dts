@@ -12,7 +12,7 @@
 #include <dt-bindings/thermal/thermal.h>
 
 #include "meson-gxm.dtsi"
-#include "meson-gx-p23x-q20x.dtsi"
+//#include "meson-gx-p23x-q20x.dtsi"
 
 / {
 	compatible = "khadas,vim2", "amlogic,s912", "amlogic,meson-gxm";
