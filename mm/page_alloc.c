@@ -290,28 +290,37 @@ EXPORT_SYMBOL(nr_online_nodes);
 int page_group_by_mobility_disabled __read_mostly;
 
 #ifdef CONFIG_DEFERRED_STRUCT_PAGE_INIT
+
+/*
+ * Determine how many pages need to be initialized durig early boot
+ * (non-deferred initialization).
+ * The value of first_deferred_pfn will be set later, once non-deferred pages
+ * are initialized, but for now set it ULONG_MAX.
+ */
 static inline void reset_deferred_meminit(pg_data_t *pgdat)
 {
-	unsigned long max_initialise;
-	unsigned long reserved_lowmem;
+	phys_addr_t start_addr, end_addr;
+	unsigned long max_pgcnt;
+	unsigned long reserved;
 
 	/*
 	 * Initialise at least 2G of a node but also take into account that
 	 * two large system hashes that can take up 1GB for 0.25TB/node.
 	 */
-	max_initialise = max(2UL << (30 - PAGE_SHIFT),
-		(pgdat->node_spanned_pages >> 8));
+	max_pgcnt = max(2UL << (30 - PAGE_SHIFT),
+			(pgdat->node_spanned_pages >> 8));
 
 	/*
 	 * Compensate the all the memblock reservations (e.g. crash kernel)
 	 * from the initial estimation to make sure we will initialize enough
 	 * memory to boot.
 	 */
-	reserved_lowmem = memblock_reserved_memory_within(pgdat->node_start_pfn,
-			pgdat->node_start_pfn + max_initialise);
-	max_initialise += reserved_lowmem;
+	start_addr = PFN_PHYS(pgdat->node_start_pfn);
+	end_addr = PFN_PHYS(pgdat->node_start_pfn + max_pgcnt);
+	reserved = memblock_reserved_memory_within(start_addr, end_addr);
+	max_pgcnt += PHYS_PFN(reserved);
 
-	pgdat->static_init_size = min(max_initialise, pgdat->node_spanned_pages);
+	pgdat->static_init_pgcnt = min(max_pgcnt, pgdat->node_spanned_pages);
 	pgdat->first_deferred_pfn = ULONG_MAX;
 }
 
@@ -338,7 +347,7 @@ static inline bool update_defer_init(pg_data_t *pgdat,
 	if (zone_end < pgdat_end_pfn(pgdat))
 		return true;
 	(*nr_initialised)++;
-	if ((*nr_initialised > pgdat->static_init_size) &&
+	if ((*nr_initialised > pgdat->static_init_pgcnt) &&
 	    (pfn & (PAGES_PER_SECTION - 1)) == 0) {
 		pgdat->first_deferred_pfn = pfn;
 		return false;
@@ -1190,7 +1199,7 @@ static void __meminit __init_single_pfn(unsigned long pfn, unsigned long zone,
 }
 
 #ifdef CONFIG_DEFERRED_STRUCT_PAGE_INIT
-static void init_reserved_page(unsigned long pfn)
+static void __meminit init_reserved_page(unsigned long pfn)
 {
 	pg_data_t *pgdat;
 	int nid, zid;
@@ -1596,38 +1605,16 @@ void __init page_alloc_init_late(void)
 }
 
 #ifdef CONFIG_CMA
-static void __init adjust_present_page_count(struct page *page, long count)
-{
-	struct zone *zone = page_zone(page);
-
-	/* We don't need to hold a lock since it is boot-up process */
-	zone->present_pages += count;
-}
-
 /* Free whole pageblock and set its migration type to MIGRATE_CMA. */
 void __init init_cma_reserved_pageblock(struct page *page)
 {
 	unsigned i = pageblock_nr_pages;
-	unsigned long pfn = page_to_pfn(page);
 	struct page *p = page;
-	int nid = page_to_nid(page);
-
-	/*
-	 * ZONE_MOVABLE will steal present pages from other zones by
-	 * changing page links so page_zone() is changed. Before that,
-	 * we need to adjust previous zone's page count first.
-	 */
-	adjust_present_page_count(page, -pageblock_nr_pages);
 
 	do {
 		__ClearPageReserved(p);
 		set_page_count(p, 0);
-
-		/* Steal pages from other zones */
-		set_page_links(p, ZONE_MOVABLE, nid, pfn);
-	} while (++p, ++pfn, --i);
-
-	adjust_present_page_count(page, pageblock_nr_pages);
+	} while (++p, --i);
 
 	set_pageblock_migratetype(page, MIGRATE_CMA);
 
@@ -2721,7 +2708,7 @@ int __isolate_free_page(struct page *page, unsigned int order)
 		 * exists.
 		 */
 		watermark = min_wmark_pages(zone) + (1UL << order);
-		if (!zone_watermark_ok(zone, 0, watermark, 0, 0))
+		if (!zone_watermark_ok(zone, 0, watermark, 0, ALLOC_CMA))
 			return 0;
 
 		__mod_zone_freepage_state(zone, -(1UL << order), mt);
@@ -2998,6 +2985,12 @@ bool __zone_watermark_ok(struct zone *z, unsigned int order, unsigned long mark,
 	}
 
 
+#ifdef CONFIG_CMA
+	/* If allocation can't use CMA areas don't use free CMA pages */
+	if (!(alloc_flags & ALLOC_CMA))
+		free_pages -= zone_page_state(z, NR_FREE_CMA_PAGES);
+#endif
+
 	/*
 	 * Check watermarks for an order-0 allocation request. If these
 	 * are not met, then a high-order request also cannot go ahead
@@ -3027,8 +3020,10 @@ bool __zone_watermark_ok(struct zone *z, unsigned int order, unsigned long mark,
 		}
 
 #ifdef CONFIG_CMA
-		if (!list_empty(&area->free_list[MIGRATE_CMA]))
+		if ((alloc_flags & ALLOC_CMA) &&
+		    !list_empty(&area->free_list[MIGRATE_CMA])) {
 			return true;
+		}
 #endif
 	}
 	return false;
@@ -3045,6 +3040,13 @@ static inline bool zone_watermark_fast(struct zone *z, unsigned int order,
 		unsigned long mark, int classzone_idx, unsigned int alloc_flags)
 {
 	long free_pages = zone_page_state(z, NR_FREE_PAGES);
+	long cma_pages = 0;
+
+#ifdef CONFIG_CMA
+	/* If allocation can't use CMA areas don't use free CMA pages */
+	if (!(alloc_flags & ALLOC_CMA))
+		cma_pages = zone_page_state(z, NR_FREE_CMA_PAGES);
+#endif
 
 	/*
 	 * Fast check for order-0 only. If this fails then the reserves
@@ -3053,7 +3055,7 @@ static inline bool zone_watermark_fast(struct zone *z, unsigned int order,
 	 * the caller is !atomic then it'll uselessly search the free
 	 * list. That corner case is then slower but it is harmless.
 	 */
-	if (!order && free_pages > mark + z->lowmem_reserve[classzone_idx])
+	if (!order && (free_pages - cma_pages) > mark + z->lowmem_reserve[classzone_idx])
 		return true;
 
 	return __zone_watermark_ok(z, order, mark, classzone_idx, alloc_flags,
@@ -3675,6 +3677,10 @@ gfp_to_alloc_flags(gfp_t gfp_mask)
 	} else if (unlikely(rt_task(current)) && !in_interrupt())
 		alloc_flags |= ALLOC_HARDER;
 
+#ifdef CONFIG_CMA
+	if (gfpflags_to_migratetype(gfp_mask) == MIGRATE_MOVABLE)
+		alloc_flags |= ALLOC_CMA;
+#endif
 	return alloc_flags;
 }
 
@@ -4150,6 +4156,9 @@ static inline bool prepare_alloc_pages(gfp_t gfp_mask, unsigned int order,
 
 	if (should_fail_alloc_page(gfp_mask, order))
 		return false;
+
+	if (IS_ENABLED(CONFIG_CMA) && ac->migratetype == MIGRATE_MOVABLE)
+		*alloc_flags |= ALLOC_CMA;
 
 	return true;
 }
@@ -5363,6 +5372,7 @@ not_early:
 
 			__init_single_page(page, pfn, zone, nid);
 			set_pageblock_migratetype(page, MIGRATE_MOVABLE);
+			cond_resched();
 		} else {
 			__init_single_pfn(pfn, zone, nid);
 		}
@@ -5822,11 +5832,6 @@ static unsigned long __meminit zone_absent_pages_in_node(int nid,
 	adjust_zone_range_for_zone_movable(nid, zone_type,
 			node_start_pfn, node_end_pfn,
 			&zone_start_pfn, &zone_end_pfn);
-
-	/* If this node has no page within this zone, return 0. */
-	if (zone_start_pfn == zone_end_pfn)
-		return 0;
-
 	nr_absent = __absent_pages_in_range(nid, zone_start_pfn, zone_end_pfn);
 
 	/*
@@ -6038,7 +6043,6 @@ static void __paginginit free_area_init_core(struct pglist_data *pgdat)
 {
 	enum zone_type j;
 	int nid = pgdat->node_id;
-	unsigned long node_end_pfn = 0;
 
 	pgdat_resize_init(pgdat);
 #ifdef CONFIG_NUMA_BALANCING
@@ -6066,13 +6070,9 @@ static void __paginginit free_area_init_core(struct pglist_data *pgdat)
 		struct zone *zone = pgdat->node_zones + j;
 		unsigned long size, realsize, freesize, memmap_pages;
 		unsigned long zone_start_pfn = zone->zone_start_pfn;
-		unsigned long movable_size = 0;
 
 		size = zone->spanned_pages;
 		realsize = freesize = zone->present_pages;
-		if (zone_end_pfn(zone) > node_end_pfn)
-			node_end_pfn = zone_end_pfn(zone);
-
 
 		/*
 		 * Adjust freesize so that it accounts for how much memory
@@ -6121,30 +6121,12 @@ static void __paginginit free_area_init_core(struct pglist_data *pgdat)
 		zone_seqlock_init(zone);
 		zone_pcp_init(zone);
 
-		/*
-		 * The size of the CMA area is unknown now so we need to
-		 * prepare the memory for the usemap at maximum.
-		 */
-		if (IS_ENABLED(CONFIG_CMA) && j == ZONE_MOVABLE &&
-			pgdat->node_spanned_pages) {
-			movable_size = node_end_pfn - pgdat->node_start_pfn;
-		}
-
-		if (!size && !movable_size)
+		if (!size)
 			continue;
 
 		set_pageblock_order();
-		if (movable_size) {
-			zone->zone_start_pfn = pgdat->node_start_pfn;
-			zone->spanned_pages = movable_size;
-			setup_usemap(pgdat, zone,
-				pgdat->node_start_pfn, movable_size);
-			init_currently_empty_zone(zone,
-				pgdat->node_start_pfn, movable_size);
-		} else {
-			setup_usemap(pgdat, zone, zone_start_pfn, size);
-			init_currently_empty_zone(zone, zone_start_pfn, size);
-		}
+		setup_usemap(pgdat, zone, zone_start_pfn, size);
+		init_currently_empty_zone(zone, zone_start_pfn, size);
 		memmap_init(size, nid, j, zone_start_pfn);
 	}
 }
@@ -7605,11 +7587,18 @@ int alloc_contig_range(unsigned long start, unsigned long end,
 
 	/*
 	 * In case of -EBUSY, we'd like to know which page causes problem.
-	 * So, just fall through. We will check it in test_pages_isolated().
+	 * So, just fall through. test_pages_isolated() has a tracepoint
+	 * which will report the busy page.
+	 *
+	 * It is possible that busy pages could become available before
+	 * the call to test_pages_isolated, and the range will actually be
+	 * allocated.  So, if we fall through be sure to clear ret so that
+	 * -EBUSY is not accidentally used or returned to caller.
 	 */
 	ret = __alloc_contig_migrate_range(&cc, start, end);
 	if (ret && ret != -EBUSY)
 		goto done;
+	ret =0;
 
 	/*
 	 * Pages from [start, end) are within a MAX_ORDER_NR_PAGES
@@ -7695,7 +7684,7 @@ void free_contig_range(unsigned long pfn, unsigned nr_pages)
 }
 #endif
 
-#if defined CONFIG_MEMORY_HOTPLUG || defined CONFIG_CMA
+#ifdef CONFIG_MEMORY_HOTPLUG
 /*
  * The zone indicated has a new number of managed_pages; batch sizes and percpu
  * page high values need to be recalulated.

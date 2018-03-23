@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 
 #include <linux/mm.h>
 #include <linux/file.h>
@@ -145,7 +146,6 @@ static int nommu_vma_show(struct seq_file *m, struct vm_area_struct *vma,
 			  int is_pid)
 {
 	struct mm_struct *mm = vma->vm_mm;
-	struct proc_maps_private *priv = m->private;
 	unsigned long ino = 0;
 	struct file *file;
 	dev_t dev = 0;

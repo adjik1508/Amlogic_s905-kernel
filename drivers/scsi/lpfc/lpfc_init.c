@@ -6131,6 +6131,7 @@ lpfc_sli4_driver_resource_setup(struct lpfc_hba *phba)
 				"Extents and RPI headers enabled.\n");
 		}
 		mempool_free(mboxq, phba->mbox_mem_pool);
+		rc = -EIO;
 		goto out_free_bsmbx;
 	}
 
@@ -11403,14 +11404,6 @@ lpfc_pci_remove_one_s4(struct pci_dev *pdev)
 	/* Remove FC host and then SCSI host with the physical port */
 	fc_remove_host(shost);
 	scsi_remove_host(shost);
-
-	/* Perform ndlp cleanup on the physical port.  The nvme and nvmet
-	 * localports are destroyed after to cleanup all transport memory.
-	 */
-	lpfc_cleanup(vport);
-	lpfc_nvmet_destroy_targetport(phba);
-	lpfc_nvme_destroy_localport(vport);
-
 	/*
 	 * Bring down the SLI Layer. This step disables all interrupts,
 	 * clears the rings, discards all mailbox commands, and resets
@@ -11419,6 +11412,15 @@ lpfc_pci_remove_one_s4(struct pci_dev *pdev)
 	lpfc_debugfs_terminate(vport);
 	lpfc_sli4_hba_unset(phba);
 
+	/* Perform ndlp cleanup on the physical port.  The nvme and nvmet
+	 * localports are destroyed after to cleanup all transport memory.
+	 */
+	lpfc_cleanup(vport);
+	lpfc_nvmet_destroy_targetport(phba);
+	lpfc_nvme_destroy_localport(vport);
+
+
+	lpfc_stop_hba_timers(phba);
 	spin_lock_irq(&phba->hbalock);
 	list_del_init(&vport->listentry);
 	spin_unlock_irq(&phba->hbalock);

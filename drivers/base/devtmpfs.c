@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * devtmpfs - kernel-maintained tmpfs-based /dev
  *
@@ -24,7 +25,6 @@
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/kthread.h>
-#include <uapi/linux/mount.h>
 #include "base.h"
 
 static struct task_struct *thread;

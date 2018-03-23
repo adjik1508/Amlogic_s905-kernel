@@ -226,7 +226,9 @@ struct nvme_id_ctrl {
 	__le16			mntmt;
 	__le16			mxtmt;
 	__le32			sanicap;
-	__u8			rsvd332[180];
+	__le32			hmminds;
+	__le16			hmmaxd;
+	__u8			rsvd338[174];
 	__u8			sqes;
 	__u8			cqes;
 	__le16			maxcmd;
@@ -469,12 +471,14 @@ enum nvme_opcode {
  *
  * @NVME_SGL_FMT_ADDRESS:     absolute address of the data block
  * @NVME_SGL_FMT_OFFSET:      relative offset of the in-capsule data block
+ * @NVME_SGL_FMT_TRANSPORT_A: transport defined format, value 0xA
  * @NVME_SGL_FMT_INVALIDATE:  RDMA transport specific remote invalidation
  *                            request subtype
  */
 enum {
 	NVME_SGL_FMT_ADDRESS		= 0x00,
 	NVME_SGL_FMT_OFFSET		= 0x01,
+	NVME_SGL_FMT_TRANSPORT_A	= 0x0A,
 	NVME_SGL_FMT_INVALIDATE		= 0x0f,
 };
 
@@ -488,12 +492,16 @@ enum {
  *
  * For struct nvme_keyed_sgl_desc:
  *   @NVME_KEY_SGL_FMT_DATA_DESC:	keyed data block descriptor
+ *
+ * Transport-specific SGL types:
+ *   @NVME_TRANSPORT_SGL_DATA_DESC:	Transport SGL data dlock descriptor
  */
 enum {
 	NVME_SGL_FMT_DATA_DESC		= 0x00,
 	NVME_SGL_FMT_SEG_DESC		= 0x02,
 	NVME_SGL_FMT_LAST_SEG_DESC	= 0x03,
 	NVME_KEY_SGL_FMT_DATA_DESC	= 0x04,
+	NVME_TRANSPORT_SGL_DATA_DESC	= 0x05,
 };
 
 struct nvme_sgl_desc {
@@ -1125,19 +1133,6 @@ enum {
 	NVME_SC_UNWRITTEN_BLOCK		= 0x287,
 
 	NVME_SC_DNR			= 0x4000,
-
-
-	/*
-	 * FC Transport-specific error status values for NVME commands
-	 *
-	 * Transport-specific status code values must be in the range 0xB0..0xBF
-	 */
-
-	/* Generic FC failure - catchall */
-	NVME_SC_FC_TRANSPORT_ERROR	= 0x00B0,
-
-	/* I/O failure due to FC ABTS'd */
-	NVME_SC_FC_TRANSPORT_ABORTED	= 0x00B1,
 };
 
 struct nvme_completion {

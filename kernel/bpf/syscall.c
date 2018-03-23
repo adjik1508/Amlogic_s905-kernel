@@ -186,15 +186,17 @@ static int bpf_map_alloc_id(struct bpf_map *map)
 
 static void bpf_map_free_id(struct bpf_map *map, bool do_idr_lock)
 {
+	unsigned long flags;
+
 	if (do_idr_lock)
-		spin_lock_bh(&map_idr_lock);
+		spin_lock_irqsave(&map_idr_lock, flags);
 	else
 		__acquire(&map_idr_lock);
 
 	idr_remove(&map_idr, map->id);
 
 	if (do_idr_lock)
-		spin_unlock_bh(&map_idr_lock);
+		spin_unlock_irqrestore(&map_idr_lock, flags);
 	else
 		__release(&map_idr_lock);
 }
@@ -1096,10 +1098,10 @@ static int bpf_obj_get(const union bpf_attr *attr)
 
 #define BPF_PROG_ATTACH_LAST_FIELD attach_flags
 
-static int sockmap_get_from_fd(const union bpf_attr *attr)
+static int sockmap_get_from_fd(const union bpf_attr *attr, bool attach)
 {
+	struct bpf_prog *prog = NULL;
 	int ufd = attr->target_fd;
-	struct bpf_prog *prog;
 	struct bpf_map *map;
 	struct fd f;
 	int err;
@@ -1109,16 +1111,20 @@ static int sockmap_get_from_fd(const union bpf_attr *attr)
 	if (IS_ERR(map))
 		return PTR_ERR(map);
 
-	prog = bpf_prog_get_type(attr->attach_bpf_fd, BPF_PROG_TYPE_SK_SKB);
-	if (IS_ERR(prog)) {
-		fdput(f);
-		return PTR_ERR(prog);
+	if (attach) {
+		prog = bpf_prog_get_type(attr->attach_bpf_fd,
+					 BPF_PROG_TYPE_SK_SKB);
+		if (IS_ERR(prog)) {
+			fdput(f);
+			return PTR_ERR(prog);
+		}
 	}
 
-	err = sock_map_attach_prog(map, prog, attr->attach_type);
+	err = sock_map_prog(map, prog, attr->attach_type);
 	if (err) {
 		fdput(f);
-		bpf_prog_put(prog);
+		if (prog)
+			bpf_prog_put(prog);
 		return err;
 	}
 
@@ -1155,7 +1161,7 @@ static int bpf_prog_attach(const union bpf_attr *attr)
 		break;
 	case BPF_SK_SKB_STREAM_PARSER:
 	case BPF_SK_SKB_STREAM_VERDICT:
-		return sockmap_get_from_fd(attr);
+		return sockmap_get_from_fd(attr, true);
 	default:
 		return -EINVAL;
 	}
@@ -1204,7 +1210,10 @@ static int bpf_prog_detach(const union bpf_attr *attr)
 		ret = cgroup_bpf_update(cgrp, NULL, attr->attach_type, false);
 		cgroup_put(cgrp);
 		break;
-
+	case BPF_SK_SKB_STREAM_PARSER:
+	case BPF_SK_SKB_STREAM_VERDICT:
+		ret = sockmap_get_from_fd(attr, false);
+		break;
 	default:
 		return -EINVAL;
 	}

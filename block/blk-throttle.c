@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Interface for controlling IO bandwidth on a request queue
  *
@@ -1911,11 +1912,11 @@ static void throtl_upgrade_state(struct throtl_data *td)
 
 		tg->disptime = jiffies - 1;
 		throtl_select_dispatch(sq);
-		throtl_schedule_next_dispatch(sq, false);
+		throtl_schedule_next_dispatch(sq, true);
 	}
 	rcu_read_unlock();
 	throtl_select_dispatch(&td->service_queue);
-	throtl_schedule_next_dispatch(&td->service_queue, false);
+	throtl_schedule_next_dispatch(&td->service_queue, true);
 	queue_work(kthrotld_workqueue, &td->dispatch_work);
 }
 
@@ -2222,13 +2223,7 @@ again:
 out_unlock:
 	spin_unlock_irq(q->queue_lock);
 out:
-	/*
-	 * As multiple blk-throtls may stack in the same issue path, we
-	 * don't want bios to leave with the flag set.  Clear the flag if
-	 * being issued.
-	 */
-	if (!throttled)
-		bio_clear_flag(bio, BIO_THROTTLED);
+	bio_set_flag(bio, BIO_THROTTLED);
 
 #ifdef CONFIG_BLK_DEV_THROTTLING_LOW
 	if (throttled || !td->track_bio_latency)

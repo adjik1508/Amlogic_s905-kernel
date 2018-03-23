@@ -425,8 +425,10 @@ static int fastop(struct x86_emulate_ctxt *ctxt, void (*fop)(struct fastop *));
 	#op " %al \n\t" \
 	FOP_RET
 
-asm(".global kvm_fastop_exception \n"
-    "kvm_fastop_exception: xor %esi, %esi; ret");
+asm(".pushsection .fixup, \"ax\"\n"
+    ".global kvm_fastop_exception \n"
+    "kvm_fastop_exception: xor %esi, %esi; ret\n"
+    ".popsection");
 
 FOP_START(setcc)
 FOP_SETCC(seto)
@@ -2402,9 +2404,21 @@ static int rsm_load_seg_64(struct x86_emulate_ctxt *ctxt, u64 smbase, int n)
 }
 
 static int rsm_enter_protected_mode(struct x86_emulate_ctxt *ctxt,
-				     u64 cr0, u64 cr4)
+				    u64 cr0, u64 cr3, u64 cr4)
 {
 	int bad;
+	u64 pcid;
+
+	/* In order to later set CR4.PCIDE, CR3[11:0] must be zero.  */
+	pcid = 0;
+	if (cr4 & X86_CR4_PCIDE) {
+		pcid = cr3 & 0xfff;
+		cr3 &= ~0xfff;
+	}
+
+	bad = ctxt->ops->set_cr(ctxt, 3, cr3);
+	if (bad)
+		return X86EMUL_UNHANDLEABLE;
 
 	/*
 	 * First enable PAE, long mode needs it before CR0.PG = 1 is set.
@@ -2423,6 +2437,12 @@ static int rsm_enter_protected_mode(struct x86_emulate_ctxt *ctxt,
 		bad = ctxt->ops->set_cr(ctxt, 4, cr4);
 		if (bad)
 			return X86EMUL_UNHANDLEABLE;
+		if (pcid) {
+			bad = ctxt->ops->set_cr(ctxt, 3, cr3 | pcid);
+			if (bad)
+				return X86EMUL_UNHANDLEABLE;
+		}
+
 	}
 
 	return X86EMUL_CONTINUE;
@@ -2433,11 +2453,11 @@ static int rsm_load_state_32(struct x86_emulate_ctxt *ctxt, u64 smbase)
 	struct desc_struct desc;
 	struct desc_ptr dt;
 	u16 selector;
-	u32 val, cr0, cr4;
+	u32 val, cr0, cr3, cr4;
 	int i;
 
 	cr0 =                      GET_SMSTATE(u32, smbase, 0x7ffc);
-	ctxt->ops->set_cr(ctxt, 3, GET_SMSTATE(u32, smbase, 0x7ff8));
+	cr3 =                      GET_SMSTATE(u32, smbase, 0x7ff8);
 	ctxt->eflags =             GET_SMSTATE(u32, smbase, 0x7ff4) | X86_EFLAGS_FIXED;
 	ctxt->_eip =               GET_SMSTATE(u32, smbase, 0x7ff0);
 
@@ -2479,14 +2499,14 @@ static int rsm_load_state_32(struct x86_emulate_ctxt *ctxt, u64 smbase)
 
 	ctxt->ops->set_smbase(ctxt, GET_SMSTATE(u32, smbase, 0x7ef8));
 
-	return rsm_enter_protected_mode(ctxt, cr0, cr4);
+	return rsm_enter_protected_mode(ctxt, cr0, cr3, cr4);
 }
 
 static int rsm_load_state_64(struct x86_emulate_ctxt *ctxt, u64 smbase)
 {
 	struct desc_struct desc;
 	struct desc_ptr dt;
-	u64 val, cr0, cr4;
+	u64 val, cr0, cr3, cr4;
 	u32 base3;
 	u16 selector;
 	int i, r;
@@ -2503,7 +2523,7 @@ static int rsm_load_state_64(struct x86_emulate_ctxt *ctxt, u64 smbase)
 	ctxt->ops->set_dr(ctxt, 7, (val & DR7_VOLATILE) | DR7_FIXED_1);
 
 	cr0 =                       GET_SMSTATE(u64, smbase, 0x7f58);
-	ctxt->ops->set_cr(ctxt, 3,  GET_SMSTATE(u64, smbase, 0x7f50));
+	cr3 =                       GET_SMSTATE(u64, smbase, 0x7f50);
 	cr4 =                       GET_SMSTATE(u64, smbase, 0x7f48);
 	ctxt->ops->set_smbase(ctxt, GET_SMSTATE(u32, smbase, 0x7f00));
 	val =                       GET_SMSTATE(u64, smbase, 0x7ed0);
@@ -2531,7 +2551,7 @@ static int rsm_load_state_64(struct x86_emulate_ctxt *ctxt, u64 smbase)
 	dt.address =                GET_SMSTATE(u64, smbase, 0x7e68);
 	ctxt->ops->set_gdt(ctxt, &dt);
 
-	r = rsm_enter_protected_mode(ctxt, cr0, cr4);
+	r = rsm_enter_protected_mode(ctxt, cr0, cr3, cr4);
 	if (r != X86EMUL_CONTINUE)
 		return r;
 
@@ -4102,10 +4122,12 @@ static int check_cr_write(struct x86_emulate_ctxt *ctxt)
 		ctxt->ops->get_msr(ctxt, MSR_EFER, &efer);
 		if (efer & EFER_LMA) {
 			u64 maxphyaddr;
-			u32 eax = 0x80000008;
+			u32 eax, ebx, ecx, edx;
 
-			if (ctxt->ops->get_cpuid(ctxt, &eax, NULL, NULL,
-						 NULL, false))
+			eax = 0x80000008;
+			ecx = 0;
+			if (ctxt->ops->get_cpuid(ctxt, &eax, &ebx, &ecx,
+						 &edx, false))
 				maxphyaddr = eax & 0xff;
 			else
 				maxphyaddr = 36;
@@ -5296,7 +5318,6 @@ static void fetch_possible_mmx_operand(struct x86_emulate_ctxt *ctxt,
 
 static int fastop(struct x86_emulate_ctxt *ctxt, void (*fop)(struct fastop *))
 {
-	register void *__sp asm(_ASM_SP);
 	ulong flags = (ctxt->eflags & EFLAGS_MASK) | X86_EFLAGS_IF;
 
 	if (!(ctxt->d & ByteOp))
@@ -5304,7 +5325,7 @@ static int fastop(struct x86_emulate_ctxt *ctxt, void (*fop)(struct fastop *))
 
 	asm("push %[flags]; popf; call *%[fastop]; pushf; pop %[flags]\n"
 	    : "+a"(ctxt->dst.val), "+d"(ctxt->src.val), [flags]"+D"(flags),
-	      [fastop]"+S"(fop), "+r"(__sp)
+	      [fastop]"+S"(fop), ASM_CALL_CONSTRAINT
 	    : "c"(ctxt->src2.val));
 
 	ctxt->eflags = (ctxt->eflags & ~EFLAGS_MASK) | (flags & EFLAGS_MASK);

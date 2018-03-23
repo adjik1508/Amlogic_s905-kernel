@@ -620,6 +620,14 @@ int file_check_and_advance_wb_err(struct file *file)
 		trace_file_check_and_advance_wb_err(file, old);
 		spin_unlock(&file->f_lock);
 	}
+
+	/*
+	 * We're mostly using this function as a drop in replacement for
+	 * filemap_check_errors. Clear AS_EIO/AS_ENOSPC to emulate the effect
+	 * that the legacy code would have had on these flags.
+	 */
+	clear_bit(AS_EIO, &mapping->flags);
+	clear_bit(AS_ENOSPC, &mapping->flags);
 	return err;
 }
 EXPORT_SYMBOL(file_check_and_advance_wb_err);
@@ -909,13 +917,33 @@ static void wake_up_page_bit(struct page *page, int bit_nr)
 	wait_queue_head_t *q = page_waitqueue(page);
 	struct wait_page_key key;
 	unsigned long flags;
+	wait_queue_entry_t bookmark;
 
 	key.page = page;
 	key.bit_nr = bit_nr;
 	key.page_match = 0;
 
+	bookmark.flags = 0;
+	bookmark.private = NULL;
+	bookmark.func = NULL;
+	INIT_LIST_HEAD(&bookmark.entry);
+
 	spin_lock_irqsave(&q->lock, flags);
-	__wake_up_locked_key(q, TASK_NORMAL, &key);
+	__wake_up_locked_key_bookmark(q, TASK_NORMAL, &key, &bookmark);
+
+	while (bookmark.flags & WQ_FLAG_BOOKMARK) {
+		/*
+		 * Take a breather from holding the lock,
+		 * allow pages that finish wake up asynchronously
+		 * to acquire the lock and remove themselves
+		 * from wait queue
+		 */
+		spin_unlock_irqrestore(&q->lock, flags);
+		cpu_relax();
+		spin_lock_irqsave(&q->lock, flags);
+		__wake_up_locked_key_bookmark(q, TASK_NORMAL, &key, &bookmark);
+	}
+
 	/*
 	 * It is possible for other pages to have collided on the waitqueue
 	 * hash, so in that case check for a page match. That prevents a long-
@@ -2906,9 +2934,15 @@ generic_file_direct_write(struct kiocb *iocb, struct iov_iter *from)
 	 * we're writing.  Either one is a pretty crazy thing to do,
 	 * so we don't support it 100%.  If this invalidation
 	 * fails, tough, the write still worked...
+	 *
+	 * Most of the time we do not need this since dio_complete() will do
+	 * the invalidation for us. However there are some file systems that
+	 * do not end up with dio_complete() being called, so let's not break
+	 * them by removing it completely
 	 */
-	invalidate_inode_pages2_range(mapping,
-				pos >> PAGE_SHIFT, end);
+	if (mapping->nrpages)
+		invalidate_inode_pages2_range(mapping,
+					pos >> PAGE_SHIFT, end);
 
 	if (written > 0) {
 		pos += written;

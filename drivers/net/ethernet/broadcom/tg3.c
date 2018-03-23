@@ -11536,11 +11536,11 @@ static int tg3_start(struct tg3 *tp, bool reset_phy, bool test_irq,
 	tg3_napi_enable(tp);
 
 	for (i = 0; i < tp->irq_cnt; i++) {
-		struct tg3_napi *tnapi = &tp->napi[i];
 		err = tg3_request_irq(tp, i);
 		if (err) {
 			for (i--; i >= 0; i--) {
-				tnapi = &tp->napi[i];
+				struct tg3_napi *tnapi = &tp->napi[i];
+
 				free_irq(tnapi->irq_vec, tnapi);
 			}
 			goto out_napi_fini;
@@ -14227,7 +14227,9 @@ static int tg3_change_mtu(struct net_device *dev, int new_mtu)
 	/* Reset PHY, otherwise the read DMA engine will be in a mode that
 	 * breaks all requests to 256 bytes.
 	 */
-	if (tg3_asic_rev(tp) == ASIC_REV_57766)
+	if (tg3_asic_rev(tp) == ASIC_REV_57766 ||
+	    tg3_asic_rev(tp) == ASIC_REV_5717 ||
+	    tg3_asic_rev(tp) == ASIC_REV_5719)
 		reset_phy = true;
 
 	err = tg3_restart_hw(tp, reset_phy);

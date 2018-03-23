@@ -181,10 +181,15 @@ static const struct file_operations sched_feat_fops = {
 	.release	= single_release,
 };
 
+__read_mostly bool sched_debug_enabled;
+
 static __init int sched_init_debug(void)
 {
 	debugfs_create_file("sched_features", 0644, NULL, NULL,
 			&sched_feat_fops);
+
+	debugfs_create_bool("sched_debug", 0644, NULL,
+			&sched_debug_enabled);
 
 	return 0;
 }
@@ -460,8 +465,6 @@ static char *task_group_path(struct task_group *tg)
 	return group_path;
 }
 #endif
-
-static const char stat_nam[] = TASK_STATE_TO_CHAR_STR;
 
 static void
 print_task(struct seq_file *m, struct rq *rq, struct task_struct *p)

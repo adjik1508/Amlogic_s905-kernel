@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/syscalls.h>
 #include <linux/export.h>
 #include <linux/fs.h>
@@ -34,11 +35,11 @@ static int flags_by_mnt(int mnt_flags)
 static int flags_by_sb(int s_flags)
 {
 	int flags = 0;
-	if (s_flags & SB_SYNCHRONOUS)
+	if (s_flags & MS_SYNCHRONOUS)
 		flags |= ST_SYNCHRONOUS;
-	if (s_flags & SB_MANDLOCK)
+	if (s_flags & MS_MANDLOCK)
 		flags |= ST_MANDLOCK;
-	if (s_flags & SB_RDONLY)
+	if (s_flags & MS_RDONLY)
 		flags |= ST_RDONLY;
 	return flags;
 }

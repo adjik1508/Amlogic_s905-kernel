@@ -989,10 +989,14 @@ static bool __sk_filter_charge(struct sock *sk, struct sk_filter *fp)
 
 bool sk_filter_charge(struct sock *sk, struct sk_filter *fp)
 {
-	bool ret = __sk_filter_charge(sk, fp);
-	if (ret)
-		refcount_inc(&fp->refcnt);
-	return ret;
+	if (!refcount_inc_not_zero(&fp->refcnt))
+		return false;
+
+	if (!__sk_filter_charge(sk, fp)) {
+		sk_filter_release(fp);
+		return false;
+	}
+	return true;
 }
 
 static struct bpf_prog *bpf_migrate_filter(struct bpf_prog *fp)
@@ -1794,6 +1798,7 @@ struct redirect_info {
 	u32 flags;
 	struct bpf_map *map;
 	struct bpf_map *map_to_flush;
+	unsigned long   map_owner;
 };
 
 static DEFINE_PER_CPU(struct redirect_info, redirect_info);
@@ -1807,7 +1812,6 @@ BPF_CALL_2(bpf_redirect, u32, ifindex, u64, flags)
 
 	ri->ifindex = ifindex;
 	ri->flags = flags;
-	ri->map = NULL;
 
 	return TC_ACT_REDIRECT;
 }
@@ -1835,31 +1839,32 @@ static const struct bpf_func_proto bpf_redirect_proto = {
 	.arg2_type      = ARG_ANYTHING,
 };
 
-BPF_CALL_3(bpf_sk_redirect_map, struct bpf_map *, map, u32, key, u64, flags)
+BPF_CALL_4(bpf_sk_redirect_map, struct sk_buff *, skb,
+	   struct bpf_map *, map, u32, key, u64, flags)
 {
-	struct redirect_info *ri = this_cpu_ptr(&redirect_info);
+	struct tcp_skb_cb *tcb = TCP_SKB_CB(skb);
 
+	/* If user passes invalid input drop the packet. */
 	if (unlikely(flags))
-		return SK_ABORTED;
+		return SK_DROP;
 
-	ri->ifindex = key;
-	ri->flags = flags;
-	ri->map = map;
+	tcb->bpf.key = key;
+	tcb->bpf.flags = flags;
+	tcb->bpf.map = map;
 
-	return SK_REDIRECT;
+	return SK_PASS;
 }
 
-struct sock *do_sk_redirect_map(void)
+struct sock *do_sk_redirect_map(struct sk_buff *skb)
 {
-	struct redirect_info *ri = this_cpu_ptr(&redirect_info);
+	struct tcp_skb_cb *tcb = TCP_SKB_CB(skb);
 	struct sock *sk = NULL;
 
-	if (ri->map) {
-		sk = __sock_map_lookup_elem(ri->map, ri->ifindex);
+	if (tcb->bpf.map) {
+		sk = __sock_map_lookup_elem(tcb->bpf.map, tcb->bpf.key);
 
-		ri->ifindex = 0;
-		ri->map = NULL;
-		/* we do not clear flags for future lookup */
+		tcb->bpf.key = 0;
+		tcb->bpf.map = NULL;
 	}
 
 	return sk;
@@ -1869,9 +1874,10 @@ static const struct bpf_func_proto bpf_sk_redirect_map_proto = {
 	.func           = bpf_sk_redirect_map,
 	.gpl_only       = false,
 	.ret_type       = RET_INTEGER,
-	.arg1_type      = ARG_CONST_MAP_PTR,
-	.arg2_type      = ARG_ANYTHING,
+	.arg1_type	= ARG_PTR_TO_CTX,
+	.arg2_type      = ARG_CONST_MAP_PTR,
 	.arg3_type      = ARG_ANYTHING,
+	.arg4_type      = ARG_ANYTHING,
 };
 
 BPF_CALL_1(bpf_get_cgroup_classid, const struct sk_buff *, skb)
@@ -2500,17 +2506,31 @@ void xdp_do_flush_map(void)
 }
 EXPORT_SYMBOL_GPL(xdp_do_flush_map);
 
+static inline bool xdp_map_invalid(const struct bpf_prog *xdp_prog,
+				   unsigned long aux)
+{
+	return (unsigned long)xdp_prog->aux != aux;
+}
+
 static int xdp_do_redirect_map(struct net_device *dev, struct xdp_buff *xdp,
 			       struct bpf_prog *xdp_prog)
 {
 	struct redirect_info *ri = this_cpu_ptr(&redirect_info);
+	unsigned long map_owner = ri->map_owner;
 	struct bpf_map *map = ri->map;
+	struct net_device *fwd = NULL;
 	u32 index = ri->ifindex;
-	struct net_device *fwd;
 	int err;
 
 	ri->ifindex = 0;
 	ri->map = NULL;
+	ri->map_owner = 0;
+
+	if (unlikely(xdp_map_invalid(xdp_prog, map_owner))) {
+		err = -EFAULT;
+		map = NULL;
+		goto err;
+	}
 
 	fwd = __dev_map_lookup_elem(map, index);
 	if (!fwd) {
@@ -2566,13 +2586,27 @@ int xdp_do_generic_redirect(struct net_device *dev, struct sk_buff *skb,
 			    struct bpf_prog *xdp_prog)
 {
 	struct redirect_info *ri = this_cpu_ptr(&redirect_info);
+	unsigned long map_owner = ri->map_owner;
+	struct bpf_map *map = ri->map;
+	struct net_device *fwd = NULL;
 	u32 index = ri->ifindex;
-	struct net_device *fwd;
 	unsigned int len;
 	int err = 0;
 
-	fwd = dev_get_by_index_rcu(dev_net(dev), index);
 	ri->ifindex = 0;
+	ri->map = NULL;
+	ri->map_owner = 0;
+
+	if (map) {
+		if (unlikely(xdp_map_invalid(xdp_prog, map_owner))) {
+			err = -EFAULT;
+			map = NULL;
+			goto err;
+		}
+		fwd = __dev_map_lookup_elem(map, index);
+	} else {
+		fwd = dev_get_by_index_rcu(dev_net(dev), index);
+	}
 	if (unlikely(!fwd)) {
 		err = -EINVAL;
 		goto err;
@@ -2590,10 +2624,12 @@ int xdp_do_generic_redirect(struct net_device *dev, struct sk_buff *skb,
 	}
 
 	skb->dev = fwd;
-	_trace_xdp_redirect(dev, xdp_prog, index);
+	map ? _trace_xdp_redirect_map(dev, xdp_prog, fwd, map, index)
+		: _trace_xdp_redirect(dev, xdp_prog, index);
 	return 0;
 err:
-	_trace_xdp_redirect_err(dev, xdp_prog, index, err);
+	map ? _trace_xdp_redirect_map_err(dev, xdp_prog, fwd, map, index, err)
+		: _trace_xdp_redirect_err(dev, xdp_prog, index, err);
 	return err;
 }
 EXPORT_SYMBOL_GPL(xdp_do_generic_redirect);
@@ -2607,6 +2643,8 @@ BPF_CALL_2(bpf_xdp_redirect, u32, ifindex, u64, flags)
 
 	ri->ifindex = ifindex;
 	ri->flags = flags;
+	ri->map = NULL;
+	ri->map_owner = 0;
 
 	return XDP_REDIRECT;
 }
@@ -2619,7 +2657,8 @@ static const struct bpf_func_proto bpf_xdp_redirect_proto = {
 	.arg2_type      = ARG_ANYTHING,
 };
 
-BPF_CALL_3(bpf_xdp_redirect_map, struct bpf_map *, map, u32, ifindex, u64, flags)
+BPF_CALL_4(bpf_xdp_redirect_map, struct bpf_map *, map, u32, ifindex, u64, flags,
+	   unsigned long, map_owner)
 {
 	struct redirect_info *ri = this_cpu_ptr(&redirect_info);
 
@@ -2629,10 +2668,14 @@ BPF_CALL_3(bpf_xdp_redirect_map, struct bpf_map *, map, u32, ifindex, u64, flags
 	ri->ifindex = ifindex;
 	ri->flags = flags;
 	ri->map = map;
+	ri->map_owner = map_owner;
 
 	return XDP_REDIRECT;
 }
 
+/* Note, arg4 is hidden from users and populated by the verifier
+ * with the right pointer.
+ */
 static const struct bpf_func_proto bpf_xdp_redirect_map_proto = {
 	.func           = bpf_xdp_redirect_map,
 	.gpl_only       = false,
@@ -3592,7 +3635,11 @@ static bool xdp_is_valid_access(int off, int size,
 
 void bpf_warn_invalid_xdp_action(u32 act)
 {
-	WARN_ONCE(1, "Illegal XDP return value %u, expect packet loss\n", act);
+	const u32 act_max = XDP_REDIRECT;
+
+	WARN_ONCE(1, "%s XDP return value %u, expect packet loss!\n",
+		  act > act_max ? "Illegal" : "Driver unsupported",
+		  act);
 }
 EXPORT_SYMBOL_GPL(bpf_warn_invalid_xdp_action);
 
@@ -3638,7 +3685,6 @@ static bool sk_skb_is_valid_access(int off, int size,
 {
 	if (type == BPF_WRITE) {
 		switch (off) {
-		case bpf_ctx_range(struct __sk_buff, mark):
 		case bpf_ctx_range(struct __sk_buff, tc_index):
 		case bpf_ctx_range(struct __sk_buff, priority):
 			break;
@@ -3648,6 +3694,7 @@ static bool sk_skb_is_valid_access(int off, int size,
 	}
 
 	switch (off) {
+	case bpf_ctx_range(struct __sk_buff, mark):
 	case bpf_ctx_range(struct __sk_buff, tc_classid):
 		return false;
 	case bpf_ctx_range(struct __sk_buff, data):
@@ -4197,6 +4244,31 @@ static u32 sock_ops_convert_ctx_access(enum bpf_access_type type,
 	return insn - insn_buf;
 }
 
+static u32 sk_skb_convert_ctx_access(enum bpf_access_type type,
+				     const struct bpf_insn *si,
+				     struct bpf_insn *insn_buf,
+				     struct bpf_prog *prog, u32 *target_size)
+{
+	struct bpf_insn *insn = insn_buf;
+	int off;
+
+	switch (si->off) {
+	case offsetof(struct __sk_buff, data_end):
+		off  = si->off;
+		off -= offsetof(struct __sk_buff, data_end);
+		off += offsetof(struct sk_buff, cb);
+		off += offsetof(struct tcp_skb_cb, bpf.data_end);
+		*insn++ = BPF_LDX_MEM(BPF_SIZEOF(void *), si->dst_reg,
+				      si->src_reg, off);
+		break;
+	default:
+		return bpf_convert_ctx_access(type, si, insn_buf, prog,
+					      target_size);
+	}
+
+	return insn - insn_buf;
+}
+
 const struct bpf_verifier_ops sk_filter_prog_ops = {
 	.get_func_proto		= sk_filter_func_proto,
 	.is_valid_access	= sk_filter_is_valid_access,
@@ -4255,7 +4327,7 @@ const struct bpf_verifier_ops sock_ops_prog_ops = {
 const struct bpf_verifier_ops sk_skb_prog_ops = {
 	.get_func_proto		= sk_skb_func_proto,
 	.is_valid_access	= sk_skb_is_valid_access,
-	.convert_ctx_access	= bpf_convert_ctx_access,
+	.convert_ctx_access	= sk_skb_convert_ctx_access,
 	.gen_prologue		= sk_skb_prologue,
 };
 

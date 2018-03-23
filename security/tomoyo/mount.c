@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * security/tomoyo/mount.c
  *
@@ -5,7 +6,6 @@
  */
 
 #include <linux/slab.h>
-#include <uapi/linux/mount.h>
 #include "common.h"
 
 /* String table for special mount operations. */

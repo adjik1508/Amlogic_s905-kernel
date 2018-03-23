@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __PERF_EVSEL_H
 #define __PERF_EVSEL_H 1
 
@@ -131,6 +132,7 @@ struct perf_evsel {
 	bool			cmdline_group_boundary;
 	struct list_head	config_terms;
 	int			bpf_fd;
+	bool			auto_merge_stats;
 	bool			merged_stat;
 	const char *		metric_expr;
 	const char *		metric_name;

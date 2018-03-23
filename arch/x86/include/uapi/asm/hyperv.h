@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
 #ifndef _ASM_X86_HYPERV_H
 #define _ASM_X86_HYPERV_H
 
@@ -151,12 +152,6 @@
 
 /* Recommend using the newer ExProcessorMasks interface */
 #define HV_X64_EX_PROCESSOR_MASKS_RECOMMENDED	(1 << 11)
-
-/*
- * HV_VP_SET available
- */
-#define HV_X64_EX_PROCESSOR_MASKS_RECOMMENDED	(1 << 11)
-
 
 /*
  * Crash notification flag.

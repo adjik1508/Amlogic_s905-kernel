@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/fs/super.c
  *
@@ -34,7 +35,6 @@
 #include <linux/fsnotify.h>
 #include <linux/lockdep.h>
 #include <linux/user_namespace.h>
-#include <uapi/linux/mount.h>
 #include "internal.h"
 
 

@@ -395,7 +395,16 @@ static int gmc_v9_0_early_init(void *handle)
 static int gmc_v9_0_late_init(void *handle)
 {
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
-	unsigned vm_inv_eng[AMDGPU_MAX_VMHUBS] = { 3, 3 };
+	/*
+	 * The latest engine allocation on gfx9 is:
+	 * Engine 0, 1: idle
+	 * Engine 2, 3: firmware
+	 * Engine 4~13: amdgpu ring, subject to change when ring number changes
+	 * Engine 14~15: idle
+	 * Engine 16: kfd tlb invalidation
+	 * Engine 17: Gart flushes
+	 */
+	unsigned vm_inv_eng[AMDGPU_MAX_VMHUBS] = { 4, 4 };
 	unsigned i;
 
 	for(i = 0; i < adev->num_rings; ++i) {
@@ -408,9 +417,9 @@ static int gmc_v9_0_late_init(void *handle)
 			 ring->funcs->vmhub);
 	}
 
-	/* Engine 17 is used for GART flushes */
+	/* Engine 16 is used for KFD and 17 for GART flushes */
 	for(i = 0; i < AMDGPU_MAX_VMHUBS; ++i)
-		BUG_ON(vm_inv_eng[i] > 17);
+		BUG_ON(vm_inv_eng[i] > 16);
 
 	return amdgpu_irq_get(adev, &adev->mc.vm_fault, 0);
 }
@@ -499,7 +508,21 @@ static int gmc_v9_0_mc_init(struct amdgpu_device *adev)
 	if (adev->mc.visible_vram_size > adev->mc.real_vram_size)
 		adev->mc.visible_vram_size = adev->mc.real_vram_size;
 
-	amdgpu_gart_set_defaults(adev);
+	/* set the gart size */
+	if (amdgpu_gart_size == -1) {
+		switch (adev->asic_type) {
+		case CHIP_VEGA10:  /* all engines support GPUVM */
+		default:
+			adev->mc.gart_size = 256ULL << 20;
+			break;
+		case CHIP_RAVEN:   /* DCE SG support */
+			adev->mc.gart_size = 1024ULL << 20;
+			break;
+		}
+	} else {
+		adev->mc.gart_size = (u64)amdgpu_gart_size << 20;
+	}
+
 	gmc_v9_0_vram_gtt_location(adev, &adev->mc);
 
 	return 0;

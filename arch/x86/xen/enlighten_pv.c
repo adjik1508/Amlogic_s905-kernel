@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Core of Xen paravirt_ops implementation.
  *
@@ -600,7 +601,7 @@ static struct trap_array_entry trap_array[] = {
 #ifdef CONFIG_X86_MCE
 	{ machine_check,               xen_machine_check,               true },
 #endif
-	{ nmi,                         xen_nmi,                         true },
+	{ nmi,                         xen_xennmi,                      true },
 	{ overflow,                    xen_overflow,                    false },
 #ifdef CONFIG_IA32_EMULATION
 	{ entry_INT80_compat,          xen_entry_INT80_compat,          false },
@@ -810,15 +811,14 @@ static void __init xen_write_gdt_entry_boot(struct desc_struct *dt, int entry,
 	}
 }
 
-static void xen_load_sp0(struct tss_struct *tss,
-			 struct thread_struct *thread)
+static void xen_load_sp0(unsigned long sp0)
 {
 	struct multicall_space mcs;
 
 	mcs = xen_mc_entry(0);
-	MULTI_stack_switch(mcs.mc, __KERNEL_DS, thread->sp0);
+	MULTI_stack_switch(mcs.mc, __KERNEL_DS, sp0);
 	xen_mc_issue(PARAVIRT_LAZY_CPU);
-	tss->x86_tss.sp0 = thread->sp0;
+	this_cpu_write(cpu_tss_rw.x86_tss.sp0, sp0);
 }
 
 void xen_set_iopl_mask(unsigned mask)
@@ -1038,7 +1038,6 @@ static const struct pv_cpu_ops xen_cpu_ops __initconst = {
 	.read_cr0 = xen_read_cr0,
 	.write_cr0 = xen_write_cr0,
 
-	.read_cr4 = native_read_cr4,
 	.write_cr4 = xen_write_cr4,
 
 #ifdef CONFIG_X86_64
@@ -1073,7 +1072,6 @@ static const struct pv_cpu_ops xen_cpu_ops __initconst = {
 	.alloc_ldt = xen_alloc_ldt,
 	.free_ldt = xen_free_ldt,
 
-	.store_idt = native_store_idt,
 	.store_tr = xen_store_tr,
 
 	.write_ldt_entry = xen_write_ldt_entry,
@@ -1461,9 +1459,9 @@ static uint32_t __init xen_platform_pv(void)
 	return 0;
 }
 
-const struct hypervisor_x86 x86_hyper_xen_pv = {
+const __initconst struct hypervisor_x86 x86_hyper_xen_pv = {
 	.name                   = "Xen PV",
 	.detect                 = xen_platform_pv,
-	.pin_vcpu               = xen_pin_vcpu,
+	.type			= X86_HYPER_XEN_PV,
+	.runtime.pin_vcpu       = xen_pin_vcpu,
 };
-EXPORT_SYMBOL(x86_hyper_xen_pv);

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/arch/sparc64/kernel/setup.c
  *
@@ -32,7 +33,6 @@
 #include <linux/module.h>
 #include <linux/start_kernel.h>
 #include <linux/bootmem.h>
-#include <uapi/linux/mount.h>
 
 #include <asm/io.h>
 #include <asm/processor.h>
@@ -299,6 +299,11 @@ static void __init sun4v_patch(void)
 		break;
 	default:
 		break;
+	}
+
+	if (sun4v_chip_type != SUN4V_CHIP_NIAGARA1) {
+		sun4v_patch_1insn_range(&__fast_win_ctrl_1insn_patch,
+					&__fast_win_ctrl_1insn_patch_end);
 	}
 
 	sun4v_hvapi_init();

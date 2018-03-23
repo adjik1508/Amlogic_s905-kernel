@@ -1147,9 +1147,8 @@ static int dev_alloc_name_ns(struct net *net,
 	return ret;
 }
 
-static int dev_get_valid_name(struct net *net,
-			      struct net_device *dev,
-			      const char *name)
+int dev_get_valid_name(struct net *net, struct net_device *dev,
+		       const char *name)
 {
 	BUG_ON(!net);
 
@@ -1165,6 +1164,7 @@ static int dev_get_valid_name(struct net *net,
 
 	return 0;
 }
+EXPORT_SYMBOL(dev_get_valid_name);
 
 /**
  *	dev_change_name - change name of a device
@@ -1948,8 +1948,12 @@ again:
 		goto again;
 	}
 out_unlock:
-	if (pt_prev)
-		pt_prev->func(skb2, skb->dev, pt_prev, skb->dev);
+	if (pt_prev) {
+		if (!skb_orphan_frags_rx(skb2, GFP_ATOMIC))
+			pt_prev->func(skb2, skb->dev, pt_prev, skb->dev);
+		else
+			kfree_skb(skb2);
+	}
 	rcu_read_unlock();
 }
 EXPORT_SYMBOL_GPL(dev_queue_xmit_nit);
@@ -2731,7 +2735,8 @@ EXPORT_SYMBOL(skb_mac_gso_segment);
 static inline bool skb_needs_check(struct sk_buff *skb, bool tx_path)
 {
 	if (tx_path)
-		return skb->ip_summed != CHECKSUM_PARTIAL;
+		return skb->ip_summed != CHECKSUM_PARTIAL &&
+		       skb->ip_summed != CHECKSUM_UNNECESSARY;
 
 	return skb->ip_summed == CHECKSUM_NONE;
 }
@@ -3892,6 +3897,7 @@ static u32 netif_receive_generic_xdp(struct sk_buff *skb,
 		__skb_pull(skb, off);
 	else if (off < 0)
 		__skb_push(skb, -off);
+	skb->mac_header += off;
 
 	switch (act) {
 	case XDP_REDIRECT:
@@ -3981,8 +3987,13 @@ static int netif_rx_internal(struct sk_buff *skb)
 	trace_netif_rx(skb);
 
 	if (static_key_false(&generic_xdp_needed)) {
-		int ret = do_xdp_generic(rcu_dereference(skb->dev->xdp_prog),
-					 skb);
+		int ret;
+
+		preempt_disable();
+		rcu_read_lock();
+		ret = do_xdp_generic(rcu_dereference(skb->dev->xdp_prog), skb);
+		rcu_read_unlock();
+		preempt_enable();
 
 		/* Consider XDP consuming the packet a success from
 		 * the netdev point of view we do not want to count
@@ -4500,18 +4511,20 @@ static int netif_receive_skb_internal(struct sk_buff *skb)
 	if (skb_defer_rx_timestamp(skb))
 		return NET_RX_SUCCESS;
 
-	rcu_read_lock();
-
 	if (static_key_false(&generic_xdp_needed)) {
-		int ret = do_xdp_generic(rcu_dereference(skb->dev->xdp_prog),
-					 skb);
+		int ret;
 
-		if (ret != XDP_PASS) {
-			rcu_read_unlock();
+		preempt_disable();
+		rcu_read_lock();
+		ret = do_xdp_generic(rcu_dereference(skb->dev->xdp_prog), skb);
+		rcu_read_unlock();
+		preempt_enable();
+
+		if (ret != XDP_PASS)
 			return NET_RX_DROP;
-		}
 	}
 
+	rcu_read_lock();
 #ifdef CONFIG_RPS
 	if (static_key_false(&rps_needed)) {
 		struct rps_dev_flow voidflow, *rflow = &voidflow;

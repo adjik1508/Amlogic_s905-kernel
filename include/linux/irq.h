@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_IRQ_H
 #define _LINUX_IRQ_H
 
@@ -210,6 +211,7 @@ struct irq_data {
  * IRQD_MANAGED_SHUTDOWN	- Interrupt was shutdown due to empty affinity
  *				  mask. Applies only to affinity managed irqs.
  * IRQD_SINGLE_TARGET		- IRQ allows only a single affinity target
+ * IRQD_DEFAULT_TRIGGER_SET	- Expected trigger already been set
  */
 enum {
 	IRQD_TRIGGER_MASK		= 0xf,
@@ -230,6 +232,7 @@ enum {
 	IRQD_IRQ_STARTED		= (1 << 22),
 	IRQD_MANAGED_SHUTDOWN		= (1 << 23),
 	IRQD_SINGLE_TARGET		= (1 << 24),
+	IRQD_DEFAULT_TRIGGER_SET	= (1 << 25),
 };
 
 #define __irqd_to_state(d) ACCESS_PRIVATE((d)->common, state_use_accessors)
@@ -259,18 +262,25 @@ static inline void irqd_mark_affinity_was_set(struct irq_data *d)
 	__irqd_to_state(d) |= IRQD_AFFINITY_SET;
 }
 
+static inline bool irqd_trigger_type_was_set(struct irq_data *d)
+{
+	return __irqd_to_state(d) & IRQD_DEFAULT_TRIGGER_SET;
+}
+
 static inline u32 irqd_get_trigger_type(struct irq_data *d)
 {
 	return __irqd_to_state(d) & IRQD_TRIGGER_MASK;
 }
 
 /*
- * Must only be called inside irq_chip.irq_set_type() functions.
+ * Must only be called inside irq_chip.irq_set_type() functions or
+ * from the DT/ACPI setup code.
  */
 static inline void irqd_set_trigger_type(struct irq_data *d, u32 type)
 {
 	__irqd_to_state(d) &= ~IRQD_TRIGGER_MASK;
 	__irqd_to_state(d) |= type & IRQD_TRIGGER_MASK;
+	__irqd_to_state(d) |= IRQD_DEFAULT_TRIGGER_SET;
 }
 
 static inline bool irqd_is_level_type(struct irq_data *d)
@@ -783,10 +793,7 @@ static inline struct cpumask *irq_data_get_affinity_mask(struct irq_data *d)
 static inline
 struct cpumask *irq_data_get_effective_affinity_mask(struct irq_data *d)
 {
-	if (!cpumask_empty(d->common->effective_affinity))
-		return d->common->effective_affinity;
-
-	return d->common->affinity;
+	return d->common->effective_affinity;
 }
 static inline void irq_data_update_effective_affinity(struct irq_data *d,
 						      const struct cpumask *m)
@@ -1012,7 +1019,7 @@ void irq_gc_mask_clr_bit(struct irq_data *d);
 void irq_gc_unmask_enable_reg(struct irq_data *d);
 void irq_gc_ack_set_bit(struct irq_data *d);
 void irq_gc_ack_clr_bit(struct irq_data *d);
-void irq_gc_mask_disable_reg_and_ack(struct irq_data *d);
+void irq_gc_mask_disable_and_ack_set(struct irq_data *d);
 void irq_gc_eoi(struct irq_data *d);
 int irq_gc_set_wake(struct irq_data *d, unsigned int on);
 

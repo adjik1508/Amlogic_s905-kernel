@@ -45,7 +45,6 @@
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/spi.h>
-#define SPI_DYN_FIRST_BUS_NUM 0
 
 static DEFINE_IDR(spi_master_idr);
 
@@ -2086,7 +2085,7 @@ int spi_register_controller(struct spi_controller *ctlr)
 	struct device		*dev = ctlr->dev.parent;
 	struct boardinfo	*bi;
 	int			status = -ENODEV;
-	int			id;
+	int			id, first_dynamic;
 
 	if (!dev)
 		return -ENODEV;
@@ -2116,9 +2115,15 @@ int spi_register_controller(struct spi_controller *ctlr)
 		}
 	}
 	if (ctlr->bus_num < 0) {
+		first_dynamic = of_alias_get_highest_id("spi");
+		if (first_dynamic < 0)
+			first_dynamic = 0;
+		else
+			first_dynamic++;
+
 		mutex_lock(&board_lock);
-		id = idr_alloc(&spi_master_idr, ctlr, SPI_DYN_FIRST_BUS_NUM, 0,
-			       GFP_KERNEL);
+		id = idr_alloc(&spi_master_idr, ctlr, first_dynamic,
+			       0, GFP_KERNEL);
 		mutex_unlock(&board_lock);
 		if (WARN(id < 0, "couldn't get idr"))
 			return id;
@@ -2240,11 +2245,12 @@ static int __unregister(struct device *dev, void *null)
 void spi_unregister_controller(struct spi_controller *ctlr)
 {
 	struct spi_controller *found;
+	int id = ctlr->bus_num;
 	int dummy;
 
 	/* First make sure that this controller was ever added */
 	mutex_lock(&board_lock);
-	found = idr_find(&spi_master_idr, ctlr->bus_num);
+	found = idr_find(&spi_master_idr, id);
 	mutex_unlock(&board_lock);
 	if (found != ctlr) {
 		dev_dbg(&ctlr->dev,
@@ -2264,7 +2270,7 @@ void spi_unregister_controller(struct spi_controller *ctlr)
 	device_unregister(&ctlr->dev);
 	/* free bus id */
 	mutex_lock(&board_lock);
-	idr_remove(&spi_master_idr, ctlr->bus_num);
+	idr_remove(&spi_master_idr, id);
 	mutex_unlock(&board_lock);
 }
 EXPORT_SYMBOL_GPL(spi_unregister_controller);

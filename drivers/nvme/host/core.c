@@ -134,8 +134,6 @@ static inline bool nvme_req_needs_retry(struct request *req)
 		return false;
 	if (nvme_req(req)->status & NVME_SC_DNR)
 		return false;
-	if (jiffies - req->start_time >= req->timeout)
-		return false;
 	if (nvme_req(req)->retries >= nvme_max_retries)
 		return false;
 	return true;
@@ -1251,6 +1249,7 @@ static int nvme_revalidate_disk(struct gendisk *disk)
 		goto out;
 	}
 
+	__nvme_revalidate_disk(disk, id);
 	nvme_report_ns_ids(ctrl, ns->ns_id, id, eui64, nguid, &uuid);
 	if (!uuid_equal(&ns->uuid, &uuid) ||
 	    memcmp(&ns->nguid, &nguid, sizeof(ns->nguid)) ||
@@ -1897,6 +1896,8 @@ int nvme_init_identify(struct nvme_ctrl *ctrl)
 		ctrl->cntlid = le16_to_cpu(id->cntlid);
 		ctrl->hmpre = le32_to_cpu(id->hmpre);
 		ctrl->hmmin = le32_to_cpu(id->hmmin);
+		ctrl->hmminds = le32_to_cpu(id->hmminds);
+		ctrl->hmmaxd = le16_to_cpu(id->hmmaxd);
 	}
 
 	kfree(id);
@@ -2136,7 +2137,7 @@ static umode_t nvme_ns_attrs_are_visible(struct kobject *kobj,
 	struct nvme_ns *ns = nvme_get_ns_from_dev(dev);
 
 	if (a == &dev_attr_uuid.attr) {
-		if (uuid_is_null(&ns->uuid) ||
+		if (uuid_is_null(&ns->uuid) &&
 		    !memchr_inv(ns->nguid, 0, sizeof(ns->nguid)))
 			return 0;
 	}
@@ -2298,7 +2299,8 @@ static struct nvme_ns *nvme_find_get_ns(struct nvme_ctrl *ctrl, unsigned nsid)
 	mutex_lock(&ctrl->namespaces_mutex);
 	list_for_each_entry(ns, &ctrl->namespaces, list) {
 		if (ns->ns_id == nsid) {
-			kref_get(&ns->kref);
+			if (!kref_get_unless_zero(&ns->kref))
+				continue;
 			ret = ns;
 			break;
 		}
@@ -2377,10 +2379,11 @@ static void nvme_alloc_ns(struct nvme_ctrl *ctrl, unsigned nsid)
 
 	nvme_report_ns_ids(ctrl, ns->ns_id, id, ns->eui, ns->nguid, &ns->uuid);
 
-	if (nvme_nvm_ns_supported(ns, id) &&
-				nvme_nvm_register(ns, disk_name, node)) {
-		dev_warn(ctrl->device, "%s: LightNVM init failure\n", __func__);
-		goto out_free_id;
+	if ((ctrl->quirks & NVME_QUIRK_LIGHTNVM) && id->vs[0] == 0x1) {
+		if (nvme_nvm_register(ns, disk_name, node)) {
+			dev_warn(ctrl->device, "LightNVM init failure\n");
+			goto out_free_id;
+		}
 	}
 
 	disk = alloc_disk_node(0, node);
@@ -2587,7 +2590,7 @@ static void nvme_async_event_work(struct work_struct *work)
 		container_of(work, struct nvme_ctrl, async_event_work);
 
 	spin_lock_irq(&ctrl->lock);
-	while (ctrl->event_limit > 0) {
+	while (ctrl->state == NVME_CTRL_LIVE && ctrl->event_limit > 0) {
 		int aer_idx = --ctrl->event_limit;
 
 		spin_unlock_irq(&ctrl->lock);
@@ -2674,7 +2677,8 @@ void nvme_complete_async_event(struct nvme_ctrl *ctrl, __le16 status,
 		/*FALLTHRU*/
 	case NVME_SC_ABORT_REQ:
 		++ctrl->event_limit;
-		queue_work(nvme_wq, &ctrl->async_event_work);
+		if (ctrl->state == NVME_CTRL_LIVE)
+			queue_work(nvme_wq, &ctrl->async_event_work);
 		break;
 	default:
 		break;
@@ -2689,7 +2693,7 @@ void nvme_complete_async_event(struct nvme_ctrl *ctrl, __le16 status,
 		nvme_queue_scan(ctrl);
 		break;
 	case NVME_AER_NOTICE_FW_ACT_STARTING:
-		schedule_work(&ctrl->fw_act_work);
+		queue_work(nvme_wq, &ctrl->fw_act_work);
 		break;
 	default:
 		dev_warn(ctrl->device, "async event result %08x\n", result);

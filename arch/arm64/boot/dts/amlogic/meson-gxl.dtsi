@@ -50,8 +50,15 @@
 / {
 	compatible = "amlogic,meson-gxl";
 
-	soc {
+	reserved-memory {
+		/* Alternate 3 MiB reserved for ARM Trusted Firmware (BL31) */
+		secmon_reserved_alt: secmon@05000000 {
+			reg = <0x0 0x05000000 0x0 0x300000>;
+			no-map;
+		};
+	};
 
+	soc {
 		usb0: usb@c9000000 {
 			compatible = "snps,dwc3";
 			#address-cells = <1>;
@@ -61,6 +68,8 @@
 			dr_mode = "host";
 			maximum-speed = "high-speed";
 			snps,dis_u2_susphy_quirk;
+			phys = <&usb3_phy0>;
+			phy-names = "usb3-phy";
 			status = "disabled";
 
 			dwc3_roothub: roothub@0 {
@@ -82,64 +91,31 @@
 				};
 			};
 		};
+	};
+};
 
-		sound {
-			compatible = "simple-audio-card";
-			simple-audio-card,name = "meson-gxl";
-
-			simple-audio-card,dai-link@0 {
-				format = "i2s";
-				mclk-fs = <256>;
-				bitclock-master = <&i2s_dai>;
-				frame-master = <&i2s_dai>;
-
-				plat {
-					sound-dai = <&aiu_i2s_dma>;
-				};
-
-				cpu {
-					sound-dai = <&i2s_dai>;
-				};
-
-				codec {
-					sound-dai = <&hdmi_tx>;
-				};
-			};
+	&apb {
+		usb2_phy0: phy@78000 {
+			compatible = "amlogic,meson-gxl-usb2-phy";
+			#phy-cells = <0>;
+			reg = <0x0 0x78000 0x0 0x20>;
+			status = "okay";
 		};
 
+		usb2_phy1: phy@78020 {
+			compatible = "amlogic,meson-gxl-usb2-phy";
+			#phy-cells = <0>;
+			reg = <0x0 0x78020 0x0 0x20>;
+			status = "okay";
+		};
+
+		usb3_phy0: phy@78080 {
+			compatible = "amlogic,meson-gxl-usb3-phy";
+			#phy-cells = <0>;
+			reg = <0x0 0x78080 0x0 0x20>;
+			status = "okay";
+		};
 	};
-};
-
-&audio {
-	status = "okay";
-};
-
-&aiu_i2s_dma {
-	status = "okay";
-};
-
-&i2s_dai {
-	pinctrl-0 = <&i2s_am_clk_pins>, <&i2s_out_ao_clk_pins>,
-		    <&i2s_out_lr_clk_pins>, <&i2s_out_ch01_pins>;
-	pinctrl-names = "default";
-	status = "okay";
- };
-
-&apb {
-	usb2_phy0: phy@78000 {
-		compatible = "amlogic,meson-gxl-usb2-phy";
-		#phy-cells = <0>;
-		reg = <0x0 0x78000 0x0 0x20>;
-		status = "okay";
-	};
-
-	usb2_phy1: phy@78020 {
-		compatible = "amlogic,meson-gxl-usb2-phy";
-		#phy-cells = <0>;
-		reg = <0x0 0x78020 0x0 0x20>;
-		status = "okay";
-	};
-};
 
 &ethmac {
 	reg = <0x0 0xc9410000 0x0 0x10000
@@ -316,7 +292,7 @@
 	clocks = <&clkc CLKID_HDMI_PCLK>,
 		 <&clkc CLKID_CLK81>,
 		 <&clkc CLKID_GCLK_VENCI_INT0>;
-	clock-names = "isfr", "iahb", "venci", "iahb", "venci";
+	clock-names = "isfr", "iahb", "venci";
 	#sound-dai-cells = <0>;
 };
 
@@ -342,26 +318,6 @@
 
 &i2c_C {
 	clocks = <&clkc CLKID_I2C>;
-};
-
-&audio {
-	clocks = <&clkc CLKID_AIU>,
-		 <&clkc CLKID_AIU_GLUE>,
-		 <&clkc CLKID_I2S_SPDIF>;
-	clock-names = "aiu_top", "aiu_glue", "audin";
-	resets = <&reset RESET_AIU>,
-		 <&reset RESET_AUDIN>;
-	reset-names = "aiu", "audin";
-};
-
-&aiu_i2s_dma {
-	clocks = <&clkc CLKID_I2S_OUT>;
-	clock-names = "fast";
-};
-
-&aiu_spdif_dma {
-	clocks = <&clkc CLKID_IEC958>;
-	clock-names = "fast";
 };
 
 &periphs {
@@ -735,12 +691,69 @@
 	};
 };
 
+&audio {
+	clocks = <&clkc CLKID_AIU>,
+		 <&clkc CLKID_AIU_GLUE>,
+		 <&clkc CLKID_I2S_SPDIF>;
+	clock-names = "aiu_top", "aiu_glue", "audin";
+	resets = <&reset RESET_AIU>,
+		 <&reset RESET_AUDIN>;
+	reset-names = "aiu", "audin";
+};
+
+&aiu_i2s_dma {
+	clocks = <&clkc CLKID_I2S_OUT>;
+	clock-names = "fast";
+};
+
 &i2s_dai {
 	clocks = <&clkc CLKID_I2S_OUT>,
 		 <&clkc CLKID_MIXER_IFACE>,
 		 <&clkc CLKID_AOCLK_GATE>,
 		 <&clkc CLKID_CTS_AMCLK>;
 	clock-names = "fast", "iface", "bclks", "mclk";
+};
+
+&pwrc_vpu {
+       resets = <&reset RESET_VIU>,
+                <&reset RESET_VENC>,
+                <&reset RESET_VCBUS>,
+                <&reset RESET_BT656>,
+                <&reset RESET_DVIN_RESET>,
+                <&reset RESET_RDMA>,
+                <&reset RESET_VENCI>,
+                <&reset RESET_VENCP>,
+                <&reset RESET_VDAC>,
+                <&reset RESET_VDI6>,
+                <&reset RESET_VENCL>,
+                <&reset RESET_VID_LOCK>;
+       clocks = <&clkc CLKID_VPU>,
+                <&clkc CLKID_VAPB>;
+       clock-names = "vpu", "vapb";
+       /*
+        * VPU clocking is provided by two identical clock paths
+        * VPU_0 and VPU_1 muxed to a single clock by a glitch
+        * free mux to safely change frequency while running.
+        * Same for VAPB but with a final gate after the glitch free mux.
+        */
+       assigned-clocks = <&clkc CLKID_VPU_0_SEL>,
+                         <&clkc CLKID_VPU_0>,
+                         <&clkc CLKID_VPU>, /* Glitch free mux */
+                         <&clkc CLKID_VAPB_0_SEL>,
+                         <&clkc CLKID_VAPB_0>,
+                         <&clkc CLKID_VAPB_SEL>; /* Glitch free mux */
+       assigned-clock-parents = <&clkc CLKID_FCLK_DIV3>,
+                                <0>, /* Do Nothing */
+                                <&clkc CLKID_VPU_0>,
+                                <&clkc CLKID_FCLK_DIV4>,
+                                <0>, /* Do Nothing */
+                                <&clkc CLKID_VAPB_0>;
+       assigned-clock-rates = <0>, /* Do Nothing */
+                              <666666666>,
+                              <0>, /* Do Nothing */
+                              <0>, /* Do Nothing */
+                              <250000000>,
+                              <0>; /* Do Nothing */
 };
 
 &saradc {
@@ -781,15 +794,6 @@
 	num-cs = <1>;
 };
 
-&spdif_dai {
-	clocks = <&clkc CLKID_IEC958>,
-		 <&clkc CLKID_IEC958_GATE>,
-		 <&clkc CLKID_CTS_MCLK_I958>,
-		 <&clkc CLKID_CTS_AMCLK>,
-		 <&clkc CLKID_CTS_I958>;
-	clock-names = "fast", "iface", "mclk_i958", "mclk_i2s", "mclk";
-};
-
 &spifc {
 	clocks = <&clkc CLKID_SPI>;
 };
@@ -821,4 +825,5 @@
 
 &vpu {
 	compatible = "amlogic,meson-gxl-vpu", "amlogic,meson-gx-vpu";
+	power-domains = <&pwrc_vpu>;
 };

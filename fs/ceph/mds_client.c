@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/ceph/ceph_debug.h>
 
 #include <linux/fs.h>
@@ -7,7 +8,6 @@
 #include <linux/sched.h>
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
-#include <linux/utsname.h>
 #include <linux/ratelimit.h>
 
 #include "super.h"
@@ -735,12 +735,13 @@ static int __choose_mds(struct ceph_mds_client *mdsc,
 			inode = req->r_inode;
 			ihold(inode);
 		} else {
-			/* req->r_dentry is non-null for LSSNAP request.
-			 * fall-thru */
-			WARN_ON_ONCE(!req->r_dentry);
+			/* req->r_dentry is non-null for LSSNAP request */
+			rcu_read_lock();
+			inode = get_nonsnap_parent(req->r_dentry);
+			rcu_read_unlock();
+			dout("__choose_mds using snapdir's parent %p\n", inode);
 		}
-	}
-	if (!inode && req->r_dentry) {
+	} else if (req->r_dentry) {
 		/* ignore race with rename; old or new d_parent is okay */
 		struct dentry *parent;
 		struct inode *dir;
@@ -884,8 +885,8 @@ static struct ceph_msg *create_session_open_msg(struct ceph_mds_client *mdsc, u6
 	void *p;
 
 	const char* metadata[][2] = {
-		{"hostname", utsname()->nodename},
-		{"kernel_version", utsname()->release},
+		{"hostname", mdsc->nodename},
+		{"kernel_version", init_utsname()->release},
 		{"entity_id", opt->name ? : ""},
 		{"root", fsopt->server_path ? : "/"},
 		{NULL, NULL}
@@ -1427,6 +1428,29 @@ static int __close_session(struct ceph_mds_client *mdsc,
 	return request_close_session(mdsc, session);
 }
 
+static bool drop_negative_children(struct dentry *dentry)
+{
+	struct dentry *child;
+	bool all_negative = true;
+
+	if (!d_is_dir(dentry))
+		goto out;
+
+	spin_lock(&dentry->d_lock);
+	list_for_each_entry(child, &dentry->d_subdirs, d_child) {
+		if (d_really_is_positive(child)) {
+			all_negative = false;
+			break;
+		}
+	}
+	spin_unlock(&dentry->d_lock);
+
+	if (all_negative)
+		shrink_dcache_parent(dentry);
+out:
+	return all_negative;
+}
+
 /*
  * Trim old(er) caps.
  *
@@ -1472,16 +1496,27 @@ static int trim_caps_cb(struct inode *inode, struct ceph_cap *cap, void *arg)
 	if ((used | wanted) & ~oissued & mine)
 		goto out;   /* we need these caps */
 
-	session->s_trim_caps--;
 	if (oissued) {
 		/* we aren't the only cap.. just remove us */
 		__ceph_remove_cap(cap, true);
+		session->s_trim_caps--;
 	} else {
+		struct dentry *dentry;
 		/* try dropping referring dentries */
 		spin_unlock(&ci->i_ceph_lock);
-		d_prune_aliases(inode);
-		dout("trim_caps_cb %p cap %p  pruned, count now %d\n",
-		     inode, cap, atomic_read(&inode->i_count));
+		dentry = d_find_any_alias(inode);
+		if (dentry && drop_negative_children(dentry)) {
+			int count;
+			dput(dentry);
+			d_prune_aliases(inode);
+			count = atomic_read(&inode->i_count);
+			if (count == 1)
+				session->s_trim_caps--;
+			dout("trim_caps_cb %p cap %p pruned, count now %d\n",
+			     inode, cap, count);
+		} else {
+			dput(dentry);
+		}
 		return 0;
 	}
 
@@ -3539,6 +3574,8 @@ int ceph_mdsc_init(struct ceph_fs_client *fsc)
 	init_rwsem(&mdsc->pool_perm_rwsem);
 	mdsc->pool_perm_tree = RB_ROOT;
 
+	strncpy(mdsc->nodename, utsname()->nodename,
+		sizeof(mdsc->nodename) - 1);
 	return 0;
 }
 

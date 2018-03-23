@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include "../../util/util.h"
 #include "../browser.h"
 #include "../helpline.h"
@@ -829,7 +830,8 @@ static int annotate_browser__run(struct annotate_browser *browser,
 		"q/ESC/CTRL+C  Exit\n\n"
 		"ENTER         Go to target\n"
 		"ESC           Exit\n"
-		"H             Cycle thru hottest instructions\n"
+		"H             Go to hottest instruction\n"
+		"TAB/shift+TAB Cycle thru hottest instructions\n"
 		"j             Toggle showing jump to target arrows\n"
 		"J             Toggle showing number of jump sources on targets\n"
 		"n             Search next string\n"

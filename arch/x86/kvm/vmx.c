@@ -200,6 +200,12 @@ struct loaded_vmcs {
 	int cpu;
 	bool launched;
 	bool nmi_known_unmasked;
+	unsigned long vmcs_host_cr3;	/* May not match real cr3 */
+	unsigned long vmcs_host_cr4;	/* May not match real cr4 */
+	/* Support for vnmi-less CPUs */
+	int soft_vnmi_blocked;
+	ktime_t entry_time;
+	s64 vnmi_blocked_time;
 	struct list_head loaded_vmcss_on_cpu_link;
 };
 
@@ -600,8 +606,6 @@ struct vcpu_vmx {
 		int           gs_ldt_reload_needed;
 		int           fs_reload_needed;
 		u64           msr_host_bndcfgs;
-		unsigned long vmcs_host_cr3;	/* May not match real cr3 */
-		unsigned long vmcs_host_cr4;	/* May not match real cr4 */
 	} host_state;
 	struct {
 		int vm86_active;
@@ -1286,6 +1290,11 @@ static inline bool cpu_has_vmx_invpcid(void)
 		SECONDARY_EXEC_ENABLE_INVPCID;
 }
 
+static inline bool cpu_has_virtual_nmis(void)
+{
+	return vmcs_config.pin_based_exec_ctrl & PIN_BASED_VIRTUAL_NMIS;
+}
+
 static inline bool cpu_has_vmx_wbinvd_exit(void)
 {
 	return vmcs_config.cpu_based_2nd_exec_ctrl &
@@ -1341,11 +1350,6 @@ static inline bool nested_cpu_has2(struct vmcs12 *vmcs12, u32 bit)
 	return (vmcs12->cpu_based_vm_exec_control &
 			CPU_BASED_ACTIVATE_SECONDARY_CONTROLS) &&
 		(vmcs12->secondary_vm_exec_control & bit);
-}
-
-static inline bool nested_cpu_has_virtual_nmis(struct vmcs12 *vmcs12)
-{
-	return vmcs12->pin_based_vm_exec_control & PIN_BASED_VIRTUAL_NMIS;
 }
 
 static inline bool nested_cpu_has_preemption_timer(struct vmcs12 *vmcs12)
@@ -2202,46 +2206,44 @@ static void vmx_vcpu_pi_load(struct kvm_vcpu *vcpu, int cpu)
 	struct pi_desc old, new;
 	unsigned int dest;
 
-	if (!kvm_arch_has_assigned_device(vcpu->kvm) ||
-		!irq_remapping_cap(IRQ_POSTING_CAP)  ||
-		!kvm_vcpu_apicv_active(vcpu))
+	/*
+	 * In case of hot-plug or hot-unplug, we may have to undo
+	 * vmx_vcpu_pi_put even if there is no assigned device.  And we
+	 * always keep PI.NDST up to date for simplicity: it makes the
+	 * code easier, and CPU migration is not a fast path.
+	 */
+	if (!pi_test_sn(pi_desc) && vcpu->cpu == cpu)
 		return;
 
+	/*
+	 * First handle the simple case where no cmpxchg is necessary; just
+	 * allow posting non-urgent interrupts.
+	 *
+	 * If the 'nv' field is POSTED_INTR_WAKEUP_VECTOR, do not change
+	 * PI.NDST: pi_post_block will do it for us and the wakeup_handler
+	 * expects the VCPU to be on the blocked_vcpu_list that matches
+	 * PI.NDST.
+	 */
+	if (pi_desc->nv == POSTED_INTR_WAKEUP_VECTOR ||
+	    vcpu->cpu == cpu) {
+		pi_clear_sn(pi_desc);
+		return;
+	}
+
+	/* The full case.  */
 	do {
 		old.control = new.control = pi_desc->control;
 
-		/*
-		 * If 'nv' field is POSTED_INTR_WAKEUP_VECTOR, there
-		 * are two possible cases:
-		 * 1. After running 'pre_block', context switch
-		 *    happened. For this case, 'sn' was set in
-		 *    vmx_vcpu_put(), so we need to clear it here.
-		 * 2. After running 'pre_block', we were blocked,
-		 *    and woken up by some other guy. For this case,
-		 *    we don't need to do anything, 'pi_post_block'
-		 *    will do everything for us. However, we cannot
-		 *    check whether it is case #1 or case #2 here
-		 *    (maybe, not needed), so we also clear sn here,
-		 *    I think it is not a big deal.
-		 */
-		if (pi_desc->nv != POSTED_INTR_WAKEUP_VECTOR) {
-			if (vcpu->cpu != cpu) {
-				dest = cpu_physical_id(cpu);
+		dest = cpu_physical_id(cpu);
 
-				if (x2apic_enabled())
-					new.ndst = dest;
-				else
-					new.ndst = (dest << 8) & 0xFF00;
-			}
+		if (x2apic_enabled())
+			new.ndst = dest;
+		else
+			new.ndst = (dest << 8) & 0xFF00;
 
-			/* set 'NV' to 'notification vector' */
-			new.nv = POSTED_INTR_VECTOR;
-		}
-
-		/* Allow posting non-urgent interrupts */
 		new.sn = 0;
-	} while (cmpxchg(&pi_desc->control, old.control,
-			new.control) != old.control);
+	} while (cmpxchg64(&pi_desc->control, old.control,
+			   new.control) != old.control);
 }
 
 static void decache_tsc_multiplier(struct vcpu_vmx *vmx)
@@ -2293,7 +2295,7 @@ static void vmx_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 		 * processors.  See 22.2.4.
 		 */
 		vmcs_writel(HOST_TR_BASE,
-			    (unsigned long)this_cpu_ptr(&cpu_tss));
+			    (unsigned long)&get_cpu_entry_area(cpu)->tss.x86_tss);
 		vmcs_writel(HOST_GDTR_BASE, (unsigned long)gdt);   /* 22.2.4 */
 
 		/*
@@ -2843,8 +2845,9 @@ static void nested_vmx_setup_ctls_msrs(struct vcpu_vmx *vmx)
 		 * Advertise EPTP switching unconditionally
 		 * since we emulate it
 		 */
-		vmx->nested.nested_vmx_vmfunc_controls =
-			VMX_VMFUNC_EPTP_SWITCHING;
+		if (enable_ept)
+			vmx->nested.nested_vmx_vmfunc_controls =
+				VMX_VMFUNC_EPTP_SWITCHING;
 	}
 
 	/*
@@ -3701,9 +3704,9 @@ static __init int setup_vmcs_config(struct vmcs_config *vmcs_conf)
 				&_vmexit_control) < 0)
 		return -EIO;
 
-	min = PIN_BASED_EXT_INTR_MASK | PIN_BASED_NMI_EXITING |
-		PIN_BASED_VIRTUAL_NMIS;
-	opt = PIN_BASED_POSTED_INTR | PIN_BASED_VMX_PREEMPTION_TIMER;
+	min = PIN_BASED_EXT_INTR_MASK | PIN_BASED_NMI_EXITING;
+	opt = PIN_BASED_VIRTUAL_NMIS | PIN_BASED_POSTED_INTR |
+		 PIN_BASED_VMX_PREEMPTION_TIMER;
 	if (adjust_vmx_controls(min, opt, MSR_IA32_VMX_PINBASED_CTLS,
 				&_pin_based_exec_control) < 0)
 		return -EIO;
@@ -5012,7 +5015,7 @@ static void vmx_disable_intercept_msr_x2apic(u32 msr, int type, bool apicv_activ
 	}
 }
 
-static bool vmx_get_enable_apicv(void)
+static bool vmx_get_enable_apicv(struct kvm_vcpu *vcpu)
 {
 	return enable_apicv;
 }
@@ -5077,21 +5080,30 @@ static inline bool kvm_vcpu_trigger_posted_interrupt(struct kvm_vcpu *vcpu,
 	int pi_vec = nested ? POSTED_INTR_NESTED_VECTOR : POSTED_INTR_VECTOR;
 
 	if (vcpu->mode == IN_GUEST_MODE) {
-		struct vcpu_vmx *vmx = to_vmx(vcpu);
-
 		/*
-		 * Currently, we don't support urgent interrupt,
-		 * all interrupts are recognized as non-urgent
-		 * interrupt, so we cannot post interrupts when
-		 * 'SN' is set.
+		 * The vector of interrupt to be delivered to vcpu had
+		 * been set in PIR before this function.
 		 *
-		 * If the vcpu is in guest mode, it means it is
-		 * running instead of being scheduled out and
-		 * waiting in the run queue, and that's the only
-		 * case when 'SN' is set currently, warning if
-		 * 'SN' is set.
+		 * Following cases will be reached in this block, and
+		 * we always send a notification event in all cases as
+		 * explained below.
+		 *
+		 * Case 1: vcpu keeps in non-root mode. Sending a
+		 * notification event posts the interrupt to vcpu.
+		 *
+		 * Case 2: vcpu exits to root mode and is still
+		 * runnable. PIR will be synced to vIRR before the
+		 * next vcpu entry. Sending a notification event in
+		 * this case has no effect, as vcpu is not in root
+		 * mode.
+		 *
+		 * Case 3: vcpu exits to root mode and is blocked.
+		 * vcpu_block() has already synced PIR to vIRR and
+		 * never blocks vcpu if vIRR is not cleared. Therefore,
+		 * a blocked vcpu here does not wait for any requested
+		 * interrupts in PIR, and sending a notification event
+		 * which has no effect is safe here.
 		 */
-		WARN_ON_ONCE(pi_test_sn(&vmx->pi_desc));
 
 		apic->send_IPI_mask(get_cpu_mask(vcpu->cpu), pi_vec);
 		return true;
@@ -5169,12 +5181,12 @@ static void vmx_set_constant_host_state(struct vcpu_vmx *vmx)
 	 */
 	cr3 = __read_cr3();
 	vmcs_writel(HOST_CR3, cr3);		/* 22.2.3  FIXME: shadow tables */
-	vmx->host_state.vmcs_host_cr3 = cr3;
+	vmx->loaded_vmcs->vmcs_host_cr3 = cr3;
 
 	/* Save the most likely value for this task's CR4 in the VMCS. */
 	cr4 = cr4_read_shadow();
 	vmcs_writel(HOST_CR4, cr4);			/* 22.2.3, 22.2.5 */
-	vmx->host_state.vmcs_host_cr4 = cr4;
+	vmx->loaded_vmcs->vmcs_host_cr4 = cr4;
 
 	vmcs_write16(HOST_CS_SELECTOR, __KERNEL_CS);  /* 22.2.4 */
 #ifdef CONFIG_X86_64
@@ -5192,7 +5204,7 @@ static void vmx_set_constant_host_state(struct vcpu_vmx *vmx)
 	vmcs_write16(HOST_SS_SELECTOR, __KERNEL_DS);  /* 22.2.4 */
 	vmcs_write16(HOST_TR_SELECTOR, GDT_ENTRY_TSS*8);  /* 22.2.4 */
 
-	native_store_idt(&dt);
+	store_idt(&dt);
 	vmcs_writel(HOST_IDTR_BASE, dt.address);   /* 22.2.4 */
 	vmx->host_idt_base = dt.address;
 
@@ -5612,9 +5624,6 @@ static void vmx_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event)
 
 	kvm_make_request(KVM_REQ_APIC_PAGE_RELOAD, vcpu);
 
-	if (kvm_vcpu_apicv_active(vcpu))
-		memset(&vmx->pi_desc, 0, sizeof(struct pi_desc));
-
 	if (vmx->vpid != 0)
 		vmcs_write16(VIRTUAL_PROCESSOR_ID, vmx->vpid);
 
@@ -5663,7 +5672,8 @@ static void enable_irq_window(struct kvm_vcpu *vcpu)
 
 static void enable_nmi_window(struct kvm_vcpu *vcpu)
 {
-	if (vmcs_read32(GUEST_INTERRUPTIBILITY_INFO) & GUEST_INTR_STATE_STI) {
+	if (!cpu_has_virtual_nmis() ||
+	    vmcs_read32(GUEST_INTERRUPTIBILITY_INFO) & GUEST_INTR_STATE_STI) {
 		enable_irq_window(vcpu);
 		return;
 	}
@@ -5703,6 +5713,19 @@ static void vmx_inject_nmi(struct kvm_vcpu *vcpu)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 
+	if (!cpu_has_virtual_nmis()) {
+		/*
+		 * Tracking the NMI-blocked state in software is built upon
+		 * finding the next open IRQ window. This, in turn, depends on
+		 * well-behaving guests: They have to keep IRQs disabled at
+		 * least as long as the NMI handler runs. Otherwise we may
+		 * cause NMI nesting, maybe breaking the guest. But as this is
+		 * highly unlikely, we can live with the residual risk.
+		 */
+		vmx->loaded_vmcs->soft_vnmi_blocked = 1;
+		vmx->loaded_vmcs->vnmi_blocked_time = 0;
+	}
+
 	++vcpu->stat.nmi_injections;
 	vmx->loaded_vmcs->nmi_known_unmasked = false;
 
@@ -5721,6 +5744,8 @@ static bool vmx_get_nmi_mask(struct kvm_vcpu *vcpu)
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	bool masked;
 
+	if (!cpu_has_virtual_nmis())
+		return vmx->loaded_vmcs->soft_vnmi_blocked;
 	if (vmx->loaded_vmcs->nmi_known_unmasked)
 		return false;
 	masked = vmcs_read32(GUEST_INTERRUPTIBILITY_INFO) & GUEST_INTR_STATE_NMI;
@@ -5732,18 +5757,29 @@ static void vmx_set_nmi_mask(struct kvm_vcpu *vcpu, bool masked)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 
-	vmx->loaded_vmcs->nmi_known_unmasked = !masked;
-	if (masked)
-		vmcs_set_bits(GUEST_INTERRUPTIBILITY_INFO,
-			      GUEST_INTR_STATE_NMI);
-	else
-		vmcs_clear_bits(GUEST_INTERRUPTIBILITY_INFO,
-				GUEST_INTR_STATE_NMI);
+	if (!cpu_has_virtual_nmis()) {
+		if (vmx->loaded_vmcs->soft_vnmi_blocked != masked) {
+			vmx->loaded_vmcs->soft_vnmi_blocked = masked;
+			vmx->loaded_vmcs->vnmi_blocked_time = 0;
+		}
+	} else {
+		vmx->loaded_vmcs->nmi_known_unmasked = !masked;
+		if (masked)
+			vmcs_set_bits(GUEST_INTERRUPTIBILITY_INFO,
+				      GUEST_INTR_STATE_NMI);
+		else
+			vmcs_clear_bits(GUEST_INTERRUPTIBILITY_INFO,
+					GUEST_INTR_STATE_NMI);
+	}
 }
 
 static int vmx_nmi_allowed(struct kvm_vcpu *vcpu)
 {
 	if (to_vmx(vcpu)->nested.nested_run_pending)
+		return 0;
+
+	if (!cpu_has_virtual_nmis() &&
+	    to_vmx(vcpu)->loaded_vmcs->soft_vnmi_blocked)
 		return 0;
 
 	return	!(vmcs_read32(GUEST_INTERRUPTIBILITY_INFO) &
@@ -5879,6 +5915,8 @@ static int handle_exception(struct kvm_vcpu *vcpu)
 			return 1;
 		}
 		er = emulate_instruction(vcpu, EMULTYPE_TRAP_UD);
+		if (er == EMULATE_USER_EXIT)
+			return 0;
 		if (er != EMULATE_DONE)
 			kvm_queue_exception(vcpu, UD_VECTOR);
 		return 1;
@@ -6474,6 +6512,7 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
 	 * AAK134, BY25.
 	 */
 	if (!(to_vmx(vcpu)->idt_vectoring_info & VECTORING_INFO_VALID_MASK) &&
+			cpu_has_virtual_nmis() &&
 			(exit_qualification & INTR_INFO_UNBLOCK_NMI))
 		vmcs_set_bits(GUEST_INTERRUPTIBILITY_INFO, GUEST_INTR_STATE_NMI);
 
@@ -6712,12 +6751,7 @@ static __init int hardware_setup(void)
 	memset(vmx_vmread_bitmap, 0xff, PAGE_SIZE);
 	memset(vmx_vmwrite_bitmap, 0xff, PAGE_SIZE);
 
-	/*
-	 * Allow direct access to the PC debug port (it is often used for I/O
-	 * delays, but the vmexits simply slow things down).
-	 */
 	memset(vmx_io_bitmap_a, 0xff, PAGE_SIZE);
-	clear_bit(0x80, vmx_io_bitmap_a);
 
 	memset(vmx_io_bitmap_b, 0xff, PAGE_SIZE);
 
@@ -6957,7 +6991,7 @@ static struct loaded_vmcs *nested_get_current_vmcs02(struct vcpu_vmx *vmx)
 	}
 
 	/* Create a new VMCS */
-	item = kmalloc(sizeof(struct vmcs02_list), GFP_KERNEL);
+	item = kzalloc(sizeof(struct vmcs02_list), GFP_KERNEL);
 	if (!item)
 		return NULL;
 	item->vmcs02.vmcs = alloc_vmcs();
@@ -7974,6 +8008,7 @@ static int handle_pml_full(struct kvm_vcpu *vcpu)
 	 * "blocked by NMI" bit has to be set before next VM entry.
 	 */
 	if (!(to_vmx(vcpu)->idt_vectoring_info & VECTORING_INFO_VALID_MASK) &&
+			cpu_has_virtual_nmis() &&
 			(exit_qualification & INTR_INFO_UNBLOCK_NMI))
 		vmcs_set_bits(GUEST_INTERRUPTIBILITY_INFO,
 				GUEST_INTR_STATE_NMI);
@@ -8344,12 +8379,14 @@ static bool nested_vmx_exit_reflected(struct kvm_vcpu *vcpu, u32 exit_reason)
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	struct vmcs12 *vmcs12 = get_vmcs12(vcpu);
 
-	trace_kvm_nested_vmexit(kvm_rip_read(vcpu), exit_reason,
-				vmcs_readl(EXIT_QUALIFICATION),
-				vmx->idt_vectoring_info,
-				intr_info,
-				vmcs_read32(VM_EXIT_INTR_ERROR_CODE),
-				KVM_ISA_VMX);
+	if (vmx->nested.nested_run_pending)
+		return false;
+
+	if (unlikely(vmx->fail)) {
+		pr_info_ratelimited("%s failed vm entry %x\n", __func__,
+				    vmcs_read32(VM_INSTRUCTION_ERROR));
+		return true;
+	}
 
 	/*
 	 * The host physical addresses of some pages of guest memory
@@ -8363,14 +8400,12 @@ static bool nested_vmx_exit_reflected(struct kvm_vcpu *vcpu, u32 exit_reason)
 	 */
 	nested_mark_vmcs12_pages_dirty(vcpu);
 
-	if (vmx->nested.nested_run_pending)
-		return false;
-
-	if (unlikely(vmx->fail)) {
-		pr_info_ratelimited("%s failed vm entry %x\n", __func__,
-				    vmcs_read32(VM_INSTRUCTION_ERROR));
-		return true;
-	}
+	trace_kvm_nested_vmexit(kvm_rip_read(vcpu), exit_reason,
+				vmcs_readl(EXIT_QUALIFICATION),
+				vmx->idt_vectoring_info,
+				intr_info,
+				vmcs_read32(VM_EXIT_INTR_ERROR_CODE),
+				KVM_ISA_VMX);
 
 	switch (exit_reason) {
 	case EXIT_REASON_EXCEPTION_NMI:
@@ -8818,6 +8853,25 @@ static int vmx_handle_exit(struct kvm_vcpu *vcpu)
 		return 0;
 	}
 
+	if (unlikely(!cpu_has_virtual_nmis() &&
+		     vmx->loaded_vmcs->soft_vnmi_blocked)) {
+		if (vmx_interrupt_allowed(vcpu)) {
+			vmx->loaded_vmcs->soft_vnmi_blocked = 0;
+		} else if (vmx->loaded_vmcs->vnmi_blocked_time > 1000000000LL &&
+			   vcpu->arch.nmi_pending) {
+			/*
+			 * This CPU don't support us in finding the end of an
+			 * NMI-blocked window if the guest runs with IRQs
+			 * disabled. So we pull the trigger after 1 s of
+			 * futile waiting, but inform the user about this.
+			 */
+			printk(KERN_WARNING "%s: Breaking out of NMI-blocked "
+			       "state on VCPU %d after 1 s timeout\n",
+			       __func__, vcpu->vcpu_id);
+			vmx->loaded_vmcs->soft_vnmi_blocked = 0;
+		}
+	}
+
 	if (exit_reason < kvm_vmx_max_exit_handlers
 	    && kvm_vmx_exit_handlers[exit_reason])
 		return kvm_vmx_exit_handlers[exit_reason](vcpu);
@@ -9036,7 +9090,6 @@ static void vmx_complete_atomic_exit(struct vcpu_vmx *vmx)
 static void vmx_handle_external_intr(struct kvm_vcpu *vcpu)
 {
 	u32 exit_intr_info = vmcs_read32(VM_EXIT_INTR_INFO);
-	register void *__sp asm(_ASM_SP);
 
 	if ((exit_intr_info & (INTR_INFO_VALID_MASK | INTR_INFO_INTR_TYPE_MASK))
 			== (INTR_INFO_VALID_MASK | INTR_TYPE_EXT_INTR)) {
@@ -9065,7 +9118,7 @@ static void vmx_handle_external_intr(struct kvm_vcpu *vcpu)
 #ifdef CONFIG_X86_64
 			[sp]"=&r"(tmp),
 #endif
-			"+r"(__sp)
+			ASM_CALL_CONSTRAINT
 			:
 			[entry]"r"(entry),
 			[ss]"i"(__KERNEL_DS),
@@ -9101,33 +9154,38 @@ static void vmx_recover_nmi_blocking(struct vcpu_vmx *vmx)
 
 	idtv_info_valid = vmx->idt_vectoring_info & VECTORING_INFO_VALID_MASK;
 
-	if (vmx->loaded_vmcs->nmi_known_unmasked)
-		return;
-	/*
-	 * Can't use vmx->exit_intr_info since we're not sure what
-	 * the exit reason is.
-	 */
-	exit_intr_info = vmcs_read32(VM_EXIT_INTR_INFO);
-	unblock_nmi = (exit_intr_info & INTR_INFO_UNBLOCK_NMI) != 0;
-	vector = exit_intr_info & INTR_INFO_VECTOR_MASK;
-	/*
-	 * SDM 3: 27.7.1.2 (September 2008)
-	 * Re-set bit "block by NMI" before VM entry if vmexit caused by
-	 * a guest IRET fault.
-	 * SDM 3: 23.2.2 (September 2008)
-	 * Bit 12 is undefined in any of the following cases:
-	 *  If the VM exit sets the valid bit in the IDT-vectoring
-	 *   information field.
-	 *  If the VM exit is due to a double fault.
-	 */
-	if ((exit_intr_info & INTR_INFO_VALID_MASK) && unblock_nmi &&
-	    vector != DF_VECTOR && !idtv_info_valid)
-		vmcs_set_bits(GUEST_INTERRUPTIBILITY_INFO,
-			      GUEST_INTR_STATE_NMI);
-	else
-		vmx->loaded_vmcs->nmi_known_unmasked =
-			!(vmcs_read32(GUEST_INTERRUPTIBILITY_INFO)
-			  & GUEST_INTR_STATE_NMI);
+	if (cpu_has_virtual_nmis()) {
+		if (vmx->loaded_vmcs->nmi_known_unmasked)
+			return;
+		/*
+		 * Can't use vmx->exit_intr_info since we're not sure what
+		 * the exit reason is.
+		 */
+		exit_intr_info = vmcs_read32(VM_EXIT_INTR_INFO);
+		unblock_nmi = (exit_intr_info & INTR_INFO_UNBLOCK_NMI) != 0;
+		vector = exit_intr_info & INTR_INFO_VECTOR_MASK;
+		/*
+		 * SDM 3: 27.7.1.2 (September 2008)
+		 * Re-set bit "block by NMI" before VM entry if vmexit caused by
+		 * a guest IRET fault.
+		 * SDM 3: 23.2.2 (September 2008)
+		 * Bit 12 is undefined in any of the following cases:
+		 *  If the VM exit sets the valid bit in the IDT-vectoring
+		 *   information field.
+		 *  If the VM exit is due to a double fault.
+		 */
+		if ((exit_intr_info & INTR_INFO_VALID_MASK) && unblock_nmi &&
+		    vector != DF_VECTOR && !idtv_info_valid)
+			vmcs_set_bits(GUEST_INTERRUPTIBILITY_INFO,
+				      GUEST_INTR_STATE_NMI);
+		else
+			vmx->loaded_vmcs->nmi_known_unmasked =
+				!(vmcs_read32(GUEST_INTERRUPTIBILITY_INFO)
+				  & GUEST_INTR_STATE_NMI);
+	} else if (unlikely(vmx->loaded_vmcs->soft_vnmi_blocked))
+		vmx->loaded_vmcs->vnmi_blocked_time +=
+			ktime_to_ns(ktime_sub(ktime_get(),
+					      vmx->loaded_vmcs->entry_time));
 }
 
 static void __vmx_complete_interrupts(struct kvm_vcpu *vcpu,
@@ -9244,6 +9302,11 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	unsigned long debugctlmsr, cr3, cr4;
 
+	/* Record the guest's net vcpu time for enforced NMI injections. */
+	if (unlikely(!cpu_has_virtual_nmis() &&
+		     vmx->loaded_vmcs->soft_vnmi_blocked))
+		vmx->loaded_vmcs->entry_time = ktime_get();
+
 	/* Don't enter VMX if guest state is invalid, let the exit handler
 	   start emulation until we arrive back to a valid state */
 	if (vmx->emulation_required)
@@ -9265,15 +9328,15 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 		vmcs_writel(GUEST_RIP, vcpu->arch.regs[VCPU_REGS_RIP]);
 
 	cr3 = __get_current_cr3_fast();
-	if (unlikely(cr3 != vmx->host_state.vmcs_host_cr3)) {
+	if (unlikely(cr3 != vmx->loaded_vmcs->vmcs_host_cr3)) {
 		vmcs_writel(HOST_CR3, cr3);
-		vmx->host_state.vmcs_host_cr3 = cr3;
+		vmx->loaded_vmcs->vmcs_host_cr3 = cr3;
 	}
 
 	cr4 = cr4_read_shadow();
-	if (unlikely(cr4 != vmx->host_state.vmcs_host_cr4)) {
+	if (unlikely(cr4 != vmx->loaded_vmcs->vmcs_host_cr4)) {
 		vmcs_writel(HOST_CR4, cr4);
-		vmx->host_state.vmcs_host_cr4 = cr4;
+		vmx->loaded_vmcs->vmcs_host_cr4 = cr4;
 	}
 
 	/* When single-stepping over STI and MOV SS, we must clear the
@@ -9424,12 +9487,6 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 				  | (1 << VCPU_EXREG_CR3));
 	vcpu->arch.regs_dirty = 0;
 
-	vmx->idt_vectoring_info = vmcs_read32(IDT_VECTORING_INFO_FIELD);
-
-	vmx->loaded_vmcs->launched = 1;
-
-	vmx->exit_reason = vmcs_read32(VM_EXIT_REASON);
-
 	/*
 	 * eager fpu is enabled if PKEY is supported and CR4 is switched
 	 * back on host, so it is safe to read guest PKRU from current
@@ -9451,6 +9508,14 @@ static void __noclone vmx_vcpu_run(struct kvm_vcpu *vcpu)
 		kvm_make_request(KVM_REQ_EVENT, vcpu);
 
 	vmx->nested.nested_run_pending = 0;
+	vmx->idt_vectoring_info = 0;
+
+	vmx->exit_reason = vmx->fail ? 0xdead : vmcs_read32(VM_EXIT_REASON);
+	if (vmx->fail || (vmx->exit_reason & VMX_EXIT_REASONS_FAILED_VMENTRY))
+		return;
+
+	vmx->loaded_vmcs->launched = 1;
+	vmx->idt_vectoring_info = vmcs_read32(IDT_VECTORING_INFO_FIELD);
 
 	vmx_complete_atomic_exit(vmx);
 	vmx_recover_nmi_blocking(vmx);
@@ -9580,6 +9645,13 @@ static struct kvm_vcpu *vmx_create_vcpu(struct kvm *kvm, unsigned int id)
 	vmx->nested.current_vmptr = -1ull;
 
 	vmx->msr_ia32_feature_control_valid_bits = FEATURE_CONTROL_LOCKED;
+
+	/*
+	 * Enforce invariant: pi_desc.nv is always either POSTED_INTR_VECTOR
+	 * or POSTED_INTR_WAKEUP_VECTOR.
+	 */
+	vmx->pi_desc.nv = POSTED_INTR_VECTOR;
+	vmx->pi_desc.sn = 1;
 
 	return &vmx->vcpu;
 
@@ -9829,7 +9901,8 @@ static void vmx_inject_page_fault_nested(struct kvm_vcpu *vcpu,
 
 	WARN_ON(!is_guest_mode(vcpu));
 
-	if (nested_vmx_is_page_fault_vmexit(vmcs12, fault->error_code)) {
+	if (nested_vmx_is_page_fault_vmexit(vmcs12, fault->error_code) &&
+		!to_vmx(vcpu)->nested.nested_run_pending) {
 		vmcs12->vm_exit_intr_error_code = fault->error_code;
 		nested_vmx_vmexit(vcpu, EXIT_REASON_EXCEPTION_NMI,
 				  PF_VECTOR | INTR_TYPE_HARD_EXCEPTION |
@@ -10525,6 +10598,11 @@ static int prepare_vmcs02(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12,
 	if (exec_control & CPU_BASED_TPR_SHADOW) {
 		vmcs_write64(VIRTUAL_APIC_PAGE_ADDR, -1ull);
 		vmcs_write32(TPR_THRESHOLD, vmcs12->tpr_threshold);
+	} else {
+#ifdef CONFIG_X86_64
+		exec_control |= CPU_BASED_CR8_LOAD_EXITING |
+				CPU_BASED_CR8_STORE_EXITING;
+#endif
 	}
 
 	/*
@@ -11276,7 +11354,7 @@ static void load_vmcs12_host_state(struct kvm_vcpu *vcpu,
 
 	/* Same as above - no reason to call set_cr4_guest_host_mask().  */
 	vcpu->arch.cr4_guest_owned_bits = ~vmcs_readl(CR4_GUEST_HOST_MASK);
-	kvm_set_cr4(vcpu, vmcs12->host_cr4);
+	vmx_set_cr4(vcpu, vmcs12->host_cr4);
 
 	nested_ept_uninit_mmu_context(vcpu);
 
@@ -11307,6 +11385,8 @@ static void load_vmcs12_host_state(struct kvm_vcpu *vcpu,
 	vmcs_writel(GUEST_SYSENTER_EIP, vmcs12->host_ia32_sysenter_eip);
 	vmcs_writel(GUEST_IDTR_BASE, vmcs12->host_idtr_base);
 	vmcs_writel(GUEST_GDTR_BASE, vmcs12->host_gdtr_base);
+	vmcs_write32(GUEST_IDTR_LIMIT, 0xFFFF);
+	vmcs_write32(GUEST_GDTR_LIMIT, 0xFFFF);
 
 	/* If not VM_EXIT_CLEAR_BNDCFGS, the L2 value propagates to L1.  */
 	if (vmcs12->vm_exit_controls & VM_EXIT_CLEAR_BNDCFGS)
@@ -11388,46 +11468,30 @@ static void nested_vmx_vmexit(struct kvm_vcpu *vcpu, u32 exit_reason,
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	struct vmcs12 *vmcs12 = get_vmcs12(vcpu);
-	u32 vm_inst_error = 0;
 
 	/* trying to cancel vmlaunch/vmresume is a bug */
 	WARN_ON_ONCE(vmx->nested.nested_run_pending);
 
-	leave_guest_mode(vcpu);
-	prepare_vmcs12(vcpu, vmcs12, exit_reason, exit_intr_info,
-		       exit_qualification);
-
-	if (nested_vmx_store_msr(vcpu, vmcs12->vm_exit_msr_store_addr,
-				 vmcs12->vm_exit_msr_store_count))
-		nested_vmx_abort(vcpu, VMX_ABORT_SAVE_GUEST_MSR_FAIL);
-
-	if (unlikely(vmx->fail))
-		vm_inst_error = vmcs_read32(VM_INSTRUCTION_ERROR);
-
-	vmx_switch_vmcs(vcpu, &vmx->vmcs01);
-
 	/*
-	 * TODO: SDM says that with acknowledge interrupt on exit, bit 31 of
-	 * the VM-exit interrupt information (valid interrupt) is always set to
-	 * 1 on EXIT_REASON_EXTERNAL_INTERRUPT, so we shouldn't need
-	 * kvm_cpu_has_interrupt().  See the commit message for details.
+	 * The only expected VM-instruction error is "VM entry with
+	 * invalid control field(s)." Anything else indicates a
+	 * problem with L0.
 	 */
-	if (nested_exit_intr_ack_set(vcpu) &&
-	    exit_reason == EXIT_REASON_EXTERNAL_INTERRUPT &&
-	    kvm_cpu_has_interrupt(vcpu)) {
-		int irq = kvm_cpu_get_interrupt(vcpu);
-		WARN_ON(irq < 0);
-		vmcs12->vm_exit_intr_info = irq |
-			INTR_INFO_VALID_MASK | INTR_TYPE_EXT_INTR;
+	WARN_ON_ONCE(vmx->fail && (vmcs_read32(VM_INSTRUCTION_ERROR) !=
+				   VMXERR_ENTRY_INVALID_CONTROL_FIELD));
+
+	leave_guest_mode(vcpu);
+
+	if (likely(!vmx->fail)) {
+		prepare_vmcs12(vcpu, vmcs12, exit_reason, exit_intr_info,
+			       exit_qualification);
+
+		if (nested_vmx_store_msr(vcpu, vmcs12->vm_exit_msr_store_addr,
+					 vmcs12->vm_exit_msr_store_count))
+			nested_vmx_abort(vcpu, VMX_ABORT_SAVE_GUEST_MSR_FAIL);
 	}
 
-	trace_kvm_nested_vmexit_inject(vmcs12->vm_exit_reason,
-				       vmcs12->exit_qualification,
-				       vmcs12->idt_vectoring_info_field,
-				       vmcs12->vm_exit_intr_info,
-				       vmcs12->vm_exit_intr_error_code,
-				       KVM_ISA_VMX);
-
+	vmx_switch_vmcs(vcpu, &vmx->vmcs01);
 	vm_entry_controls_reset_shadow(vmx);
 	vm_exit_controls_reset_shadow(vmx);
 	vmx_segment_cache_clear(vmx);
@@ -11435,8 +11499,6 @@ static void nested_vmx_vmexit(struct kvm_vcpu *vcpu, u32 exit_reason,
 	/* if no vmcs02 cache requested, remove the one we used */
 	if (VMCS02_POOL_SIZE == 0)
 		nested_free_vmcs02(vmx, vmx->nested.current_vmptr);
-
-	load_vmcs12_host_state(vcpu, vmcs12);
 
 	/* Update any VMCS fields that might have changed while L2 ran */
 	vmcs_write32(VM_EXIT_MSR_LOAD_COUNT, vmx->msr_autoload.nr);
@@ -11486,21 +11548,57 @@ static void nested_vmx_vmexit(struct kvm_vcpu *vcpu, u32 exit_reason,
 	 */
 	kvm_make_request(KVM_REQ_APIC_PAGE_RELOAD, vcpu);
 
-	/*
-	 * Exiting from L2 to L1, we're now back to L1 which thinks it just
-	 * finished a VMLAUNCH or VMRESUME instruction, so we need to set the
-	 * success or failure flag accordingly.
-	 */
-	if (unlikely(vmx->fail)) {
-		vmx->fail = 0;
-		nested_vmx_failValid(vcpu, vm_inst_error);
-	} else
-		nested_vmx_succeed(vcpu);
 	if (enable_shadow_vmcs)
 		vmx->nested.sync_shadow_vmcs = true;
 
 	/* in case we halted in L2 */
 	vcpu->arch.mp_state = KVM_MP_STATE_RUNNABLE;
+
+	if (likely(!vmx->fail)) {
+		/*
+		 * TODO: SDM says that with acknowledge interrupt on
+		 * exit, bit 31 of the VM-exit interrupt information
+		 * (valid interrupt) is always set to 1 on
+		 * EXIT_REASON_EXTERNAL_INTERRUPT, so we shouldn't
+		 * need kvm_cpu_has_interrupt().  See the commit
+		 * message for details.
+		 */
+		if (nested_exit_intr_ack_set(vcpu) &&
+		    exit_reason == EXIT_REASON_EXTERNAL_INTERRUPT &&
+		    kvm_cpu_has_interrupt(vcpu)) {
+			int irq = kvm_cpu_get_interrupt(vcpu);
+			WARN_ON(irq < 0);
+			vmcs12->vm_exit_intr_info = irq |
+				INTR_INFO_VALID_MASK | INTR_TYPE_EXT_INTR;
+		}
+
+		trace_kvm_nested_vmexit_inject(vmcs12->vm_exit_reason,
+					       vmcs12->exit_qualification,
+					       vmcs12->idt_vectoring_info_field,
+					       vmcs12->vm_exit_intr_info,
+					       vmcs12->vm_exit_intr_error_code,
+					       KVM_ISA_VMX);
+
+		load_vmcs12_host_state(vcpu, vmcs12);
+
+		return;
+	}
+	
+	/*
+	 * After an early L2 VM-entry failure, we're now back
+	 * in L1 which thinks it just finished a VMLAUNCH or
+	 * VMRESUME instruction, so we need to set the failure
+	 * flag and the VM-instruction error field of the VMCS
+	 * accordingly.
+	 */
+	nested_vmx_failValid(vcpu, VMXERR_ENTRY_INVALID_CONTROL_FIELD);
+	/*
+	 * The emulated instruction was already skipped in
+	 * nested_vmx_run, but the updated RIP was never
+	 * written back to the vmcs01.
+	 */
+	skip_emulated_instruction(vcpu);
+	vmx->fail = 0;
 }
 
 /*
@@ -11671,6 +11769,37 @@ static void vmx_enable_log_dirty_pt_masked(struct kvm *kvm,
 	kvm_mmu_clear_dirty_pt_masked(kvm, memslot, offset, mask);
 }
 
+static void __pi_post_block(struct kvm_vcpu *vcpu)
+{
+	struct pi_desc *pi_desc = vcpu_to_pi_desc(vcpu);
+	struct pi_desc old, new;
+	unsigned int dest;
+
+	do {
+		old.control = new.control = pi_desc->control;
+		WARN(old.nv != POSTED_INTR_WAKEUP_VECTOR,
+		     "Wakeup handler not enabled while the VCPU is blocked\n");
+
+		dest = cpu_physical_id(vcpu->cpu);
+
+		if (x2apic_enabled())
+			new.ndst = dest;
+		else
+			new.ndst = (dest << 8) & 0xFF00;
+
+		/* set 'NV' to 'notification vector' */
+		new.nv = POSTED_INTR_VECTOR;
+	} while (cmpxchg64(&pi_desc->control, old.control,
+			   new.control) != old.control);
+
+	if (!WARN_ON_ONCE(vcpu->pre_pcpu == -1)) {
+		spin_lock(&per_cpu(blocked_vcpu_on_cpu_lock, vcpu->pre_pcpu));
+		list_del(&vcpu->blocked_vcpu_list);
+		spin_unlock(&per_cpu(blocked_vcpu_on_cpu_lock, vcpu->pre_pcpu));
+		vcpu->pre_pcpu = -1;
+	}
+}
+
 /*
  * This routine does the following things for vCPU which is going
  * to be blocked if VT-d PI is enabled.
@@ -11686,7 +11815,6 @@ static void vmx_enable_log_dirty_pt_masked(struct kvm *kvm,
  */
 static int pi_pre_block(struct kvm_vcpu *vcpu)
 {
-	unsigned long flags;
 	unsigned int dest;
 	struct pi_desc old, new;
 	struct pi_desc *pi_desc = vcpu_to_pi_desc(vcpu);
@@ -11696,33 +11824,19 @@ static int pi_pre_block(struct kvm_vcpu *vcpu)
 		!kvm_vcpu_apicv_active(vcpu))
 		return 0;
 
-	vcpu->pre_pcpu = vcpu->cpu;
-	spin_lock_irqsave(&per_cpu(blocked_vcpu_on_cpu_lock,
-			  vcpu->pre_pcpu), flags);
-	list_add_tail(&vcpu->blocked_vcpu_list,
-		      &per_cpu(blocked_vcpu_on_cpu,
-		      vcpu->pre_pcpu));
-	spin_unlock_irqrestore(&per_cpu(blocked_vcpu_on_cpu_lock,
-			       vcpu->pre_pcpu), flags);
+	WARN_ON(irqs_disabled());
+	local_irq_disable();
+	if (!WARN_ON_ONCE(vcpu->pre_pcpu != -1)) {
+		vcpu->pre_pcpu = vcpu->cpu;
+		spin_lock(&per_cpu(blocked_vcpu_on_cpu_lock, vcpu->pre_pcpu));
+		list_add_tail(&vcpu->blocked_vcpu_list,
+			      &per_cpu(blocked_vcpu_on_cpu,
+				       vcpu->pre_pcpu));
+		spin_unlock(&per_cpu(blocked_vcpu_on_cpu_lock, vcpu->pre_pcpu));
+	}
 
 	do {
 		old.control = new.control = pi_desc->control;
-
-		/*
-		 * We should not block the vCPU if
-		 * an interrupt is posted for it.
-		 */
-		if (pi_test_on(pi_desc) == 1) {
-			spin_lock_irqsave(&per_cpu(blocked_vcpu_on_cpu_lock,
-					  vcpu->pre_pcpu), flags);
-			list_del(&vcpu->blocked_vcpu_list);
-			spin_unlock_irqrestore(
-					&per_cpu(blocked_vcpu_on_cpu_lock,
-					vcpu->pre_pcpu), flags);
-			vcpu->pre_pcpu = -1;
-
-			return 1;
-		}
 
 		WARN((pi_desc->sn == 1),
 		     "Warning: SN field of posted-interrupts "
@@ -11745,10 +11859,15 @@ static int pi_pre_block(struct kvm_vcpu *vcpu)
 
 		/* set 'NV' to 'wakeup vector' */
 		new.nv = POSTED_INTR_WAKEUP_VECTOR;
-	} while (cmpxchg(&pi_desc->control, old.control,
-			new.control) != old.control);
+	} while (cmpxchg64(&pi_desc->control, old.control,
+			   new.control) != old.control);
 
-	return 0;
+	/* We should not block the vCPU if an interrupt is posted for it.  */
+	if (pi_test_on(pi_desc) == 1)
+		__pi_post_block(vcpu);
+
+	local_irq_enable();
+	return (vcpu->pre_pcpu == -1);
 }
 
 static int vmx_pre_block(struct kvm_vcpu *vcpu)
@@ -11764,44 +11883,13 @@ static int vmx_pre_block(struct kvm_vcpu *vcpu)
 
 static void pi_post_block(struct kvm_vcpu *vcpu)
 {
-	struct pi_desc *pi_desc = vcpu_to_pi_desc(vcpu);
-	struct pi_desc old, new;
-	unsigned int dest;
-	unsigned long flags;
-
-	if (!kvm_arch_has_assigned_device(vcpu->kvm) ||
-		!irq_remapping_cap(IRQ_POSTING_CAP)  ||
-		!kvm_vcpu_apicv_active(vcpu))
+	if (vcpu->pre_pcpu == -1)
 		return;
 
-	do {
-		old.control = new.control = pi_desc->control;
-
-		dest = cpu_physical_id(vcpu->cpu);
-
-		if (x2apic_enabled())
-			new.ndst = dest;
-		else
-			new.ndst = (dest << 8) & 0xFF00;
-
-		/* Allow posting non-urgent interrupts */
-		new.sn = 0;
-
-		/* set 'NV' to 'notification vector' */
-		new.nv = POSTED_INTR_VECTOR;
-	} while (cmpxchg(&pi_desc->control, old.control,
-			new.control) != old.control);
-
-	if(vcpu->pre_pcpu != -1) {
-		spin_lock_irqsave(
-			&per_cpu(blocked_vcpu_on_cpu_lock,
-			vcpu->pre_pcpu), flags);
-		list_del(&vcpu->blocked_vcpu_list);
-		spin_unlock_irqrestore(
-			&per_cpu(blocked_vcpu_on_cpu_lock,
-			vcpu->pre_pcpu), flags);
-		vcpu->pre_pcpu = -1;
-	}
+	WARN_ON(irqs_disabled());
+	local_irq_disable();
+	__pi_post_block(vcpu);
+	local_irq_enable();
 }
 
 static void vmx_post_block(struct kvm_vcpu *vcpu)
@@ -11829,7 +11917,7 @@ static int vmx_update_pi_irte(struct kvm *kvm, unsigned int host_irq,
 	struct kvm_lapic_irq irq;
 	struct kvm_vcpu *vcpu;
 	struct vcpu_data vcpu_info;
-	int idx, ret = -EINVAL;
+	int idx, ret = 0;
 
 	if (!kvm_arch_has_assigned_device(kvm) ||
 		!irq_remapping_cap(IRQ_POSTING_CAP) ||
@@ -11838,7 +11926,12 @@ static int vmx_update_pi_irte(struct kvm *kvm, unsigned int host_irq,
 
 	idx = srcu_read_lock(&kvm->irq_srcu);
 	irq_rt = srcu_dereference(kvm->irq_routing, &kvm->irq_srcu);
-	BUG_ON(guest_irq >= irq_rt->nr_rt_entries);
+	if (guest_irq >= irq_rt->nr_rt_entries ||
+	    hlist_empty(&irq_rt->map[guest_irq])) {
+		pr_warn_once("no route for guest_irq %u/%u (broken user space?)\n",
+			     guest_irq, irq_rt->nr_rt_entries);
+		goto out;
+	}
 
 	hlist_for_each_entry(e, &irq_rt->map[guest_irq], link) {
 		if (e->type != KVM_IRQ_ROUTING_MSI)
@@ -11881,12 +11974,8 @@ static int vmx_update_pi_irte(struct kvm *kvm, unsigned int host_irq,
 
 		if (set)
 			ret = irq_set_vcpu_affinity(host_irq, &vcpu_info);
-		else {
-			/* suppress notification event before unposting */
-			pi_set_sn(vcpu_to_pi_desc(vcpu));
+		else
 			ret = irq_set_vcpu_affinity(host_irq, NULL);
-			pi_clear_sn(vcpu_to_pi_desc(vcpu));
-		}
 
 		if (ret < 0) {
 			printk(KERN_INFO "%s: failed to update PI IRTE\n",

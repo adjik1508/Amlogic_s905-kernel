@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/mm.h>
 #include <linux/gfp.h>
 #include <asm/pgalloc.h>
@@ -354,14 +355,15 @@ static inline void _pgd_free(pgd_t *pgd)
 		kmem_cache_free(pgd_cache, pgd);
 }
 #else
+
 static inline pgd_t *_pgd_alloc(void)
 {
-	return (pgd_t *)__get_free_page(PGALLOC_GFP);
+	return (pgd_t *)__get_free_pages(PGALLOC_GFP, PGD_ALLOCATION_ORDER);
 }
 
 static inline void _pgd_free(pgd_t *pgd)
 {
-	free_page((unsigned long)pgd);
+	free_pages((unsigned long)pgd, PGD_ALLOCATION_ORDER);
 }
 #endif /* CONFIG_X86_PAE */
 
@@ -426,10 +428,8 @@ int ptep_set_access_flags(struct vm_area_struct *vma,
 {
 	int changed = !pte_same(*ptep, entry);
 
-	if (changed && dirty) {
+	if (changed && dirty)
 		*ptep = entry;
-		pte_update(vma->vm_mm, address, ptep);
-	}
 
 	return changed;
 }
@@ -485,9 +485,6 @@ int ptep_test_and_clear_young(struct vm_area_struct *vma,
 	if (pte_young(*ptep))
 		ret = test_and_clear_bit(_PAGE_BIT_ACCESSED,
 					 (unsigned long *) &ptep->pte);
-
-	if (ret)
-		pte_update(vma->vm_mm, addr, ptep);
 
 	return ret;
 }

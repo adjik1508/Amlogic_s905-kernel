@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/hw_breakpoint.h>
 #include <linux/err.h>
 #include <dirent.h>
@@ -309,10 +310,11 @@ static char *get_config_name(struct list_head *head_terms)
 static struct perf_evsel *
 __add_event(struct list_head *list, int *idx,
 	    struct perf_event_attr *attr,
-	    char *name, struct cpu_map *cpus,
-	    struct list_head *config_terms)
+	    char *name, struct perf_pmu *pmu,
+	    struct list_head *config_terms, bool auto_merge_stats)
 {
 	struct perf_evsel *evsel;
+	struct cpu_map *cpus = pmu ? pmu->cpus : NULL;
 
 	event_attr_init(attr);
 
@@ -323,7 +325,8 @@ __add_event(struct list_head *list, int *idx,
 	(*idx)++;
 	evsel->cpus        = cpu_map__get(cpus);
 	evsel->own_cpus    = cpu_map__get(cpus);
-	evsel->system_wide = !!cpus;
+	evsel->system_wide = pmu ? pmu->is_uncore : false;
+	evsel->auto_merge_stats = auto_merge_stats;
 
 	if (name)
 		evsel->name = strdup(name);
@@ -339,7 +342,7 @@ static int add_event(struct list_head *list, int *idx,
 		     struct perf_event_attr *attr, char *name,
 		     struct list_head *config_terms)
 {
-	return __add_event(list, idx, attr, name, NULL, config_terms) ? 0 : -ENOMEM;
+	return __add_event(list, idx, attr, name, NULL, config_terms, false) ? 0 : -ENOMEM;
 }
 
 static int parse_aliases(char *str, const char *names[][PERF_EVSEL__MAX_ALIASES], int size)
@@ -1209,9 +1212,9 @@ int parse_events_add_numeric(struct parse_events_state *parse_state,
 			 get_config_name(head_config), &config_terms);
 }
 
-int parse_events_add_pmu(struct parse_events_state *parse_state,
+static int __parse_events_add_pmu(struct parse_events_state *parse_state,
 			 struct list_head *list, char *name,
-			 struct list_head *head_config)
+			 struct list_head *head_config, bool auto_merge_stats)
 {
 	struct perf_event_attr attr;
 	struct perf_pmu_info info;
@@ -1232,7 +1235,7 @@ int parse_events_add_pmu(struct parse_events_state *parse_state,
 
 	if (!head_config) {
 		attr.type = pmu->type;
-		evsel = __add_event(list, &parse_state->idx, &attr, NULL, pmu->cpus, NULL);
+		evsel = __add_event(list, &parse_state->idx, &attr, NULL, pmu, NULL, auto_merge_stats);
 		return evsel ? 0 : -ENOMEM;
 	}
 
@@ -1253,8 +1256,8 @@ int parse_events_add_pmu(struct parse_events_state *parse_state,
 		return -EINVAL;
 
 	evsel = __add_event(list, &parse_state->idx, &attr,
-			    get_config_name(head_config), pmu->cpus,
-			    &config_terms);
+			    get_config_name(head_config), pmu,
+			    &config_terms, auto_merge_stats);
 	if (evsel) {
 		evsel->unit = info.unit;
 		evsel->scale = info.scale;
@@ -1265,6 +1268,13 @@ int parse_events_add_pmu(struct parse_events_state *parse_state,
 	}
 
 	return evsel ? 0 : -ENOMEM;
+}
+
+int parse_events_add_pmu(struct parse_events_state *parse_state,
+			 struct list_head *list, char *name,
+			 struct list_head *head_config)
+{
+	return __parse_events_add_pmu(parse_state, list, name, head_config, false);
 }
 
 int parse_events_multi_pmu_add(struct parse_events_state *parse_state,
@@ -1296,8 +1306,8 @@ int parse_events_multi_pmu_add(struct parse_events_state *parse_state,
 					return -1;
 				list_add_tail(&term->list, head);
 
-				if (!parse_events_add_pmu(parse_state, list,
-						  pmu->name, head)) {
+				if (!__parse_events_add_pmu(parse_state, list,
+							    pmu->name, head, true)) {
 					pr_debug("%s -> %s/%s/\n", str,
 						 pmu->name, alias->str);
 					ok++;

@@ -683,11 +683,7 @@ static inline void sk_add_node_rcu(struct sock *sk, struct hlist_head *list)
 
 static inline void __sk_nulls_add_node_rcu(struct sock *sk, struct hlist_nulls_head *list)
 {
-	if (IS_ENABLED(CONFIG_IPV6) && sk->sk_reuseport &&
-	    sk->sk_family == AF_INET6)
-		hlist_nulls_add_tail_rcu(&sk->sk_nulls_node, list);
-	else
-		hlist_nulls_add_head_rcu(&sk->sk_nulls_node, list);
+	hlist_nulls_add_head_rcu(&sk->sk_nulls_node, list);
 }
 
 static inline void sk_nulls_add_node_rcu(struct sock *sk, struct hlist_nulls_head *list)
@@ -856,7 +852,7 @@ void sk_stream_write_space(struct sock *sk);
 static inline void __sk_add_backlog(struct sock *sk, struct sk_buff *skb)
 {
 	/* dont let skb dst not refcounted, we are going to leave rcu lock */
-	skb_dst_force_safe(skb);
+	skb_dst_force(skb);
 
 	if (!sk->sk_backlog.tail)
 		sk->sk_backlog.head = skb;

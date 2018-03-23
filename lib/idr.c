@@ -146,12 +146,12 @@ EXPORT_SYMBOL(idr_get_next_ext);
  * idr_alloc() and idr_remove() (as long as the ID being removed is not
  * the one being replaced!).
  *
- * Returns: 0 on success.  %-ENOENT indicates that @id was not found.
- * %-EINVAL indicates that @id or @ptr were not valid.
+ * Returns: the old value on success.  %-ENOENT indicates that @id was not
+ * found.  %-EINVAL indicates that @id or @ptr were not valid.
  */
 void *idr_replace(struct idr *idr, void *ptr, int id)
 {
-	if (WARN_ON_ONCE(id < 0))
+	if (id < 0)
 		return ERR_PTR(-EINVAL);
 
 	return idr_replace_ext(idr, ptr, id);

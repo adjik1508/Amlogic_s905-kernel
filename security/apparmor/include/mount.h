@@ -16,7 +16,6 @@
 
 #include <linux/fs.h>
 #include <linux/path.h>
-#include <uapi/linux/mount.h>
 
 #include "domain.h"
 #include "policy.h"

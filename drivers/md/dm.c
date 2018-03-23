@@ -52,6 +52,12 @@ static struct workqueue_struct *deferred_remove_workqueue;
 atomic_t dm_global_event_nr = ATOMIC_INIT(0);
 DECLARE_WAIT_QUEUE_HEAD(dm_global_eventq);
 
+void dm_issue_global_event(void)
+{
+	atomic_inc(&dm_global_event_nr);
+	wake_up(&dm_global_eventq);
+}
+
 /*
  * One of these is allocated per bio.
  */
@@ -987,24 +993,6 @@ static size_t dm_dax_copy_from_iter(struct dax_device *dax_dev, pgoff_t pgoff,
 	return ret;
 }
 
-static void dm_dax_flush(struct dax_device *dax_dev, pgoff_t pgoff, void *addr,
-		size_t size)
-{
-	struct mapped_device *md = dax_get_private(dax_dev);
-	sector_t sector = pgoff * PAGE_SECTORS;
-	struct dm_target *ti;
-	int srcu_idx;
-
-	ti = dm_dax_get_live_target(md, sector, &srcu_idx);
-
-	if (!ti)
-		goto out;
-	if (ti->type->dax_flush)
-		ti->type->dax_flush(ti, pgoff, addr, size);
- out:
-	dm_put_live_table(md, srcu_idx);
-}
-
 /*
  * A target may call dm_accept_partial_bio only from the map routine.  It is
  * allowed for all bio types except REQ_PREFLUSH.
@@ -1707,7 +1695,7 @@ static struct mapped_device *alloc_dev(int minor)
 	struct mapped_device *md;
 	void *old_md;
 
-	md = kzalloc_node(sizeof(*md), GFP_KERNEL, numa_node_id);
+	md = kvzalloc_node(sizeof(*md), GFP_KERNEL, numa_node_id);
 	if (!md) {
 		DMWARN("unable to allocate device, out of memory.");
 		return NULL;
@@ -1807,7 +1795,7 @@ bad_io_barrier:
 bad_minor:
 	module_put(THIS_MODULE);
 bad_module_get:
-	kfree(md);
+	kvfree(md);
 	return NULL;
 }
 
@@ -1826,7 +1814,7 @@ static void free_dev(struct mapped_device *md)
 	free_minor(minor);
 
 	module_put(THIS_MODULE);
-	kfree(md);
+	kvfree(md);
 }
 
 static void __bind_mempools(struct mapped_device *md, struct dm_table *t)
@@ -1883,9 +1871,8 @@ static void event_callback(void *context)
 	dm_send_uevents(&uevents, &disk_to_dev(md->disk)->kobj);
 
 	atomic_inc(&md->event_nr);
-	atomic_inc(&dm_global_event_nr);
 	wake_up(&md->eventq);
-	wake_up(&dm_global_eventq);
+	dm_issue_global_event();
 }
 
 /*
@@ -2301,6 +2288,7 @@ struct dm_table *dm_swap_table(struct mapped_device *md, struct dm_table *table)
 	}
 
 	map = __bind(md, table, &limits);
+	dm_issue_global_event();
 
 out:
 	mutex_unlock(&md->suspend_lock);
@@ -2721,11 +2709,15 @@ struct mapped_device *dm_get_from_kobject(struct kobject *kobj)
 
 	md = container_of(kobj, struct mapped_device, kobj_holder.kobj);
 
-	if (test_bit(DMF_FREEING, &md->flags) ||
-	    dm_deleting_md(md))
-		return NULL;
-
+	spin_lock(&_minor_lock);
+	if (test_bit(DMF_FREEING, &md->flags) || dm_deleting_md(md)) {
+		md = NULL;
+		goto out;
+	}
 	dm_get(md);
+out:
+	spin_unlock(&_minor_lock);
+
 	return md;
 }
 
@@ -2992,7 +2984,6 @@ static const struct block_device_operations dm_blk_dops = {
 static const struct dax_operations dm_dax_ops = {
 	.direct_access = dm_dax_direct_access,
 	.copy_from_iter = dm_dax_copy_from_iter,
-	.flush = dm_dax_flush,
 };
 
 /*

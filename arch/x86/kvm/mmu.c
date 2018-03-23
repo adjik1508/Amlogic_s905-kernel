@@ -3382,7 +3382,7 @@ static int mmu_alloc_direct_roots(struct kvm_vcpu *vcpu)
 		spin_lock(&vcpu->kvm->mmu_lock);
 		if(make_mmu_pages_available(vcpu) < 0) {
 			spin_unlock(&vcpu->kvm->mmu_lock);
-			return 1;
+			return -ENOSPC;
 		}
 		sp = kvm_mmu_get_page(vcpu, 0, 0,
 				vcpu->arch.mmu.shadow_root_level, 1, ACC_ALL);
@@ -3397,7 +3397,7 @@ static int mmu_alloc_direct_roots(struct kvm_vcpu *vcpu)
 			spin_lock(&vcpu->kvm->mmu_lock);
 			if (make_mmu_pages_available(vcpu) < 0) {
 				spin_unlock(&vcpu->kvm->mmu_lock);
-				return 1;
+				return -ENOSPC;
 			}
 			sp = kvm_mmu_get_page(vcpu, i << (30 - PAGE_SHIFT),
 					i << 30, PT32_ROOT_LEVEL, 1, ACC_ALL);
@@ -3437,7 +3437,7 @@ static int mmu_alloc_shadow_roots(struct kvm_vcpu *vcpu)
 		spin_lock(&vcpu->kvm->mmu_lock);
 		if (make_mmu_pages_available(vcpu) < 0) {
 			spin_unlock(&vcpu->kvm->mmu_lock);
-			return 1;
+			return -ENOSPC;
 		}
 		sp = kvm_mmu_get_page(vcpu, root_gfn, 0,
 				vcpu->arch.mmu.shadow_root_level, 0, ACC_ALL);
@@ -3474,7 +3474,7 @@ static int mmu_alloc_shadow_roots(struct kvm_vcpu *vcpu)
 		spin_lock(&vcpu->kvm->mmu_lock);
 		if (make_mmu_pages_available(vcpu) < 0) {
 			spin_unlock(&vcpu->kvm->mmu_lock);
-			return 1;
+			return -ENOSPC;
 		}
 		sp = kvm_mmu_get_page(vcpu, root_gfn, i << 30, PT32_ROOT_LEVEL,
 				      0, ACC_ALL);
@@ -3837,7 +3837,7 @@ int kvm_handle_page_fault(struct kvm_vcpu *vcpu, u64 error_code,
 	case KVM_PV_REASON_PAGE_NOT_PRESENT:
 		vcpu->arch.apf.host_apf_reason = 0;
 		local_irq_disable();
-		kvm_async_pf_task_wait(fault_address);
+		kvm_async_pf_task_wait(fault_address, 0);
 		local_irq_enable();
 		break;
 	case KVM_PV_REASON_PAGE_READY:
@@ -3974,18 +3974,18 @@ static inline bool is_last_gpte(struct kvm_mmu *mmu,
 				unsigned level, unsigned gpte)
 {
 	/*
-	 * PT_PAGE_TABLE_LEVEL always terminates.  The RHS has bit 7 set
-	 * iff level <= PT_PAGE_TABLE_LEVEL, which for our purpose means
-	 * level == PT_PAGE_TABLE_LEVEL; set PT_PAGE_SIZE_MASK in gpte then.
-	 */
-	gpte |= level - PT_PAGE_TABLE_LEVEL - 1;
-
-	/*
 	 * The RHS has bit 7 set iff level < mmu->last_nonleaf_level.
 	 * If it is clear, there are no large pages at this level, so clear
 	 * PT_PAGE_SIZE_MASK in gpte if that is the case.
 	 */
 	gpte &= level - mmu->last_nonleaf_level;
+
+	/*
+	 * PT_PAGE_TABLE_LEVEL always terminates.  The RHS has bit 7 set
+	 * iff level <= PT_PAGE_TABLE_LEVEL, which for our purpose means
+	 * level == PT_PAGE_TABLE_LEVEL; set PT_PAGE_SIZE_MASK in gpte then.
+	 */
+	gpte |= level - PT_PAGE_TABLE_LEVEL - 1;
 
 	return gpte & PT_PAGE_SIZE_MASK;
 }
@@ -4555,6 +4555,7 @@ void kvm_init_shadow_ept_mmu(struct kvm_vcpu *vcpu, bool execonly,
 
 	update_permission_bitmask(vcpu, context, true);
 	update_pkru_bitmask(vcpu, context, true);
+	update_last_nonleaf_level(vcpu, context);
 	reset_rsvds_bits_mask_ept(vcpu, context, execonly);
 	reset_ept_shadow_zero_bits_mask(vcpu, context, execonly);
 }
@@ -5475,13 +5476,13 @@ int kvm_mmu_module_init(void)
 
 	pte_list_desc_cache = kmem_cache_create("pte_list_desc",
 					    sizeof(struct pte_list_desc),
-					    0, 0, NULL);
+					    0, SLAB_ACCOUNT, NULL);
 	if (!pte_list_desc_cache)
 		goto nomem;
 
 	mmu_page_header_cache = kmem_cache_create("kvm_mmu_page_header",
 						  sizeof(struct kvm_mmu_page),
-						  0, 0, NULL);
+						  0, SLAB_ACCOUNT, NULL);
 	if (!mmu_page_header_cache)
 		goto nomem;
 

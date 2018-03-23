@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/fs/ext4/file.c
  *
@@ -70,25 +71,6 @@ static ssize_t ext4_file_read_iter(struct kiocb *iocb, struct iov_iter *to)
 #ifdef CONFIG_FS_DAX
 	if (IS_DAX(file_inode(iocb->ki_filp)))
 		return ext4_dax_read_iter(iocb, to);
-#endif
-	return generic_file_read_iter(iocb, to);
-}
-
-static ssize_t ext4_file_integrity_read_iter(struct kiocb *iocb,
-					     struct iov_iter *to)
-{
-	struct inode *inode = file_inode(iocb->ki_filp);
-
-	lockdep_assert_held(&inode->i_rwsem);
-	if (unlikely(ext4_forced_shutdown(EXT4_SB(inode->i_sb))))
-		return -EIO;
-
-	if (!iov_iter_count(to))
-		return 0; /* skip atime */
-
-#ifdef CONFIG_FS_DAX
-	if (IS_DAX(inode))
-		return dax_iomap_rw(iocb, to, &ext4_iomap_ops);
 #endif
 	return generic_file_read_iter(iocb, to);
 }
@@ -744,7 +726,6 @@ const struct file_operations ext4_file_operations = {
 	.splice_read	= generic_file_splice_read,
 	.splice_write	= iter_file_splice_write,
 	.fallocate	= ext4_fallocate,
-	.integrity_read	= ext4_file_integrity_read_iter,
 };
 
 const struct inode_operations ext4_file_inode_operations = {

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/fs/sysv/inode.c
  *
@@ -62,7 +63,7 @@ static int sysv_remount(struct super_block *sb, int *flags, char *data)
 
 	sync_filesystem(sb);
 	if (sbi->s_forced_ro)
-		*flags |= SB_RDONLY;
+		*flags |= MS_RDONLY;
 	return 0;
 }
 

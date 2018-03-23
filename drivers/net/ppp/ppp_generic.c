@@ -120,7 +120,7 @@ struct ppp {
 	int		n_channels;	/* how many channels are attached 54 */
 	spinlock_t	rlock;		/* lock for receive side 58 */
 	spinlock_t	wlock;		/* lock for transmit side 5c */
-	int		*xmit_recursion __percpu; /* xmit recursion detect */
+	int __percpu	*xmit_recursion; /* xmit recursion detect */
 	int		mru;		/* max receive unit 60 */
 	unsigned int	flags;		/* control bits 64 */
 	unsigned int	xstate;		/* transmit state bits 68 */
@@ -959,6 +959,7 @@ static __net_exit void ppp_exit_net(struct net *net)
 	unregister_netdevice_many(&list);
 	rtnl_unlock();
 
+	mutex_destroy(&pn->all_ppp_mutex);
 	idr_destroy(&pn->units_idr);
 }
 
@@ -1339,7 +1340,17 @@ ppp_get_stats64(struct net_device *dev, struct rtnl_link_stats64 *stats64)
 
 static int ppp_dev_init(struct net_device *dev)
 {
+	struct ppp *ppp;
+
 	netdev_lockdep_set_classes(dev);
+
+	ppp = netdev_priv(dev);
+	/* Let the netdevice take a reference on the ppp file. This ensures
+	 * that ppp_destroy_interface() won't run before the device gets
+	 * unregistered.
+	 */
+	atomic_inc(&ppp->file.refcnt);
+
 	return 0;
 }
 
@@ -1360,6 +1371,15 @@ static void ppp_dev_uninit(struct net_device *dev)
 
 	ppp->file.dead = 1;
 	wake_up_interruptible(&ppp->file.rwait);
+}
+
+static void ppp_dev_priv_destructor(struct net_device *dev)
+{
+	struct ppp *ppp;
+
+	ppp = netdev_priv(dev);
+	if (atomic_dec_and_test(&ppp->file.refcnt))
+		ppp_destroy_interface(ppp);
 }
 
 static const struct net_device_ops ppp_netdev_ops = {
@@ -1387,6 +1407,7 @@ static void ppp_setup(struct net_device *dev)
 	dev->tx_queue_len = 3;
 	dev->type = ARPHRD_PPP;
 	dev->flags = IFF_POINTOPOINT | IFF_NOARP | IFF_MULTICAST;
+	dev->priv_destructor = ppp_dev_priv_destructor;
 	netif_keep_dst(dev);
 }
 

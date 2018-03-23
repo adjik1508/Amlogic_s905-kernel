@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/arch/m32r/kernel/setup.c
  *
@@ -25,7 +26,6 @@
 #include <linux/cpu.h>
 #include <linux/nodemask.h>
 #include <linux/pfn.h>
-#include <uapi/linux/mount.h>
 
 #include <asm/processor.h>
 #include <asm/pgtable.h>

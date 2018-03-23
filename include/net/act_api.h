@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __NET_ACT_API_H
 #define __NET_ACT_API_H
 
@@ -34,7 +35,6 @@ struct tc_action {
 	struct gnet_stats_queue		tcfa_qstats;
 	struct net_rate_estimator __rcu *tcfa_rate_est;
 	spinlock_t			tcfa_lock;
-	struct rcu_head			tcfa_rcu;
 	struct gnet_stats_basic_cpu __percpu *cpu_bstats;
 	struct gnet_stats_queue __percpu *cpu_qstats;
 	struct tc_cookie	*act_cookie;
@@ -50,7 +50,6 @@ struct tc_action {
 #define tcf_qstats	common.tcfa_qstats
 #define tcf_rate_est	common.tcfa_rate_est
 #define tcf_lock	common.tcfa_lock
-#define tcf_rcu		common.tcfa_rcu
 
 /* Update lastuse only if needed, to avoid dirtying a cache line.
  * We use a temp variable to avoid fetching jiffies twice.
@@ -124,7 +123,9 @@ void tcf_idrinfo_destroy(const struct tc_action_ops *ops,
 
 static inline void tc_action_net_exit(struct tc_action_net *tn)
 {
+	rtnl_lock();
 	tcf_idrinfo_destroy(tn->ops, tn->idrinfo);
+	rtnl_unlock();
 	kfree(tn->idrinfo);
 }
 

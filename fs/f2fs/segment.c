@@ -17,6 +17,7 @@
 #include <linux/swap.h>
 #include <linux/timer.h>
 #include <linux/freezer.h>
+#include <linux/sched/signal.h>
 
 #include "f2fs.h"
 #include "segment.h"
@@ -166,6 +167,21 @@ pass:
 	return result;
 found:
 	return result - size + __reverse_ffz(tmp);
+}
+
+bool need_SSR(struct f2fs_sb_info *sbi)
+{
+	int node_secs = get_blocktype_secs(sbi, F2FS_DIRTY_NODES);
+	int dent_secs = get_blocktype_secs(sbi, F2FS_DIRTY_DENTS);
+	int imeta_secs = get_blocktype_secs(sbi, F2FS_DIRTY_IMETA);
+
+	if (test_opt(sbi, LFS))
+		return false;
+	if (sbi->gc_thread && sbi->gc_thread->gc_urgent)
+		return true;
+
+	return free_sections(sbi) <= (node_secs + 2 * dent_secs + imeta_secs +
+						2 * reserved_sections(sbi));
 }
 
 void register_inmem_page(struct inode *inode, struct page *page)
@@ -1046,6 +1062,7 @@ static int __issue_discard_cmd(struct f2fs_sb_info *sbi, bool issue_cond)
 	struct blk_plug plug;
 	int iter = 0, issued = 0;
 	int i;
+	bool io_interrupted = false;
 
 	mutex_lock(&dcc->cmd_lock);
 	f2fs_bug_on(sbi,
@@ -1061,14 +1078,26 @@ static int __issue_discard_cmd(struct f2fs_sb_info *sbi, bool issue_cond)
 			if (dcc->pend_list_tag[i] & P_TRIM) {
 				__submit_discard_cmd(sbi, dc);
 				issued++;
+
+				if (fatal_signal_pending(current))
+					break;
 				continue;
 			}
 
-			if (!issue_cond || is_idle(sbi)) {
-				issued++;
+			if (!issue_cond) {
 				__submit_discard_cmd(sbi, dc);
+				issued++;
+				continue;
 			}
-			if (issue_cond && iter++ > DISCARD_ISSUE_RATE)
+
+			if (is_idle(sbi)) {
+				__submit_discard_cmd(sbi, dc);
+				issued++;
+			} else {
+				io_interrupted = true;
+			}
+
+			if (++iter >= DISCARD_ISSUE_RATE)
 				goto out;
 		}
 		if (list_empty(pend_list) && dcc->pend_list_tag[i] & P_TRIM)
@@ -1077,6 +1106,9 @@ static int __issue_discard_cmd(struct f2fs_sb_info *sbi, bool issue_cond)
 out:
 	blk_finish_plug(&plug);
 	mutex_unlock(&dcc->cmd_lock);
+
+	if (!issued && io_interrupted)
+		issued = -1;
 
 	return issued;
 }
@@ -1177,12 +1209,12 @@ void stop_discard_thread(struct f2fs_sb_info *sbi)
 	}
 }
 
-/* This comes from f2fs_put_super */
-void f2fs_wait_discard_bios(struct f2fs_sb_info *sbi)
+/* This comes from f2fs_put_super and f2fs_trim_fs */
+void f2fs_wait_discard_bios(struct f2fs_sb_info *sbi, bool umount)
 {
 	__issue_discard_cmd(sbi, false);
 	__drop_discard_cmd(sbi);
-	__wait_discard_cmd(sbi, false);
+	__wait_discard_cmd(sbi, !umount);
 }
 
 static void mark_discard_range_all(struct f2fs_sb_info *sbi)
@@ -2212,6 +2244,7 @@ int f2fs_trim_fs(struct f2fs_sb_info *sbi, struct fstrim_range *range)
 	}
 	/* It's time to issue all the filed discards */
 	mark_discard_range_all(sbi);
+	f2fs_wait_discard_bios(sbi, false);
 out:
 	range->len = F2FS_BLK_TO_BYTES(cpc.trimmed);
 	return err;

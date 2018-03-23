@@ -842,20 +842,15 @@ EXPORT_SYMBOL_GPL(vmf_insert_pfn_pud);
 #endif /* CONFIG_HAVE_ARCH_TRANSPARENT_HUGEPAGE_PUD */
 
 static void touch_pmd(struct vm_area_struct *vma, unsigned long addr,
-		pmd_t *pmd)
+		pmd_t *pmd, int flags)
 {
 	pmd_t _pmd;
 
-	/*
-	 * We should set the dirty bit only for FOLL_WRITE but for now
-	 * the dirty bit in the pmd is meaningless.  And if the dirty
-	 * bit will become meaningful and we'll only set it with
-	 * FOLL_WRITE, an atomic set_bit will be required on the pmd to
-	 * set the young bit, instead of the current set_pmd_at.
-	 */
-	_pmd = pmd_mkyoung(pmd_mkdirty(*pmd));
+	_pmd = pmd_mkyoung(*pmd);
+	if (flags & FOLL_WRITE)
+		_pmd = pmd_mkdirty(_pmd);
 	if (pmdp_set_access_flags(vma, addr & HPAGE_PMD_MASK,
-				pmd, _pmd,  1))
+				pmd, _pmd, flags & FOLL_WRITE))
 		update_mmu_cache_pmd(vma, addr, pmd);
 }
 
@@ -884,7 +879,7 @@ struct page *follow_devmap_pmd(struct vm_area_struct *vma, unsigned long addr,
 		return NULL;
 
 	if (flags & FOLL_TOUCH)
-		touch_pmd(vma, addr, pmd);
+		touch_pmd(vma, addr, pmd, flags);
 
 	/*
 	 * device mapped pages can only be returned if the
@@ -941,6 +936,9 @@ int copy_huge_pmd(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 				pmd = pmd_swp_mksoft_dirty(pmd);
 			set_pmd_at(src_mm, addr, src_pmd, pmd);
 		}
+		add_mm_counter(dst_mm, MM_ANONPAGES, HPAGE_PMD_NR);
+		atomic_long_inc(&dst_mm->nr_ptes);
+		pgtable_trans_huge_deposit(dst_mm, dst_pmd, pgtable);
 		set_pmd_at(dst_mm, addr, dst_pmd, pmd);
 		ret = 0;
 		goto out_unlock;
@@ -992,20 +990,15 @@ out:
 
 #ifdef CONFIG_HAVE_ARCH_TRANSPARENT_HUGEPAGE_PUD
 static void touch_pud(struct vm_area_struct *vma, unsigned long addr,
-		pud_t *pud)
+		pud_t *pud, int flags)
 {
 	pud_t _pud;
 
-	/*
-	 * We should set the dirty bit only for FOLL_WRITE but for now
-	 * the dirty bit in the pud is meaningless.  And if the dirty
-	 * bit will become meaningful and we'll only set it with
-	 * FOLL_WRITE, an atomic set_bit will be required on the pud to
-	 * set the young bit, instead of the current set_pud_at.
-	 */
-	_pud = pud_mkyoung(pud_mkdirty(*pud));
+	_pud = pud_mkyoung(*pud);
+	if (flags & FOLL_WRITE)
+		_pud = pud_mkdirty(_pud);
 	if (pudp_set_access_flags(vma, addr & HPAGE_PUD_MASK,
-				pud, _pud,  1))
+				pud, _pud, flags & FOLL_WRITE))
 		update_mmu_cache_pud(vma, addr, pud);
 }
 
@@ -1028,7 +1021,7 @@ struct page *follow_devmap_pud(struct vm_area_struct *vma, unsigned long addr,
 		return NULL;
 
 	if (flags & FOLL_TOUCH)
-		touch_pud(vma, addr, pud);
+		touch_pud(vma, addr, pud, flags);
 
 	/*
 	 * device mapped pages can only be returned if the
@@ -1404,7 +1397,7 @@ struct page *follow_trans_huge_pmd(struct vm_area_struct *vma,
 	page = pmd_page(*pmd);
 	VM_BUG_ON_PAGE(!PageHead(page) && !is_zone_device_page(page), page);
 	if (flags & FOLL_TOUCH)
-		touch_pmd(vma, addr, pmd);
+		touch_pmd(vma, addr, pmd, flags);
 	if ((flags & FOLL_MLOCK) && (vma->vm_flags & VM_LOCKED)) {
 		/*
 		 * We don't mlock() pte-mapped THPs. This way we can avoid

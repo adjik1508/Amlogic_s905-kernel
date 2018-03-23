@@ -345,7 +345,7 @@ void tcp_v4_err(struct sk_buff *skb, u32);
 
 void tcp_shutdown(struct sock *sk, int how);
 
-void tcp_v4_early_demux(struct sk_buff *skb);
+int tcp_v4_early_demux(struct sk_buff *skb);
 int tcp_v4_rcv(struct sk_buff *skb);
 
 int tcp_v4_tw_remember_stamp(struct inet_timewait_sock *tw);
@@ -544,7 +544,6 @@ u32 tcp_tso_autosize(const struct sock *sk, unsigned int mss_now,
 		     int min_tso_segs);
 void __tcp_push_pending_frames(struct sock *sk, unsigned int cur_mss,
 			       int nonagle);
-bool tcp_may_send_now(struct sock *sk);
 int __tcp_retransmit_skb(struct sock *sk, struct sk_buff *skb, int segs);
 int tcp_retransmit_skb(struct sock *sk, struct sk_buff *skb, int segs);
 void tcp_retransmit_timer(struct sock *sk);
@@ -564,7 +563,7 @@ void tcp_push_one(struct sock *, unsigned int mss_now);
 void tcp_send_ack(struct sock *sk);
 void tcp_send_delayed_ack(struct sock *sk);
 void tcp_send_loss_probe(struct sock *sk);
-bool tcp_schedule_loss_probe(struct sock *sk);
+bool tcp_schedule_loss_probe(struct sock *sk, bool advancing_rto);
 void tcp_skb_collapse_tstamp(struct sk_buff *skb,
 			     const struct sk_buff *next_skb);
 
@@ -841,6 +840,12 @@ struct tcp_skb_cb {
 			struct inet6_skb_parm	h6;
 #endif
 		} header;	/* For incoming skbs */
+		struct {
+			__u32 key;
+			__u32 flags;
+			struct bpf_map *map;
+			void *data_end;
+		} bpf;
 	};
 };
 
@@ -869,12 +874,11 @@ static inline int tcp_v6_sdif(const struct sk_buff *skb)
 }
 #endif
 
-/* TCP_SKB_CB reference means this can not be used from early demux */
 static inline bool inet_exact_dif_match(struct net *net, struct sk_buff *skb)
 {
 #if IS_ENABLED(CONFIG_NET_L3_MASTER_DEV)
 	if (!net->ipv4.sysctl_tcp_l3mdev_accept &&
-	    skb && ipv4_l3mdev_skb(TCP_SKB_CB(skb)->header.h4.flags))
+	    skb && ipv4_l3mdev_skb(IPCB(skb)->flags))
 		return true;
 #endif
 	return false;
@@ -1081,7 +1085,7 @@ void tcp_rate_skb_sent(struct sock *sk, struct sk_buff *skb);
 void tcp_rate_skb_delivered(struct sock *sk, struct sk_buff *skb,
 			    struct rate_sample *rs);
 void tcp_rate_gen(struct sock *sk, u32 delivered, u32 lost,
-		  struct rate_sample *rs);
+		  bool is_sack_reneg, struct rate_sample *rs);
 void tcp_rate_check_app_limited(struct sock *sk);
 
 /* These functions determine how the current flow behaves in respect of SACK
@@ -1766,12 +1770,12 @@ static inline void tcp_highest_sack_reset(struct sock *sk)
 	tcp_sk(sk)->highest_sack = tcp_write_queue_head(sk);
 }
 
-/* Called when old skb is about to be deleted (to be combined with new skb) */
-static inline void tcp_highest_sack_combine(struct sock *sk,
+/* Called when old skb is about to be deleted and replaced by new skb */
+static inline void tcp_highest_sack_replace(struct sock *sk,
 					    struct sk_buff *old,
 					    struct sk_buff *new)
 {
-	if (tcp_sk(sk)->sacked_out && (old == tcp_sk(sk)->highest_sack))
+	if (old == tcp_highest_sack(sk))
 		tcp_sk(sk)->highest_sack = new;
 }
 

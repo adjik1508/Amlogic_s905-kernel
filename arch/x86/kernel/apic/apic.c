@@ -573,11 +573,21 @@ static u32 bdx_deadline_rev(void)
 	return ~0U;
 }
 
+static u32 skx_deadline_rev(void)
+{
+	switch (boot_cpu_data.x86_mask) {
+	case 0x03: return 0x01000136;
+	case 0x04: return 0x02000014;
+	}
+
+	return ~0U;
+}
+
 static const struct x86_cpu_id deadline_match[] = {
 	DEADLINE_MODEL_MATCH_FUNC( INTEL_FAM6_HASWELL_X,	hsx_deadline_rev),
 	DEADLINE_MODEL_MATCH_REV ( INTEL_FAM6_BROADWELL_X,	0x0b000020),
 	DEADLINE_MODEL_MATCH_FUNC( INTEL_FAM6_BROADWELL_XEON_D,	bdx_deadline_rev),
-	DEADLINE_MODEL_MATCH_REV ( INTEL_FAM6_SKYLAKE_X,	0x02000014),
+	DEADLINE_MODEL_MATCH_FUNC( INTEL_FAM6_SKYLAKE_X,	skx_deadline_rev),
 
 	DEADLINE_MODEL_MATCH_REV ( INTEL_FAM6_HASWELL_CORE,	0x22),
 	DEADLINE_MODEL_MATCH_REV ( INTEL_FAM6_HASWELL_ULT,	0x20),
@@ -600,7 +610,8 @@ static void apic_check_deadline_errata(void)
 	const struct x86_cpu_id *m;
 	u32 rev;
 
-	if (!boot_cpu_has(X86_FEATURE_TSC_DEADLINE_TIMER))
+	if (!boot_cpu_has(X86_FEATURE_TSC_DEADLINE_TIMER) ||
+	    boot_cpu_has(X86_FEATURE_HYPERVISOR))
 		return;
 
 	m = x86_match_cpu(deadline_match);
@@ -1634,7 +1645,7 @@ static __init void try_to_enable_x2apic(int remap_mode)
 		 * under KVM
 		 */
 		if (max_physical_apicid > 255 ||
-		    !hypervisor_x2apic_available()) {
+		    !x86_init.hyper.x2apic_available()) {
 			pr_info("x2apic: IRQ remapping doesn't support X2APIC mode\n");
 			x2apic_disable();
 			return;
@@ -2130,7 +2141,7 @@ int generic_processor_info(int apicid, int version)
 	 * Since fixing handling of boot_cpu_physical_apicid requires
 	 * another discussion and tests on each platform, we leave it
 	 * for now and here we use read_apic_id() directly in this
-	 * function, __generic_processor_info().
+	 * function, generic_processor_info().
 	 */
 	if (disabled_cpu_apicid != BAD_APICID &&
 	    disabled_cpu_apicid != read_apic_id() &&

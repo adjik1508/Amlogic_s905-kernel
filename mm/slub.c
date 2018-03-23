@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * SLUB: A slab allocator that limits cache line use instead of queuing
  * objects in per cpu and per node lists.
@@ -5702,6 +5703,10 @@ static int sysfs_slab_add(struct kmem_cache *s)
 		kobject_init(&s->kobj, &slab_ktype);
 		return 0;
 	}
+
+	if (!unmergeable && disable_higher_order_debug &&
+			(slub_debug & DEBUG_METADATA_FLAGS))
+		unmergeable = 1;
 
 	if (unmergeable) {
 		/*

@@ -266,6 +266,37 @@ static DEFINE_SPINLOCK(all_mddevs_lock);
  * call has finished, the bio has been linked into some internal structure
  * and so is visible to ->quiesce(), so we don't need the refcount any more.
  */
+void md_handle_request(struct mddev *mddev, struct bio *bio)
+{
+check_suspended:
+	rcu_read_lock();
+	if (mddev->suspended) {
+		DEFINE_WAIT(__wait);
+		for (;;) {
+			prepare_to_wait(&mddev->sb_wait, &__wait,
+					TASK_UNINTERRUPTIBLE);
+			if (!mddev->suspended)
+				break;
+			rcu_read_unlock();
+			schedule();
+			rcu_read_lock();
+		}
+		finish_wait(&mddev->sb_wait, &__wait);
+	}
+	atomic_inc(&mddev->active_io);
+	rcu_read_unlock();
+
+	if (!mddev->pers->make_request(mddev, bio)) {
+		atomic_dec(&mddev->active_io);
+		wake_up(&mddev->sb_wait);
+		goto check_suspended;
+	}
+
+	if (atomic_dec_and_test(&mddev->active_io) && mddev->suspended)
+		wake_up(&mddev->sb_wait);
+}
+EXPORT_SYMBOL(md_handle_request);
+
 static blk_qc_t md_make_request(struct request_queue *q, struct bio *bio)
 {
 	const int rw = bio_data_dir(bio);
@@ -285,23 +316,6 @@ static blk_qc_t md_make_request(struct request_queue *q, struct bio *bio)
 		bio_endio(bio);
 		return BLK_QC_T_NONE;
 	}
-check_suspended:
-	rcu_read_lock();
-	if (mddev->suspended) {
-		DEFINE_WAIT(__wait);
-		for (;;) {
-			prepare_to_wait(&mddev->sb_wait, &__wait,
-					TASK_UNINTERRUPTIBLE);
-			if (!mddev->suspended)
-				break;
-			rcu_read_unlock();
-			schedule();
-			rcu_read_lock();
-		}
-		finish_wait(&mddev->sb_wait, &__wait);
-	}
-	atomic_inc(&mddev->active_io);
-	rcu_read_unlock();
 
 	/*
 	 * save the sectors now since our bio can
@@ -310,19 +324,13 @@ check_suspended:
 	sectors = bio_sectors(bio);
 	/* bio could be mergeable after passing to underlayer */
 	bio->bi_opf &= ~REQ_NOMERGE;
-	if (!mddev->pers->make_request(mddev, bio)) {
-		atomic_dec(&mddev->active_io);
-		wake_up(&mddev->sb_wait);
-		goto check_suspended;
-	}
+
+	md_handle_request(mddev, bio);
 
 	cpu = part_stat_lock();
 	part_stat_inc(cpu, &mddev->gendisk->part0, ios[rw]);
 	part_stat_add(cpu, &mddev->gendisk->part0, sectors[rw], sectors);
 	part_stat_unlock();
-
-	if (atomic_dec_and_test(&mddev->active_io) && mddev->suspended)
-		wake_up(&mddev->sb_wait);
 
 	return BLK_QC_T_NONE;
 }
@@ -439,16 +447,22 @@ static void md_submit_flush_data(struct work_struct *ws)
 	struct mddev *mddev = container_of(ws, struct mddev, flush_work);
 	struct bio *bio = mddev->flush_bio;
 
+	/*
+	 * must reset flush_bio before calling into md_handle_request to avoid a
+	 * deadlock, because other bios passed md_handle_request suspend check
+	 * could wait for this and below md_handle_request could wait for those
+	 * bios because of suspend check
+	 */
+	mddev->flush_bio = NULL;
+	wake_up(&mddev->sb_wait);
+
 	if (bio->bi_iter.bi_size == 0)
 		/* an empty barrier - all done */
 		bio_endio(bio);
 	else {
 		bio->bi_opf &= ~REQ_PREFLUSH;
-		mddev->pers->make_request(mddev, bio);
+		md_handle_request(mddev, bio);
 	}
-
-	mddev->flush_bio = NULL;
-	wake_up(&mddev->sb_wait);
 }
 
 void md_flush_request(struct mddev *mddev, struct bio *bio)
@@ -6348,7 +6362,7 @@ static int add_new_disk(struct mddev *mddev, mdu_disk_info_t *info)
 					break;
 				}
 			}
-			if (has_journal) {
+			if (has_journal || mddev->bitmap) {
 				export_rdev(rdev);
 				return -EBUSY;
 			}
@@ -7454,8 +7468,8 @@ void md_wakeup_thread(struct md_thread *thread)
 {
 	if (thread) {
 		pr_debug("md: waking up MD thread %s.\n", thread->tsk->comm);
-		if (!test_and_set_bit(THREAD_WAKEUP, &thread->flags))
-			wake_up(&thread->wqueue);
+		set_bit(THREAD_WAKEUP, &thread->flags);
+		wake_up(&thread->wqueue);
 	}
 }
 EXPORT_SYMBOL(md_wakeup_thread);
@@ -8025,7 +8039,8 @@ bool md_write_start(struct mddev *mddev, struct bio *bi)
 	if (did_change)
 		sysfs_notify_dirent_safe(mddev->sysfs_state);
 	wait_event(mddev->sb_wait,
-		   !test_bit(MD_SB_CHANGE_PENDING, &mddev->sb_flags) && !mddev->suspended);
+		   !test_bit(MD_SB_CHANGE_PENDING, &mddev->sb_flags) ||
+		   mddev->suspended);
 	if (test_bit(MD_SB_CHANGE_PENDING, &mddev->sb_flags)) {
 		percpu_ref_put(&mddev->writes_pending);
 		return false;
@@ -8096,7 +8111,6 @@ void md_allow_write(struct mddev *mddev)
 		sysfs_notify_dirent_safe(mddev->sysfs_state);
 		/* wait for the dirty state to be recorded in the metadata */
 		wait_event(mddev->sb_wait,
-			   !test_bit(MD_SB_CHANGE_CLEAN, &mddev->sb_flags) &&
 			   !test_bit(MD_SB_CHANGE_PENDING, &mddev->sb_flags));
 	} else
 		spin_unlock(&mddev->lock);

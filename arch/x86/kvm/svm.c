@@ -1200,7 +1200,6 @@ static void avic_init_vmcb(struct vcpu_svm *svm)
 	vmcb->control.avic_physical_id = ppa & AVIC_HPA_MASK;
 	vmcb->control.avic_physical_id |= AVIC_MAX_PHYSICAL_ID_COUNT;
 	vmcb->control.int_ctl |= AVIC_ENABLE_MASK;
-	svm->vcpu.arch.apicv_active = true;
 }
 
 static void init_vmcb(struct vcpu_svm *svm)
@@ -1316,7 +1315,7 @@ static void init_vmcb(struct vcpu_svm *svm)
 		set_intercept(svm, INTERCEPT_PAUSE);
 	}
 
-	if (avic)
+	if (kvm_vcpu_apicv_active(&svm->vcpu))
 		avic_init_vmcb(svm);
 
 	/*
@@ -1600,6 +1599,23 @@ static void svm_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event)
 		avic_update_vapic_bar(svm, APIC_DEFAULT_PHYS_BASE);
 }
 
+static int avic_init_vcpu(struct vcpu_svm *svm)
+{
+	int ret;
+
+	if (!kvm_vcpu_apicv_active(&svm->vcpu))
+		return 0;
+
+	ret = avic_init_backing_page(&svm->vcpu);
+	if (ret)
+		return ret;
+
+	INIT_LIST_HEAD(&svm->ir_list);
+	spin_lock_init(&svm->ir_list_lock);
+
+	return ret;
+}
+
 static struct kvm_vcpu *svm_create_vcpu(struct kvm *kvm, unsigned int id)
 {
 	struct vcpu_svm *svm;
@@ -1636,14 +1652,9 @@ static struct kvm_vcpu *svm_create_vcpu(struct kvm *kvm, unsigned int id)
 	if (!hsave_page)
 		goto free_page3;
 
-	if (avic) {
-		err = avic_init_backing_page(&svm->vcpu);
-		if (err)
-			goto free_page4;
-
-		INIT_LIST_HEAD(&svm->ir_list);
-		spin_lock_init(&svm->ir_list_lock);
-	}
+	err = avic_init_vcpu(svm);
+	if (err)
+		goto free_page4;
 
 	/* We initialize this flag to true to make sure that the is_running
 	 * bit would be set the first time the vcpu is loaded.
@@ -2178,6 +2189,8 @@ static int ud_interception(struct vcpu_svm *svm)
 	int er;
 
 	er = emulate_instruction(&svm->vcpu, EMULTYPE_TRAP_UD);
+	if (er == EMULATE_USER_EXIT)
+		return 0;
 	if (er != EMULATE_DONE)
 		kvm_queue_exception(&svm->vcpu, UD_VECTOR);
 	return 1;
@@ -3646,6 +3659,13 @@ static int svm_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr)
 	u32 ecx = msr->index;
 	u64 data = msr->data;
 	switch (ecx) {
+	case MSR_IA32_CR_PAT:
+		if (!kvm_mtrr_valid(vcpu, MSR_IA32_CR_PAT, data))
+			return 1;
+		vcpu->arch.pat = data;
+		svm->vmcb->save.g_pat = data;
+		mark_dirty(svm->vmcb, VMCB_NPT);
+		break;
 	case MSR_IA32_TSC:
 		kvm_write_tsc(vcpu, msr);
 		break;
@@ -4395,9 +4415,9 @@ static void svm_set_virtual_x2apic_mode(struct kvm_vcpu *vcpu, bool set)
 	return;
 }
 
-static bool svm_get_enable_apicv(void)
+static bool svm_get_enable_apicv(struct kvm_vcpu *vcpu)
 {
-	return avic;
+	return avic && irqchip_split(vcpu->kvm);
 }
 
 static void svm_hwapic_irr_update(struct kvm_vcpu *vcpu, int max_irr)
@@ -4414,7 +4434,7 @@ static void svm_refresh_apicv_exec_ctrl(struct kvm_vcpu *vcpu)
 	struct vcpu_svm *svm = to_svm(vcpu);
 	struct vmcb *vmcb = svm->vmcb;
 
-	if (!avic)
+	if (!kvm_vcpu_apicv_active(&svm->vcpu))
 		return;
 
 	vmcb->control.int_ctl &= ~AVIC_ENABLE_MASK;
@@ -5302,6 +5322,7 @@ static int svm_check_intercept(struct kvm_vcpu *vcpu,
 		 */
 		if (info->rep_prefix != REPE_PREFIX)
 			goto out;
+		break;
 	case SVM_EXIT_IOIO: {
 		u64 exit_info;
 		u32 bytes;

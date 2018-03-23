@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Scheduler topology setup/handling methods
  */
@@ -14,11 +15,9 @@ cpumask_var_t sched_domains_tmpmask2;
 
 #ifdef CONFIG_SCHED_DEBUG
 
-static __read_mostly int sched_debug_enabled;
-
 static int __init sched_debug_setup(char *str)
 {
-	sched_debug_enabled = 1;
+	sched_debug_enabled = true;
 
 	return 0;
 }
@@ -269,6 +268,12 @@ static int init_rootdomain(struct root_domain *rd)
 		goto free_online;
 	if (!zalloc_cpumask_var(&rd->rto_mask, GFP_KERNEL))
 		goto free_dlo_mask;
+
+#ifdef HAVE_RT_PUSH_IPI
+	rd->rto_cpu = -1;
+	raw_spin_lock_init(&rd->rto_lock);
+	init_irq_work(&rd->rto_push_work, rto_push_irq_work_func);
+#endif
 
 	init_dl_bw(&rd->dl_bw);
 	if (cpudl_init(&rd->cpudl) != 0)

@@ -2259,6 +2259,7 @@ COMPAT_SYSCALL_DEFINE6(epoll_pwait, int, epfd,
 			compat_size_t, sigsetsize)
 {
 	long err;
+	compat_sigset_t csigmask;
 	sigset_t ksigmask, sigsaved;
 
 	/*
@@ -2268,8 +2269,9 @@ COMPAT_SYSCALL_DEFINE6(epoll_pwait, int, epfd,
 	if (sigmask) {
 		if (sigsetsize != sizeof(compat_sigset_t))
 			return -EINVAL;
-		if (get_compat_sigset(&ksigmask, sigmask))
+		if (copy_from_user(&csigmask, sigmask, sizeof(csigmask)))
 			return -EFAULT;
+		sigset_from_compat(&ksigmask, &csigmask);
 		sigsaved = current->blocked;
 		set_current_blocked(&ksigmask);
 	}

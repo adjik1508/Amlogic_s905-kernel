@@ -1818,8 +1818,11 @@ static void ops_complete_reconstruct(void *stripe_head_ref)
 		struct r5dev *dev = &sh->dev[i];
 
 		if (dev->written || i == pd_idx || i == qd_idx) {
-			if (!discard && !test_bit(R5_SkipCopy, &dev->flags))
+			if (!discard && !test_bit(R5_SkipCopy, &dev->flags)) {
 				set_bit(R5_UPTODATE, &dev->flags);
+				if (test_bit(STRIPE_EXPAND_READY, &sh->state))
+					set_bit(R5_Expanded, &dev->flags);
+			}
 			if (fua)
 				set_bit(R5_WantFUA, &dev->flags);
 			if (sync)
@@ -6575,14 +6578,17 @@ static ssize_t
 raid5_store_group_thread_cnt(struct mddev *mddev, const char *page, size_t len)
 {
 	struct r5conf *conf;
-	unsigned long new;
+	unsigned int new;
 	int err;
 	struct r5worker_group *new_groups, *old_groups;
 	int group_cnt, worker_cnt_per_group;
 
 	if (len >= PAGE_SIZE)
 		return -EINVAL;
-	if (kstrtoul(page, 10, &new))
+	if (kstrtouint(page, 10, &new))
+		return -EINVAL;
+	/* 8192 should be big enough */
+	if (new > 8192)
 		return -EINVAL;
 
 	err = mddev_lock(mddev);
@@ -7151,6 +7157,13 @@ static int raid5_run(struct mddev *mddev)
 		else if (!mddev->reshape_backwards &&
 			 diff > min_offset_diff)
 			min_offset_diff = diff;
+	}
+
+	if ((test_bit(MD_HAS_JOURNAL, &mddev->flags) || journal_dev) &&
+	    (mddev->bitmap_info.offset || mddev->bitmap_info.file)) {
+		pr_notice("md/raid:%s: array cannot have both journal and bitmap\n",
+			  mdname(mddev));
+		return -EINVAL;
 	}
 
 	if (mddev->reshape_position != MaxSector) {

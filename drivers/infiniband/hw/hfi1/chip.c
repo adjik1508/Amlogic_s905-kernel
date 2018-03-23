@@ -1066,6 +1066,8 @@ static int read_idle_sma(struct hfi1_devdata *dd, u64 *data);
 static int thermal_init(struct hfi1_devdata *dd);
 
 static void update_statusp(struct hfi1_pportdata *ppd, u32 state);
+static int wait_phys_link_offline_substates(struct hfi1_pportdata *ppd,
+					    int msecs);
 static int wait_logical_linkstate(struct hfi1_pportdata *ppd, u32 state,
 				  int msecs);
 static void log_state_transition(struct hfi1_pportdata *ppd, u32 state);
@@ -8238,6 +8240,7 @@ static irqreturn_t general_interrupt(int irq, void *data)
 	u64 regs[CCE_NUM_INT_CSRS];
 	u32 bit;
 	int i;
+	irqreturn_t handled = IRQ_NONE;
 
 	this_cpu_inc(*dd->int_counter);
 
@@ -8258,9 +8261,10 @@ static irqreturn_t general_interrupt(int irq, void *data)
 	for_each_set_bit(bit, (unsigned long *)&regs[0],
 			 CCE_NUM_INT_CSRS * 64) {
 		is_interrupt(dd, bit);
+		handled = IRQ_HANDLED;
 	}
 
-	return IRQ_HANDLED;
+	return handled;
 }
 
 static irqreturn_t sdma_interrupt(int irq, void *data)
@@ -9413,7 +9417,7 @@ static void set_qsfp_int_n(struct hfi1_pportdata *ppd, u8 enable)
 	write_csr(dd, dd->hfi1_id ? ASIC_QSFP2_MASK : ASIC_QSFP1_MASK, mask);
 }
 
-void reset_qsfp(struct hfi1_pportdata *ppd)
+int reset_qsfp(struct hfi1_pportdata *ppd)
 {
 	struct hfi1_devdata *dd = ppd->dd;
 	u64 mask, qsfp_mask;
@@ -9443,6 +9447,13 @@ void reset_qsfp(struct hfi1_pportdata *ppd)
 	 * for alarms and warnings
 	 */
 	set_qsfp_int_n(ppd, 1);
+
+	/*
+	 * After the reset, AOC transmitters are enabled by default. They need
+	 * to be turned off to complete the QSFP setup before they can be
+	 * enabled again.
+	 */
+	return set_qsfp_tx(ppd, 0);
 }
 
 static int handle_qsfp_error_conditions(struct hfi1_pportdata *ppd,
@@ -9941,7 +9952,7 @@ int hfi1_get_ib_cfg(struct hfi1_pportdata *ppd, int which)
 		goto unimplemented;
 
 	case HFI1_IB_CFG_OP_VLS:
-		val = ppd->vls_operational;
+		val = ppd->actual_vls_operational;
 		break;
 	case HFI1_IB_CFG_VL_HIGH_CAP: /* VL arb high priority table size */
 		val = VL_ARB_HIGH_PRIO_TABLE_SIZE;
@@ -10305,6 +10316,7 @@ static int goto_offline(struct hfi1_pportdata *ppd, u8 rem_reason)
 {
 	struct hfi1_devdata *dd = ppd->dd;
 	u32 previous_state;
+	int offline_state_ret;
 	int ret;
 
 	update_lcb_cache(dd);
@@ -10326,28 +10338,11 @@ static int goto_offline(struct hfi1_pportdata *ppd, u8 rem_reason)
 		ppd->offline_disabled_reason =
 		HFI1_ODR_MASK(OPA_LINKDOWN_REASON_TRANSIENT);
 
-	/*
-	 * Wait for offline transition. It can take a while for
-	 * the link to go down.
-	 */
-	ret = wait_physical_linkstate(ppd, PLS_OFFLINE, 10000);
-	if (ret < 0)
-		return ret;
+	offline_state_ret = wait_phys_link_offline_substates(ppd, 10000);
+	if (offline_state_ret < 0)
+		return offline_state_ret;
 
-	/*
-	 * Now in charge of LCB - must be after the physical state is
-	 * offline.quiet and before host_link_state is changed.
-	 */
-	set_host_lcb_access(dd);
-	write_csr(dd, DC_LCB_ERR_EN, ~0ull); /* watch LCB errors */
-
-	/* make sure the logical state is also down */
-	ret = wait_logical_linkstate(ppd, IB_PORT_DOWN, 1000);
-	if (ret)
-		force_logical_link_state_down(ppd);
-
-	ppd->host_link_state = HLS_LINK_COOLDOWN; /* LCB access allowed */
-
+	/* Disabling AOC transmitters */
 	if (ppd->port_type == PORT_TYPE_QSFP &&
 	    ppd->qsfp_info.limiting_active &&
 	    qsfp_mod_present(ppd)) {
@@ -10363,6 +10358,30 @@ static int goto_offline(struct hfi1_pportdata *ppd, u8 rem_reason)
 				   "Unable to acquire lock to turn off QSFP TX\n");
 		}
 	}
+
+	/*
+	 * Wait for the offline.Quiet transition if it hasn't happened yet. It
+	 * can take a while for the link to go down.
+	 */
+	if (offline_state_ret != PLS_OFFLINE_QUIET) {
+		ret = wait_physical_linkstate(ppd, PLS_OFFLINE, 30000);
+		if (ret < 0)
+			return ret;
+	}
+
+	/*
+	 * Now in charge of LCB - must be after the physical state is
+	 * offline.quiet and before host_link_state is changed.
+	 */
+	set_host_lcb_access(dd);
+	write_csr(dd, DC_LCB_ERR_EN, ~0ull); /* watch LCB errors */
+
+	/* make sure the logical state is also down */
+	ret = wait_logical_linkstate(ppd, IB_PORT_DOWN, 1000);
+	if (ret)
+		force_logical_link_state_down(ppd);
+
+	ppd->host_link_state = HLS_LINK_COOLDOWN; /* LCB access allowed */
 
 	/*
 	 * The LNI has a mandatory wait time after the physical state
@@ -10396,6 +10415,9 @@ static int goto_offline(struct hfi1_pportdata *ppd, u8 rem_reason)
 			& (HLS_DN_POLL | HLS_VERIFY_CAP | HLS_GOING_UP)) {
 		/* went down while attempting link up */
 		check_lni_states(ppd);
+
+		/* The QSFP doesn't need to be reset on LNI failure */
+		ppd->qsfp_info.reset_needed = 0;
 	}
 
 	/* the active link width (downgrade) is 0 on link down */
@@ -12804,6 +12826,39 @@ static int wait_physical_linkstate(struct hfi1_pportdata *ppd, u32 state,
 	return 0;
 }
 
+/*
+ * wait_phys_link_offline_quiet_substates - wait for any offline substate
+ * @ppd: port device
+ * @msecs: the number of milliseconds to wait
+ *
+ * Wait up to msecs milliseconds for any offline physical link
+ * state change to occur.
+ * Returns 0 if at least one state is reached, otherwise -ETIMEDOUT.
+ */
+static int wait_phys_link_offline_substates(struct hfi1_pportdata *ppd,
+					    int msecs)
+{
+	u32 read_state;
+	unsigned long timeout;
+
+	timeout = jiffies + msecs_to_jiffies(msecs);
+	while (1) {
+		read_state = read_physical_state(ppd->dd);
+		if ((read_state & 0xF0) == PLS_OFFLINE)
+			break;
+		if (time_after(jiffies, timeout)) {
+			dd_dev_err(ppd->dd,
+				   "timeout waiting for phy link offline.quiet substates. Read state 0x%x, %dms\n",
+				   read_state, msecs);
+			return -ETIMEDOUT;
+		}
+		usleep_range(1950, 2050); /* sleep 2ms-ish */
+	}
+
+	log_state_transition(ppd, read_state);
+	return read_state;
+}
+
 #define CLEAR_STATIC_RATE_CONTROL_SMASK(r) \
 (r &= ~SEND_CTXT_CHECK_ENABLE_DISALLOW_PBC_STATIC_RATE_CONTROL_SMASK)
 
@@ -13019,7 +13074,7 @@ static int request_msix_irqs(struct hfi1_devdata *dd)
 	first_sdma = last_general;
 	last_sdma = first_sdma + dd->num_sdma;
 	first_rx = last_sdma;
-	last_rx = first_rx + dd->n_krcv_queues + HFI1_NUM_VNIC_CTXT;
+	last_rx = first_rx + dd->n_krcv_queues + dd->num_vnic_contexts;
 
 	/* VNIC MSIx interrupts get mapped when VNIC contexts are created */
 	dd->first_dyn_msix_idx = first_rx + dd->n_krcv_queues;
@@ -13239,8 +13294,9 @@ static int set_up_interrupts(struct hfi1_devdata *dd)
 	 *		slow source, SDMACleanupDone)
 	 *	N interrupts - one per used SDMA engine
 	 *	M interrupt - one per kernel receive context
+	 *	V interrupt - one for each VNIC context
 	 */
-	total = 1 + dd->num_sdma + dd->n_krcv_queues + HFI1_NUM_VNIC_CTXT;
+	total = 1 + dd->num_sdma + dd->n_krcv_queues + dd->num_vnic_contexts;
 
 	/* ask for MSI-X interrupts */
 	request = request_msix(dd, total);
@@ -13301,10 +13357,12 @@ fail:
  *                             in array of contexts
  *	freectxts  - number of free user contexts
  *	num_send_contexts - number of PIO send contexts being used
+ *	num_vnic_contexts - number of contexts reserved for VNIC
  */
 static int set_up_context_variables(struct hfi1_devdata *dd)
 {
 	unsigned long num_kernel_contexts;
+	u16 num_vnic_contexts = HFI1_NUM_VNIC_CTXT;
 	int total_contexts;
 	int ret;
 	unsigned ngroups;
@@ -13338,6 +13396,14 @@ static int set_up_context_variables(struct hfi1_devdata *dd)
 			   num_kernel_contexts);
 		num_kernel_contexts = dd->chip_send_contexts - num_vls - 1;
 	}
+
+	/* Accommodate VNIC contexts if possible */
+	if ((num_kernel_contexts + num_vnic_contexts) > dd->chip_rcv_contexts) {
+		dd_dev_err(dd, "No receive contexts available for VNIC\n");
+		num_vnic_contexts = 0;
+	}
+	total_contexts = num_kernel_contexts + num_vnic_contexts;
+
 	/*
 	 * User contexts:
 	 *	- default to 1 user context per real (non-HT) CPU core if
@@ -13347,19 +13413,16 @@ static int set_up_context_variables(struct hfi1_devdata *dd)
 		num_user_contexts =
 			cpumask_weight(&node_affinity.real_cpu_mask);
 
-	total_contexts = num_kernel_contexts + num_user_contexts;
-
 	/*
 	 * Adjust the counts given a global max.
 	 */
-	if (total_contexts > dd->chip_rcv_contexts) {
+	if (total_contexts + num_user_contexts > dd->chip_rcv_contexts) {
 		dd_dev_err(dd,
 			   "Reducing # user receive contexts to: %d, from %d\n",
-			   (int)(dd->chip_rcv_contexts - num_kernel_contexts),
+			   (int)(dd->chip_rcv_contexts - total_contexts),
 			   (int)num_user_contexts);
-		num_user_contexts = dd->chip_rcv_contexts - num_kernel_contexts;
 		/* recalculate */
-		total_contexts = num_kernel_contexts + num_user_contexts;
+		num_user_contexts = dd->chip_rcv_contexts - total_contexts;
 	}
 
 	/* each user context requires an entry in the RMT */
@@ -13372,25 +13435,24 @@ static int set_up_context_variables(struct hfi1_devdata *dd)
 			   user_rmt_reduced);
 		/* recalculate */
 		num_user_contexts = user_rmt_reduced;
-		total_contexts = num_kernel_contexts + num_user_contexts;
 	}
 
-	/* Accommodate VNIC contexts */
-	if ((total_contexts + HFI1_NUM_VNIC_CTXT) <= dd->chip_rcv_contexts)
-		total_contexts += HFI1_NUM_VNIC_CTXT;
+	total_contexts += num_user_contexts;
 
 	/* the first N are kernel contexts, the rest are user/vnic contexts */
 	dd->num_rcv_contexts = total_contexts;
 	dd->n_krcv_queues = num_kernel_contexts;
 	dd->first_dyn_alloc_ctxt = num_kernel_contexts;
+	dd->num_vnic_contexts = num_vnic_contexts;
 	dd->num_user_contexts = num_user_contexts;
 	dd->freectxts = num_user_contexts;
 	dd_dev_info(dd,
-		    "rcv contexts: chip %d, used %d (kernel %d, user %d)\n",
+		    "rcv contexts: chip %d, used %d (kernel %d, vnic %u, user %u)\n",
 		    (int)dd->chip_rcv_contexts,
 		    (int)dd->num_rcv_contexts,
 		    (int)dd->n_krcv_queues,
-		    (int)dd->num_rcv_contexts - dd->n_krcv_queues);
+		    dd->num_vnic_contexts,
+		    dd->num_user_contexts);
 
 	/*
 	 * Receive array allocation:

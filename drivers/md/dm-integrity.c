@@ -300,7 +300,7 @@ static void __DEBUG_bytes(__u8 *bytes, size_t len, const char *msg, ...)
 /*
  * DM Integrity profile, protection is performed layer above (dm-crypt)
  */
-static struct blk_integrity_profile dm_integrity_profile = {
+static const struct blk_integrity_profile dm_integrity_profile = {
 	.name			= "DM-DIF-EXT-TAG",
 	.generate_fn		= NULL,
 	.verify_fn		= NULL,
@@ -774,13 +774,13 @@ static void write_journal(struct dm_integrity_c *ic, unsigned commit_start, unsi
 	unsigned i;
 
 	io_comp.ic = ic;
-	io_comp.comp = COMPLETION_INITIALIZER_ONSTACK(io_comp.comp);
+	init_completion(&io_comp.comp);
 
 	if (commit_start + commit_sections <= ic->journal_sections) {
 		io_comp.in_flight = (atomic_t)ATOMIC_INIT(1);
 		if (ic->journal_io) {
 			crypt_comp_1.ic = ic;
-			crypt_comp_1.comp = COMPLETION_INITIALIZER_ONSTACK(crypt_comp_1.comp);
+			init_completion(&crypt_comp_1.comp);
 			crypt_comp_1.in_flight = (atomic_t)ATOMIC_INIT(0);
 			encrypt_journal(ic, true, commit_start, commit_sections, &crypt_comp_1);
 			wait_for_completion_io(&crypt_comp_1.comp);
@@ -796,18 +796,18 @@ static void write_journal(struct dm_integrity_c *ic, unsigned commit_start, unsi
 		to_end = ic->journal_sections - commit_start;
 		if (ic->journal_io) {
 			crypt_comp_1.ic = ic;
-			crypt_comp_1.comp = COMPLETION_INITIALIZER_ONSTACK(crypt_comp_1.comp);
+			init_completion(&crypt_comp_1.comp);
 			crypt_comp_1.in_flight = (atomic_t)ATOMIC_INIT(0);
 			encrypt_journal(ic, true, commit_start, to_end, &crypt_comp_1);
 			if (try_wait_for_completion(&crypt_comp_1.comp)) {
 				rw_journal(ic, REQ_OP_WRITE, REQ_FUA, commit_start, to_end, &io_comp);
-				crypt_comp_1.comp = COMPLETION_INITIALIZER_ONSTACK(crypt_comp_1.comp);
+				reinit_completion(&crypt_comp_1.comp);
 				crypt_comp_1.in_flight = (atomic_t)ATOMIC_INIT(0);
 				encrypt_journal(ic, true, 0, commit_sections - to_end, &crypt_comp_1);
 				wait_for_completion_io(&crypt_comp_1.comp);
 			} else {
 				crypt_comp_2.ic = ic;
-				crypt_comp_2.comp = COMPLETION_INITIALIZER_ONSTACK(crypt_comp_2.comp);
+				init_completion(&crypt_comp_2.comp);
 				crypt_comp_2.in_flight = (atomic_t)ATOMIC_INIT(0);
 				encrypt_journal(ic, true, 0, commit_sections - to_end, &crypt_comp_2);
 				wait_for_completion_io(&crypt_comp_1.comp);
@@ -1376,7 +1376,7 @@ static int dm_integrity_map(struct dm_target *ti, struct bio *bio)
 		struct bvec_iter iter;
 		struct bio_vec bv;
 		bio_for_each_segment(bv, bio, iter) {
-			if (unlikely((bv.bv_offset | bv.bv_len) & ((ic->sectors_per_block << SECTOR_SHIFT) - 1))) {
+			if (unlikely(bv.bv_len & ((ic->sectors_per_block << SECTOR_SHIFT) - 1))) {
 				DMERR("Bio vector (%u,%u) is not aligned on %u-sector boundary",
 					bv.bv_offset, bv.bv_len, ic->sectors_per_block);
 				return DM_MAPIO_KILL;
@@ -1681,7 +1681,7 @@ sleep:
 	dio->in_flight = (atomic_t)ATOMIC_INIT(2);
 
 	if (need_sync_io) {
-		read_comp = COMPLETION_INITIALIZER_ONSTACK(read_comp);
+		init_completion(&read_comp);
 		dio->completion = &read_comp;
 	} else
 		dio->completion = NULL;
@@ -1705,7 +1705,11 @@ sleep:
 
 	if (need_sync_io) {
 		wait_for_completion_io(&read_comp);
-		integrity_metadata(&dio->work);
+		if (likely(!bio->bi_status))
+			integrity_metadata(&dio->work);
+		else
+			dec_in_flight(dio);
+
 	} else {
 		INIT_WORK(&dio->work, integrity_metadata);
 		queue_work(ic->metadata_wq, &dio->work);
@@ -1839,7 +1843,7 @@ static void do_journal_write(struct dm_integrity_c *ic, unsigned write_start,
 
 	comp.ic = ic;
 	comp.in_flight = (atomic_t)ATOMIC_INIT(1);
-	comp.comp = COMPLETION_INITIALIZER_ONSTACK(comp.comp);
+	init_completion(&comp.comp);
 
 	i = write_start;
 	for (n = 0; n < write_sections; n++, i++, wraparound_section(ic, &i)) {
@@ -2066,7 +2070,7 @@ static void replay_journal(struct dm_integrity_c *ic)
 		if (ic->journal_io) {
 			struct journal_completion crypt_comp;
 			crypt_comp.ic = ic;
-			crypt_comp.comp = COMPLETION_INITIALIZER_ONSTACK(crypt_comp.comp);
+			init_completion(&crypt_comp.comp);
 			crypt_comp.in_flight = (atomic_t)ATOMIC_INIT(0);
 			encrypt_journal(ic, false, 0, ic->journal_sections, &crypt_comp);
 			wait_for_completion(&crypt_comp.comp);
@@ -2639,7 +2643,7 @@ static int create_journal(struct dm_integrity_c *ic, char **error)
 			memset(iv, 0x00, ivsize);
 
 			skcipher_request_set_crypt(req, sg, sg, PAGE_SIZE * ic->journal_pages + sizeof ic->commit_ids, iv);
-			comp.comp = COMPLETION_INITIALIZER_ONSTACK(comp.comp);
+			init_completion(&comp.comp);
 			comp.in_flight = (atomic_t)ATOMIC_INIT(1);
 			if (do_crypt(true, req, &comp))
 				wait_for_completion(&comp.comp);
@@ -2696,7 +2700,7 @@ static int create_journal(struct dm_integrity_c *ic, char **error)
 
 				sg_init_one(&sg, crypt_data, crypt_len);
 				skcipher_request_set_crypt(req, &sg, &sg, crypt_len, iv);
-				comp.comp = COMPLETION_INITIALIZER_ONSTACK(comp.comp);
+				init_completion(&comp.comp);
 				comp.in_flight = (atomic_t)ATOMIC_INIT(1);
 				if (do_crypt(true, req, &comp))
 					wait_for_completion(&comp.comp);

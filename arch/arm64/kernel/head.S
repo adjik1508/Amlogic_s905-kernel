@@ -51,7 +51,7 @@
 #elif (PAGE_OFFSET & 0x1fffff) != 0
 #error PAGE_OFFSET must be at least 2MB aligned
 #elif TEXT_OFFSET > 0x1fffff
-//#error TEXT_OFFSET must be less than 2MB
+#error TEXT_OFFSET must be less than 2MB
 #endif
 
 /*
@@ -384,6 +384,7 @@ ENTRY(kimage_vaddr)
  * booted in EL1 or EL2 respectively.
  */
 ENTRY(el2_setup)
+	msr	SPsel, #1			// We want to use SP_EL{1,2}
 	mrs	x0, CurrentEL
 	cmp	x0, #CurrentEL_EL2
 	b.eq	1f

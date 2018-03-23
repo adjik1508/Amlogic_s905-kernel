@@ -1000,7 +1000,8 @@ enum transcoder intel_pipe_to_cpu_transcoder(struct drm_i915_private *dev_priv,
 	return crtc->config->cpu_transcoder;
 }
 
-static bool pipe_dsl_stopped(struct drm_i915_private *dev_priv, enum pipe pipe)
+static bool pipe_scanline_is_moving(struct drm_i915_private *dev_priv,
+				    enum pipe pipe)
 {
 	i915_reg_t reg = PIPEDSL(pipe);
 	u32 line1, line2;
@@ -1015,7 +1016,28 @@ static bool pipe_dsl_stopped(struct drm_i915_private *dev_priv, enum pipe pipe)
 	msleep(5);
 	line2 = I915_READ(reg) & line_mask;
 
-	return line1 == line2;
+	return line1 != line2;
+}
+
+static void wait_for_pipe_scanline_moving(struct intel_crtc *crtc, bool state)
+{
+	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
+	enum pipe pipe = crtc->pipe;
+
+	/* Wait for the display line to settle/start moving */
+	if (wait_for(pipe_scanline_is_moving(dev_priv, pipe) == state, 100))
+		DRM_ERROR("pipe %c scanline %s wait timed out\n",
+			  pipe_name(pipe), onoff(state));
+}
+
+static void intel_wait_for_pipe_scanline_stopped(struct intel_crtc *crtc)
+{
+	wait_for_pipe_scanline_moving(crtc, false);
+}
+
+static void intel_wait_for_pipe_scanline_moving(struct intel_crtc *crtc)
+{
+	wait_for_pipe_scanline_moving(crtc, true);
 }
 
 /*
@@ -1038,7 +1060,6 @@ static void intel_wait_for_pipe_off(struct intel_crtc *crtc)
 {
 	struct drm_i915_private *dev_priv = to_i915(crtc->base.dev);
 	enum transcoder cpu_transcoder = crtc->config->cpu_transcoder;
-	enum pipe pipe = crtc->pipe;
 
 	if (INTEL_GEN(dev_priv) >= 4) {
 		i915_reg_t reg = PIPECONF(cpu_transcoder);
@@ -1049,9 +1070,7 @@ static void intel_wait_for_pipe_off(struct intel_crtc *crtc)
 					    100))
 			WARN(1, "pipe_off wait timed out\n");
 	} else {
-		/* Wait for the display line to settle */
-		if (wait_for(pipe_dsl_stopped(dev_priv, pipe), 100))
-			WARN(1, "pipe_off wait timed out\n");
+		intel_wait_for_pipe_scanline_stopped(crtc);
 	}
 }
 
@@ -1944,15 +1963,14 @@ static void intel_enable_pipe(struct intel_crtc *crtc)
 	POSTING_READ(reg);
 
 	/*
-	 * Until the pipe starts DSL will read as 0, which would cause
-	 * an apparent vblank timestamp jump, which messes up also the
-	 * frame count when it's derived from the timestamps. So let's
-	 * wait for the pipe to start properly before we call
-	 * drm_crtc_vblank_on()
+	 * Until the pipe starts PIPEDSL reads will return a stale value,
+	 * which causes an apparent vblank timestamp jump when PIPEDSL
+	 * resets to its proper value. That also messes up the frame count
+	 * when it's derived from the timestamps. So let's wait for the
+	 * pipe to start properly before we call drm_crtc_vblank_on()
 	 */
-	if (dev->max_vblank_count == 0 &&
-	    wait_for(intel_get_crtc_scanline(crtc) != crtc->scanline_offset, 50))
-		DRM_ERROR("pipe %c didn't start\n", pipe_name(pipe));
+	if (dev->max_vblank_count == 0)
+		intel_wait_for_pipe_scanline_moving(crtc);
 }
 
 /**
@@ -10245,13 +10263,10 @@ struct drm_display_mode *intel_crtc_mode_get(struct drm_device *dev,
 {
 	struct drm_i915_private *dev_priv = to_i915(dev);
 	struct intel_crtc *intel_crtc = to_intel_crtc(crtc);
-	enum transcoder cpu_transcoder = intel_crtc->config->cpu_transcoder;
+	enum transcoder cpu_transcoder;
 	struct drm_display_mode *mode;
 	struct intel_crtc_state *pipe_config;
-	int htot = I915_READ(HTOTAL(cpu_transcoder));
-	int hsync = I915_READ(HSYNC(cpu_transcoder));
-	int vtot = I915_READ(VTOTAL(cpu_transcoder));
-	int vsync = I915_READ(VSYNC(cpu_transcoder));
+	u32 htot, hsync, vtot, vsync;
 	enum pipe pipe = intel_crtc->pipe;
 
 	mode = kzalloc(sizeof(*mode), GFP_KERNEL);
@@ -10279,6 +10294,13 @@ struct drm_display_mode *intel_crtc_mode_get(struct drm_device *dev,
 	i9xx_crtc_clock_get(intel_crtc, pipe_config);
 
 	mode->clock = pipe_config->port_clock / pipe_config->pixel_multiplier;
+
+	cpu_transcoder = pipe_config->cpu_transcoder;
+	htot = I915_READ(HTOTAL(cpu_transcoder));
+	hsync = I915_READ(HSYNC(cpu_transcoder));
+	vtot = I915_READ(VTOTAL(cpu_transcoder));
+	vsync = I915_READ(VSYNC(cpu_transcoder));
+
 	mode->hdisplay = (htot & 0xffff) + 1;
 	mode->htotal = ((htot & 0xffff0000) >> 16) + 1;
 	mode->hsync_start = (hsync & 0xffff) + 1;
@@ -12359,7 +12381,6 @@ static void intel_atomic_commit_tail(struct drm_atomic_state *state)
 	struct drm_crtc_state *old_crtc_state, *new_crtc_state;
 	struct drm_crtc *crtc;
 	struct intel_crtc_state *intel_cstate;
-	bool hw_check = intel_state->modeset;
 	u64 put_domains[I915_MAX_PIPES] = {};
 	unsigned crtc_vblank_mask = 0;
 	int i;
@@ -12376,7 +12397,6 @@ static void intel_atomic_commit_tail(struct drm_atomic_state *state)
 
 		if (needs_modeset(new_crtc_state) ||
 		    to_intel_crtc_state(new_crtc_state)->update_pipe) {
-			hw_check = true;
 
 			put_domains[to_intel_crtc(crtc)->pipe] =
 				modeset_get_crtc_power_domains(crtc,
@@ -14030,7 +14050,7 @@ static int intel_framebuffer_init(struct intel_framebuffer *intel_fb,
 
 		if (mode_cmd->handles[i] != mode_cmd->handles[0]) {
 			DRM_DEBUG_KMS("bad plane %d handle\n", i);
-			return -EINVAL;
+			goto err;
 		}
 
 		stride_alignment = intel_fb_stride_alignment(fb, i);
@@ -14680,6 +14700,8 @@ void i830_enable_pipe(struct drm_i915_private *dev_priv, enum pipe pipe)
 
 void i830_disable_pipe(struct drm_i915_private *dev_priv, enum pipe pipe)
 {
+	struct intel_crtc *crtc = intel_get_crtc_for_pipe(dev_priv, pipe);
+
 	DRM_DEBUG_KMS("disabling pipe %c due to force quirk\n",
 		      pipe_name(pipe));
 
@@ -14689,8 +14711,7 @@ void i830_disable_pipe(struct drm_i915_private *dev_priv, enum pipe pipe)
 	I915_WRITE(PIPECONF(pipe), 0);
 	POSTING_READ(PIPECONF(pipe));
 
-	if (wait_for(pipe_dsl_stopped(dev_priv, pipe), 100))
-		DRM_ERROR("pipe %c off wait timed out\n", pipe_name(pipe));
+	intel_wait_for_pipe_scanline_stopped(crtc);
 
 	I915_WRITE(DPLL(pipe), DPLL_VGA_MODE_DIS);
 	POSTING_READ(DPLL(pipe));
@@ -15225,6 +15246,23 @@ void intel_connector_unregister(struct drm_connector *connector)
 	intel_panel_destroy_backlight(connector);
 }
 
+static void intel_hpd_poll_fini(struct drm_device *dev)
+{
+	struct intel_connector *connector;
+	struct drm_connector_list_iter conn_iter;
+
+	/* First disable polling... */
+	drm_kms_helper_poll_fini(dev);
+
+	/* Then kill the work that may have been queued by hpd. */
+	drm_connector_list_iter_begin(dev, &conn_iter);
+	for_each_intel_connector_iter(connector, &conn_iter) {
+		if (connector->modeset_retry_work.func)
+			cancel_work_sync(&connector->modeset_retry_work);
+	}
+	drm_connector_list_iter_end(&conn_iter);
+}
+
 void intel_modeset_cleanup(struct drm_device *dev)
 {
 	struct drm_i915_private *dev_priv = to_i915(dev);
@@ -15245,7 +15283,7 @@ void intel_modeset_cleanup(struct drm_device *dev)
 	 * Due to the hpd irq storm handling the hotplug work can re-arm the
 	 * poll handlers. Hence disable polling after hpd handling is shut down.
 	 */
-	drm_kms_helper_poll_fini(dev);
+	intel_hpd_poll_fini(dev);
 
 	/* poll work can call into fbdev, hence clean that up afterwards */
 	intel_fbdev_fini(dev_priv);

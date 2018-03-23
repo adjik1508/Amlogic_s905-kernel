@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/fs/proc/root.c
  *
@@ -90,7 +91,7 @@ static struct dentry *proc_mount(struct file_system_type *fs_type,
 {
 	struct pid_namespace *ns;
 
-	if (flags & SB_KERNMOUNT) {
+	if (flags & MS_KERNMOUNT) {
 		ns = data;
 		data = NULL;
 	} else {

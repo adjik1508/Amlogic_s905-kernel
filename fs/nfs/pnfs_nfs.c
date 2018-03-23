@@ -88,38 +88,6 @@ out:
 EXPORT_SYMBOL_GPL(pnfs_generic_clear_request_commit);
 
 static int
-pnfs_generic_transfer_commit_list(struct list_head *src, struct list_head *dst,
-				  struct nfs_commit_info *cinfo, int max)
-{
-	struct nfs_page *req;
-	int ret = 0;
-
-	while(!list_empty(src)) {
-		req = list_first_entry(src, struct nfs_page, wb_list);
-
-		kref_get(&req->wb_kref);
-		if (!nfs_lock_request(req)) {
-			int status;
-			mutex_unlock(&NFS_I(cinfo->inode)->commit_mutex);
-			status = nfs_wait_on_request(req);
-			nfs_release_request(req);
-			mutex_lock(&NFS_I(cinfo->inode)->commit_mutex);
-			if (status < 0)
-				break;
-			continue;
-		}
-		nfs_request_remove_commit_list(req, cinfo);
-		clear_bit(PG_COMMIT_TO_DS, &req->wb_flags);
-		nfs_list_add_request(req, dst);
-		ret++;
-		if ((ret == max) && !cinfo->dreq)
-			break;
-		cond_resched();
-	}
-	return ret;
-}
-
-static int
 pnfs_generic_scan_ds_commit_list(struct pnfs_commit_bucket *bucket,
 				 struct nfs_commit_info *cinfo,
 				 int max)
@@ -129,7 +97,7 @@ pnfs_generic_scan_ds_commit_list(struct pnfs_commit_bucket *bucket,
 	int ret;
 
 	lockdep_assert_held(&NFS_I(cinfo->inode)->commit_mutex);
-	ret = pnfs_generic_transfer_commit_list(src, dst, cinfo, max);
+	ret = nfs_scan_commit_list(src, dst, cinfo, max);
 	if (ret) {
 		cinfo->ds->nwritten -= ret;
 		cinfo->ds->ncommitting += ret;
@@ -174,8 +142,7 @@ void pnfs_generic_recover_commit_reqs(struct list_head *dst,
 	lockdep_assert_held(&NFS_I(cinfo->inode)->commit_mutex);
 restart:
 	for (i = 0, b = cinfo->ds->buckets; i < cinfo->ds->nbuckets; i++, b++) {
-		nwritten = pnfs_generic_transfer_commit_list(&b->written,
-				dst, cinfo, 0);
+		nwritten = nfs_scan_commit_list(&b->written, dst, cinfo, 0);
 		if (!nwritten)
 			continue;
 		cinfo->ds->nwritten -= nwritten;

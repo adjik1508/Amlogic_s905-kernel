@@ -34,8 +34,6 @@
 #include	"xhci-ext-caps.h"
 #include "pci-quirks.h"
 
-#include "platform-roothub.h"
-
 /* xHCI PCI Configuration Registers */
 #define XHCI_SBRN_OFFSET	(0x60)
 
@@ -737,6 +735,8 @@ struct xhci_ep_ctx {
 #define EP_MAXPSTREAMS(p)	(((p) << 10) & EP_MAXPSTREAMS_MASK)
 /* Endpoint is set up with a Linear Stream Array (vs. Secondary Stream Array) */
 #define	EP_HAS_LSA		(1 << 15)
+/* hosts with LEC=1 use bits 31:24 as ESIT high bits. */
+#define CTX_TO_MAX_ESIT_PAYLOAD_HI(p)	(((p) >> 24) & 0xff)
 
 /* ep_info2 bitmasks */
 /*
@@ -1683,7 +1683,7 @@ struct xhci_bus_state {
 
 static inline unsigned int hcd_index(struct usb_hcd *hcd)
 {
-	if (hcd->speed == HCD_USB3)
+	if (hcd->speed >= HCD_USB3)
 		return 0;
 	else
 		return 1;
@@ -1734,6 +1734,7 @@ struct xhci_hcd {
 	int		msix_count;
 	/* optional clock */
 	struct clk		*clk;
+	/* optional platform root-hub */
 	struct platform_roothub	*platform_roothub;
 	/* data structures */
 	struct xhci_device_context_array *dcbaa;
@@ -1829,7 +1830,7 @@ struct xhci_hcd {
 /* For controller with a broken Port Disable implementation */
 #define XHCI_BROKEN_PORT_PED	(1 << 25)
 #define XHCI_LIMIT_ENDPOINT_INTERVAL_7	(1 << 26)
-#define XHCI_U2_DISABLE_WAKE	(1 << 27)
+/* Reserved. It was XHCI_U2_DISABLE_WAKE */
 #define XHCI_ASMEDIA_MODIFY_FLOWCONTROL	(1 << 28)
 
 	unsigned int		num_active_eps;
@@ -2543,8 +2544,8 @@ static inline const char *xhci_decode_ep_context(u32 info, u32 info2, u64 deq,
 	u8 lsa;
 	u8 hid;
 
-	esit = EP_MAX_ESIT_PAYLOAD_HI(info) << 16 |
-		EP_MAX_ESIT_PAYLOAD_LO(tx_info);
+	esit = CTX_TO_MAX_ESIT_PAYLOAD_HI(info) << 16 |
+		CTX_TO_MAX_ESIT_PAYLOAD(tx_info);
 
 	ep_state = info & EP_STATE_MASK;
 	max_pstr = info & EP_MAXPSTREAMS_MASK;

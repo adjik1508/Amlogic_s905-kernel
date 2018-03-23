@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __PERF_RECORD_H
 #define __PERF_RECORD_H
 
@@ -200,6 +201,7 @@ struct perf_sample {
 	u32 cpu;
 	u32 raw_size;
 	u64 data_src;
+	u64 phys_addr;
 	u32 flags;
 	u16 insn_len;
 	u8  cpumode;

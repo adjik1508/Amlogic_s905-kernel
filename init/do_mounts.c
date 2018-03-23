@@ -32,7 +32,6 @@
 #include <linux/nfs_fs.h>
 #include <linux/nfs_fs_sb.h>
 #include <linux/nfs_mount.h>
-#include <uapi/linux/mount.h>
 
 #include "do_mounts.h"
 

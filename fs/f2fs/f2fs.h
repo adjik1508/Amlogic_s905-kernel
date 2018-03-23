@@ -589,6 +589,7 @@ struct f2fs_inode_info {
 	struct extent_tree *extent_tree;	/* cached extent_tree entry */
 	struct rw_semaphore dio_rwsem[2];/* avoid racing between dio and gc */
 	struct rw_semaphore i_mmap_sem;
+	struct rw_semaphore i_xattr_sem; /* avoid racing between reading and changing EAs */
 
 	int i_extra_isize;		/* size of extra space located in i_addr */
 	kprojid_t i_projid;		/* id for project quota */
@@ -2276,7 +2277,7 @@ static inline bool f2fs_skip_inode_update(struct inode *inode, int dsync)
 
 static inline int f2fs_readonly(struct super_block *sb)
 {
-	return sb->s_flags & SB_RDONLY;
+	return sb->s_flags & MS_RDONLY;
 }
 
 static inline bool f2fs_cp_error(struct f2fs_sb_info *sbi)
@@ -2510,6 +2511,7 @@ void destroy_node_manager_caches(void);
 /*
  * segment.c
  */
+bool need_SSR(struct f2fs_sb_info *sbi);
 void register_inmem_page(struct inode *inode, struct page *page);
 void drop_inmem_pages(struct inode *inode);
 void drop_inmem_page(struct inode *inode, struct page *page);
@@ -2523,7 +2525,7 @@ void invalidate_blocks(struct f2fs_sb_info *sbi, block_t addr);
 bool is_checkpointed_data(struct f2fs_sb_info *sbi, block_t blkaddr);
 void refresh_sit_entry(struct f2fs_sb_info *sbi, block_t old, block_t new);
 void stop_discard_thread(struct f2fs_sb_info *sbi);
-void f2fs_wait_discard_bios(struct f2fs_sb_info *sbi);
+void f2fs_wait_discard_bios(struct f2fs_sb_info *sbi, bool umount);
 void clear_prefree_segments(struct f2fs_sb_info *sbi, struct cp_control *cpc);
 void release_discard_addrs(struct f2fs_sb_info *sbi);
 int npages_for_summary_flush(struct f2fs_sb_info *sbi, bool for_ra);

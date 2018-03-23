@@ -1246,6 +1246,7 @@ int nand_reset(struct nand_chip *chip, int chipnr)
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(nand_reset);
 
 /**
  * nand_check_erased_buf - check if a buffer contains (almost) only 0xff data
@@ -2668,7 +2669,7 @@ static uint8_t *nand_fill_oob(struct mtd_info *mtd, uint8_t *oob, size_t len,
 static int nand_do_write_ops(struct mtd_info *mtd, loff_t to,
 			     struct mtd_oob_ops *ops)
 {
-	int chipnr, realpage, page, blockmask, column;
+	int chipnr, realpage, page, column;
 	struct nand_chip *chip = mtd_to_nand(mtd);
 	uint32_t writelen = ops->len;
 
@@ -2704,7 +2705,6 @@ static int nand_do_write_ops(struct mtd_info *mtd, loff_t to,
 
 	realpage = (int)(to >> chip->page_shift);
 	page = realpage & chip->pagemask;
-	blockmask = (1 << (chip->phys_erase_shift - chip->page_shift)) - 1;
 
 	/* Invalidate the page cache, when we write to the cached page */
 	if (to <= ((loff_t)chip->pagebuf << chip->page_shift) &&
@@ -2800,14 +2800,17 @@ static int panic_nand_write(struct mtd_info *mtd, loff_t to, size_t len,
 			    size_t *retlen, const uint8_t *buf)
 {
 	struct nand_chip *chip = mtd_to_nand(mtd);
+	int chipnr = (int)(to >> chip->chip_shift);
 	struct mtd_oob_ops ops;
 	int ret;
 
-	/* Wait for the device to get ready */
-	panic_nand_wait(mtd, chip, 400);
-
 	/* Grab the device */
 	panic_nand_get_device(chip, mtd, FL_WRITING);
+
+	chip->select_chip(mtd, chipnr);
+
+	/* Wait for the device to get ready */
+	panic_nand_wait(mtd, chip, 400);
 
 	memset(&ops, 0, sizeof(ops));
 	ops.len = len;

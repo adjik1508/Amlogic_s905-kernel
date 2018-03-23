@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * (C) 2001 Clemson University and The University of Chicago
  *
@@ -39,7 +40,7 @@ static int orangefs_show_options(struct seq_file *m, struct dentry *root)
 {
 	struct orangefs_sb_info_s *orangefs_sb = ORANGEFS_SB(root->d_sb);
 
-	if (root->d_sb->s_flags & SB_POSIXACL)
+	if (root->d_sb->s_flags & MS_POSIXACL)
 		seq_puts(m, ",acl");
 	if (orangefs_sb->flags & ORANGEFS_OPT_INTR)
 		seq_puts(m, ",intr");
@@ -59,7 +60,7 @@ static int parse_mount_options(struct super_block *sb, char *options,
 	 * Force any potential flags that might be set from the mount
 	 * to zero, ie, initialize to unset.
 	 */
-	sb->s_flags &= ~SB_POSIXACL;
+	sb->s_flags &= ~MS_POSIXACL;
 	orangefs_sb->flags &= ~ORANGEFS_OPT_INTR;
 	orangefs_sb->flags &= ~ORANGEFS_OPT_LOCAL_LOCK;
 
@@ -72,7 +73,7 @@ static int parse_mount_options(struct super_block *sb, char *options,
 		token = match_token(p, tokens, args);
 		switch (token) {
 		case Opt_acl:
-			sb->s_flags |= SB_POSIXACL;
+			sb->s_flags |= MS_POSIXACL;
 			break;
 		case Opt_intr:
 			orangefs_sb->flags |= ORANGEFS_OPT_INTR;
@@ -107,10 +108,8 @@ static struct inode *orangefs_alloc_inode(struct super_block *sb)
 	struct orangefs_inode_s *orangefs_inode;
 
 	orangefs_inode = kmem_cache_alloc(orangefs_inode_cache, GFP_KERNEL);
-	if (orangefs_inode == NULL) {
-		gossip_err("Failed to allocate orangefs_inode\n");
+	if (!orangefs_inode)
 		return NULL;
-	}
 
 	/*
 	 * We want to clear everything except for rw_semaphore and the
@@ -523,7 +522,7 @@ struct dentry *orangefs_mount(struct file_system_type *fst,
 
 	ret = orangefs_fill_sb(sb,
 	      &new_op->downcall.resp.fs_mount, data,
-	      flags & SB_SILENT ? 1 : 0);
+	      flags & MS_SILENT ? 1 : 0);
 
 	if (ret) {
 		d = ERR_PTR(ret);

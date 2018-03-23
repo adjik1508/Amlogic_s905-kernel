@@ -388,7 +388,7 @@ static void qla_init_base_qpair(struct scsi_qla_host *vha, struct req_que *req,
 	INIT_LIST_HEAD(&ha->base_qpair->nvme_done_list);
 	ha->base_qpair->enable_class_2 = ql2xenableclass2;
 	/* init qpair to this cpu. Will adjust at run time. */
-	qla_cpu_update(rsp->qpair, smp_processor_id());
+	qla_cpu_update(rsp->qpair, raw_smp_processor_id());
 	ha->base_qpair->pdev = ha->pdev;
 
 	if (IS_QLA27XX(ha) || IS_QLA83XX(ha))
@@ -3061,6 +3061,8 @@ qla2x00_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
 	    host->max_cmd_len, host->max_channel, host->max_lun,
 	    host->transportt, sht->vendor_id);
 
+	INIT_WORK(&base_vha->iocb_work, qla2x00_iocb_work_fn);
+
 	/* Set up the irqs */
 	ret = qla2x00_request_irqs(ha, rsp);
 	if (ret)
@@ -3210,6 +3212,7 @@ qla2x00_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
 		ql_log(ql_log_fatal, base_vha, 0x00ed,
 		    "Failed to start DPC thread.\n");
 		ret = PTR_ERR(ha->dpc_thread);
+		ha->dpc_thread = NULL;
 		goto probe_failed;
 	}
 	ql_dbg(ql_dbg_init, base_vha, 0x00ee,
@@ -3223,7 +3226,6 @@ qla2x00_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
 	 */
 	qla2xxx_wake_dpc(base_vha);
 
-	INIT_WORK(&base_vha->iocb_work, qla2x00_iocb_work_fn);
 	INIT_WORK(&ha->board_disable, qla2x00_disable_board_on_pci_error);
 
 	if (IS_QLA8031(ha) || IS_MCTP_CAPABLE(ha)) {

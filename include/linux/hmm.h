@@ -11,7 +11,7 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  *
- * Authors: Jérôme Glisse <jglisse@redhat.com>
+ * Authors: JÃ©rÃ´me Glisse <jglisse@redhat.com>
  */
 /*
  * Heterogeneous Memory Management (HMM)

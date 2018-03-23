@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <errno.h>
 #include <inttypes.h>
 #include <linux/kernel.h>
@@ -374,6 +375,8 @@ void perf_tool__fill_defaults(struct perf_tool *tool)
 		tool->mmap2 = process_event_stub;
 	if (tool->comm == NULL)
 		tool->comm = process_event_stub;
+	if (tool->namespaces == NULL)
+		tool->namespaces = process_event_stub;
 	if (tool->fork == NULL)
 		tool->fork = process_event_stub;
 	if (tool->exit == NULL)
@@ -1119,6 +1122,9 @@ static void dump_sample(struct perf_evsel *evsel, union perf_event *event,
 
 	if (sample_type & PERF_SAMPLE_DATA_SRC)
 		printf(" . data_src: 0x%"PRIx64"\n", sample->data_src);
+
+	if (sample_type & PERF_SAMPLE_PHYS_ADDR)
+		printf(" .. phys_addr: 0x%"PRIx64"\n", sample->phys_addr);
 
 	if (sample_type & PERF_SAMPLE_TRANSACTION)
 		printf("... transaction: %" PRIx64 "\n", sample->transaction);

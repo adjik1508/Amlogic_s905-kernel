@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * Connection state tracking for netfilter.  This is separated from,
  * but required by, the (future) NAT layer; it can also be used by an iptables
@@ -17,7 +18,6 @@
 #include <linux/bitops.h>
 #include <linux/compiler.h>
 #include <linux/atomic.h>
-#include <linux/rhashtable.h>
 
 #include <linux/netfilter/nf_conntrack_tcp.h>
 #include <linux/netfilter/nf_conntrack_dccp.h>
@@ -77,7 +77,7 @@ struct nf_conn {
 	possible_net_t ct_net;
 
 #if IS_ENABLED(CONFIG_NF_NAT)
-	struct rhlist_head nat_bysource;
+	struct hlist_node	nat_bysource;
 #endif
 	/* all members below initialized via memset */
 	u8 __nfct_init_offset[0];

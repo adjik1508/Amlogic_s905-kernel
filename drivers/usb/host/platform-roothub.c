@@ -70,6 +70,8 @@ struct platform_roothub *platform_roothub_init(struct device *dev)
 {
 	struct device_node *roothub_np, *port_np;
 	struct platform_roothub *plat_roothub;
+	struct platform_roothub *roothub_entry;
+	struct list_head *head;
 	int err;
 
 	roothub_np = usb_of_get_child_node(dev->of_node, ROOTHUB_PORTNUM);
@@ -84,17 +86,53 @@ struct platform_roothub *platform_roothub_init(struct device *dev)
 		err = platform_roothub_add_phy(dev, port_np, "usb2-phy",
 					       &plat_roothub->list);
 		if (err)
-			return ERR_PTR(err);
+			goto err_out;
 
 		err = platform_roothub_add_phy(dev, port_np, "usb3-phy",
 					       &plat_roothub->list);
 		if (err)
-			return ERR_PTR(err);
+			goto err_out;
+	}
+
+	head = &plat_roothub->list;
+
+	list_for_each_entry(roothub_entry, head, list) {
+		err = phy_init(roothub_entry->phy);
+		if (err)
+			goto err_exit_phys;
 	}
 
 	return plat_roothub;
+
+err_exit_phys:
+	list_for_each_entry_continue_reverse(roothub_entry, head, list)
+		phy_exit(roothub_entry->phy);
+
+err_out:
+	return ERR_PTR(err);
 }
 EXPORT_SYMBOL_GPL(platform_roothub_init);
+
+int platform_roothub_exit(struct platform_roothub *plat_roothub)
+{
+	struct platform_roothub *roothub_entry;
+	struct list_head *head;
+	int err, ret = 0;
+
+	if (!plat_roothub)
+		return 0;
+
+	head = &plat_roothub->list;
+
+	list_for_each_entry(roothub_entry, head, list) {
+		err = phy_exit(roothub_entry->phy);
+		if (err)
+			ret = ret;
+	}
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(platform_roothub_exit);
 
 int platform_roothub_power_on(struct platform_roothub *plat_roothub)
 {
@@ -108,39 +146,35 @@ int platform_roothub_power_on(struct platform_roothub *plat_roothub)
 	head = &plat_roothub->list;
 
 	list_for_each_entry(roothub_entry, head, list) {
-		err = phy_init(roothub_entry->phy);
+		err = phy_power_on(roothub_entry->phy);
 		if (err)
 			goto err_out;
-
-		err = phy_power_on(roothub_entry->phy);
-		if (err) {
-			phy_exit(roothub_entry->phy);
-			goto err_out;
-		}
 	}
 
 	return 0;
 
 err_out:
-	list_for_each_entry_continue_reverse(roothub_entry, head, list) {
+	list_for_each_entry_continue_reverse(roothub_entry, head, list)
 		phy_power_off(roothub_entry->phy);
-		phy_exit(roothub_entry->phy);
-	}
 
 	return err;
 }
 EXPORT_SYMBOL_GPL(platform_roothub_power_on);
 
-void platform_roothub_power_off(struct platform_roothub *plat_roothub)
+int platform_roothub_power_off(struct platform_roothub *plat_roothub)
 {
 	struct platform_roothub *roothub_entry;
+	int err, ret = 0;
 
 	if (!plat_roothub)
-		return;
+		return 0;
 
 	list_for_each_entry_reverse(roothub_entry, &plat_roothub->list, list) {
-		phy_power_off(roothub_entry->phy);
-		phy_exit(roothub_entry->phy);
+		err = phy_power_off(roothub_entry->phy);
+		if (err)
+			ret = err;
 	}
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(platform_roothub_power_off);

@@ -1174,7 +1174,7 @@ again:
 	if (!i_done || ret)
 		goto out;
 
-	if (!(inode->i_sb->s_flags & SB_ACTIVE))
+	if (!(inode->i_sb->s_flags & MS_ACTIVE))
 		goto out;
 
 	/*
@@ -1333,7 +1333,7 @@ int btrfs_defrag_file(struct inode *inode, struct file *file,
 		 * make sure we stop running if someone unmounts
 		 * the FS
 		 */
-		if (!(inode->i_sb->s_flags & SB_ACTIVE))
+		if (!(inode->i_sb->s_flags & MS_ACTIVE))
 			break;
 
 		if (btrfs_defrag_cancelled(fs_info)) {
@@ -1842,8 +1842,13 @@ static noinline int btrfs_ioctl_subvol_setflags(struct file *file,
 
 	ret = btrfs_update_root(trans, fs_info->tree_root,
 				&root->root_key, &root->root_item);
+	if (ret < 0) {
+		btrfs_end_transaction(trans);
+		goto out_reset;
+	}
 
-	btrfs_commit_transaction(trans);
+	ret = btrfs_commit_transaction(trans);
+
 out_reset:
 	if (ret)
 		btrfs_set_root_flags(&root->root_item, root_flags);
@@ -2773,9 +2778,9 @@ static long btrfs_ioctl_fs_info(struct btrfs_fs_info *fs_info,
 	}
 	mutex_unlock(&fs_devices->device_list_mutex);
 
-	fi_args->nodesize = fs_info->super_copy->nodesize;
-	fi_args->sectorsize = fs_info->super_copy->sectorsize;
-	fi_args->clone_alignment = fs_info->super_copy->sectorsize;
+	fi_args->nodesize = fs_info->nodesize;
+	fi_args->sectorsize = fs_info->sectorsize;
+	fi_args->clone_alignment = fs_info->sectorsize;
 
 	if (copy_to_user(arg, fi_args, sizeof(*fi_args)))
 		ret = -EFAULT;
@@ -3032,7 +3037,7 @@ static int btrfs_cmp_data_prepare(struct inode *src, u64 loff,
 out:
 	if (ret)
 		btrfs_cmp_data_free(cmp);
-	return 0;
+	return ret;
 }
 
 static int btrfs_cmp_data(u64 len, struct cmp_pages *cmp)
@@ -4059,6 +4064,10 @@ static long btrfs_ioctl_default_subvol(struct file *file, void __user *argp)
 	new_root = btrfs_read_fs_root_no_name(fs_info, &location);
 	if (IS_ERR(new_root)) {
 		ret = PTR_ERR(new_root);
+		goto out;
+	}
+	if (!is_fstree(new_root->objectid)) {
+		ret = -ENOENT;
 		goto out;
 	}
 

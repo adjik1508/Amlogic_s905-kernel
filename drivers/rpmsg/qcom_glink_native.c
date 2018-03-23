@@ -227,6 +227,7 @@ static struct glink_channel *qcom_glink_alloc_channel(struct qcom_glink *glink,
 
 	init_completion(&channel->open_req);
 	init_completion(&channel->open_ack);
+	init_completion(&channel->intent_req_comp);
 
 	INIT_LIST_HEAD(&channel->done_intents);
 	INIT_WORK(&channel->intent_work, qcom_glink_rx_done_work);
@@ -635,19 +636,18 @@ qcom_glink_alloc_intent(struct qcom_glink *glink,
 	unsigned long flags;
 
 	intent = kzalloc(sizeof(*intent), GFP_KERNEL);
-
 	if (!intent)
 		return NULL;
 
 	intent->data = kzalloc(size, GFP_KERNEL);
 	if (!intent->data)
-		return NULL;
+		goto free_intent;
 
 	spin_lock_irqsave(&channel->intent_lock, flags);
 	ret = idr_alloc_cyclic(&channel->liids, intent, 1, -1, GFP_ATOMIC);
 	if (ret < 0) {
 		spin_unlock_irqrestore(&channel->intent_lock, flags);
-		return NULL;
+		goto free_data;
 	}
 	spin_unlock_irqrestore(&channel->intent_lock, flags);
 
@@ -656,6 +656,12 @@ qcom_glink_alloc_intent(struct qcom_glink *glink,
 	intent->reuse = reuseable;
 
 	return intent;
+
+free_data:
+	kfree(intent->data);
+free_intent:
+	kfree(intent);
+	return NULL;
 }
 
 static void qcom_glink_handle_rx_done(struct qcom_glink *glink,
@@ -1197,7 +1203,7 @@ static int qcom_glink_request_intent(struct qcom_glink *glink,
 
 	ret = qcom_glink_tx(glink, &cmd, sizeof(cmd), NULL, 0, true);
 	if (ret)
-		return ret;
+		goto unlock;
 
 	ret = wait_for_completion_timeout(&channel->intent_req_comp, 10 * HZ);
 	if (!ret) {
@@ -1207,6 +1213,7 @@ static int qcom_glink_request_intent(struct qcom_glink *glink,
 		ret = channel->intent_req_result ? 0 : -ECANCELED;
 	}
 
+unlock:
 	mutex_unlock(&channel->intent_req_lock);
 	return ret;
 }
@@ -1610,3 +1617,6 @@ void qcom_glink_native_unregister(struct qcom_glink *glink)
 	device_unregister(glink->dev);
 }
 EXPORT_SYMBOL_GPL(qcom_glink_native_unregister);
+
+MODULE_DESCRIPTION("Qualcomm GLINK driver");
+MODULE_LICENSE("GPL v2");

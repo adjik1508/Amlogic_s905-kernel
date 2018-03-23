@@ -1042,7 +1042,7 @@ static int get_cpu_number(struct device_node *dn)
 {
 	const __be32 *cell;
 	u64 hwid;
-	int i;
+	int cpu;
 
 	cell = of_get_property(dn, "reg", NULL);
 	if (!cell)
@@ -1056,9 +1056,9 @@ static int get_cpu_number(struct device_node *dn)
 	if (hwid & ~MPIDR_HWID_BITMASK)
 		return -1;
 
-	for (i = 0; i < num_possible_cpus(); i++)
-		if (cpu_logical_map(i) == hwid)
-			return i;
+	for_each_possible_cpu(cpu)
+		if (cpu_logical_map(cpu) == hwid)
+			return cpu;
 
 	return -1;
 }
@@ -1071,18 +1071,18 @@ static void __init gic_populate_ppi_partitions(struct device_node *gic_node)
 	int nr_parts;
 	struct partition_affinity *parts;
 
-	parts_node = of_find_node_by_name(gic_node, "ppi-partitions");
+	parts_node = of_get_child_by_name(gic_node, "ppi-partitions");
 	if (!parts_node)
 		return;
 
 	nr_parts = of_get_child_count(parts_node);
 
 	if (!nr_parts)
-		return;
+		goto out_put_node;
 
 	parts = kzalloc(sizeof(*parts) * nr_parts, GFP_KERNEL);
 	if (WARN_ON(!parts))
-		return;
+		goto out_put_node;
 
 	for_each_child_of_node(parts_node, child_part) {
 		struct partition_affinity *part;
@@ -1149,6 +1149,9 @@ static void __init gic_populate_ppi_partitions(struct device_node *gic_node)
 
 		gic_data.ppi_descs[i] = desc;
 	}
+
+out_put_node:
+	of_node_put(parts_node);
 }
 
 static void __init gic_of_setup_kvm_info(struct device_node *node)

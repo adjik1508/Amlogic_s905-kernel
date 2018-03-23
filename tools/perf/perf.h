@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _PERF_PERF_H
 #define _PERF_PERF_H
 
@@ -43,6 +44,7 @@ struct record_opts {
 	bool	     no_samples;
 	bool	     raw_samples;
 	bool	     sample_address;
+	bool	     sample_phys_addr;
 	bool	     sample_weight;
 	bool	     sample_time;
 	bool	     sample_time_set;

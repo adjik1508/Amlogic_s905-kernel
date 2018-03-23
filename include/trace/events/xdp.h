@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM xdp
 
@@ -138,11 +139,11 @@ DEFINE_EVENT_PRINT(xdp_redirect_template, xdp_redirect_map_err,
 
 #define _trace_xdp_redirect_map(dev, xdp, fwd, map, idx)		\
 	 trace_xdp_redirect_map(dev, xdp, fwd ? fwd->ifindex : 0,	\
-				0, map, idx);
+				0, map, idx)
 
 #define _trace_xdp_redirect_map_err(dev, xdp, fwd, map, idx, err)	\
 	 trace_xdp_redirect_map_err(dev, xdp, fwd ? fwd->ifindex : 0,	\
-				    err, map, idx);
+				    err, map, idx)
 
 #endif /* _TRACE_XDP_H */
 

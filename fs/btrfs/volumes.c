@@ -2397,7 +2397,7 @@ int btrfs_init_new_device(struct btrfs_fs_info *fs_info, const char *device_path
 	set_blocksize(device->bdev, BTRFS_BDEV_BLOCKSIZE);
 
 	if (seeding_dev) {
-		sb->s_flags &= ~SB_RDONLY;
+		sb->s_flags &= ~MS_RDONLY;
 		ret = btrfs_prepare_sprout(fs_info);
 		BUG_ON(ret); /* -ENOMEM */
 	}
@@ -2501,6 +2501,8 @@ int btrfs_init_new_device(struct btrfs_fs_info *fs_info, const char *device_path
 	return ret;
 
 error_trans:
+	if (seeding_dev)
+		sb->s_flags |= MS_RDONLY;
 	btrfs_end_transaction(trans);
 	rcu_string_free(device->name);
 	btrfs_sysfs_rm_device_link(fs_info->fs_devices, device);
@@ -6144,7 +6146,10 @@ static void bbio_error(struct btrfs_bio *bbio, struct bio *bio, u64 logical)
 
 		btrfs_io_bio(bio)->mirror_num = bbio->mirror_num;
 		bio->bi_iter.bi_sector = logical >> 9;
-		bio->bi_status = BLK_STS_IOERR;
+		if (atomic_read(&bbio->error) > bbio->max_errors)
+			bio->bi_status = BLK_STS_IOERR;
+		else
+			bio->bi_status = BLK_STS_OK;
 		btrfs_end_bbio(bbio, bio);
 	}
 }
@@ -6166,7 +6171,7 @@ blk_status_t btrfs_map_bio(struct btrfs_fs_info *fs_info, struct bio *bio,
 	map_length = length;
 
 	btrfs_bio_counter_inc_blocked(fs_info);
-	ret = __btrfs_map_block(fs_info, bio_op(bio), logical,
+	ret = __btrfs_map_block(fs_info, btrfs_op(bio), logical,
 				&map_length, &bbio, mirror_num, 1);
 	if (ret) {
 		btrfs_bio_counter_dec(fs_info);

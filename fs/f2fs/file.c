@@ -683,6 +683,12 @@ int f2fs_getattr(const struct path *path, struct kstat *stat,
 				  STATX_ATTR_NODUMP);
 
 	generic_fillattr(inode, stat);
+
+	/* we need to show initial sectors used for inline_data/dentries */
+	if ((S_ISREG(inode->i_mode) && f2fs_has_inline_data(inode)) ||
+					f2fs_has_inline_dentry(inode))
+		stat->blocks += (stat->size + 511) >> 9;
+
 	return 0;
 }
 
@@ -2691,6 +2697,7 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 
 		err = f2fs_preallocate_blocks(iocb, from);
 		if (err) {
+			clear_inode_flag(inode, FI_NO_PREALLOC);
 			inode_unlock(inode);
 			return err;
 		}
@@ -2764,5 +2771,4 @@ const struct file_operations f2fs_file_operations = {
 #endif
 	.splice_read	= generic_file_splice_read,
 	.splice_write	= iter_file_splice_write,
-	.integrity_read	= generic_file_read_iter,
 };

@@ -17,8 +17,7 @@ Description:
 
 		rule format: action [condition ...]
 
-		action: measure | dont_meaure | appraise | dont_appraise |
-			audit | dont_failsafe
+		action: measure | dont_measure | appraise | dont_appraise | audit
 		condition:= base | lsm  [option]
 			base:	[[func=] [mask=] [fsmagic=] [fsuuid=] [uid=]
 				[euid=] [fowner=]]

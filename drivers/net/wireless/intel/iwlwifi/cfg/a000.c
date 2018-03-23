@@ -80,15 +80,15 @@
 #define IWL_A000_HR_A0_FW_PRE	"iwlwifi-QuQnj-a0-hr-a0-"
 
 #define IWL_A000_HR_MODULE_FIRMWARE(api) \
-	IWL_A000_HR_FW_PRE "-" __stringify(api) ".ucode"
+	IWL_A000_HR_FW_PRE __stringify(api) ".ucode"
 #define IWL_A000_JF_MODULE_FIRMWARE(api) \
-	IWL_A000_JF_FW_PRE "-" __stringify(api) ".ucode"
+	IWL_A000_JF_FW_PRE __stringify(api) ".ucode"
 #define IWL_A000_HR_F0_QNJ_MODULE_FIRMWARE(api) \
-	IWL_A000_HR_F0_FW_PRE "-" __stringify(api) ".ucode"
+	IWL_A000_HR_F0_FW_PRE __stringify(api) ".ucode"
 #define IWL_A000_JF_B0_QNJ_MODULE_FIRMWARE(api) \
-	IWL_A000_JF_B0_FW_PRE "-" __stringify(api) ".ucode"
+	IWL_A000_JF_B0_FW_PRE __stringify(api) ".ucode"
 #define IWL_A000_HR_A0_QNJ_MODULE_FIRMWARE(api) \
-	IWL_A000_HR_A0_FW_PRE "-" __stringify(api) ".ucode"
+	IWL_A000_HR_A0_FW_PRE __stringify(api) ".ucode"
 
 #define NVM_HW_SECTION_NUM_FAMILY_A000		10
 
@@ -133,7 +133,7 @@ static const struct iwl_ht_params iwl_a000_ht_params = {
 	.use_tfh = true,						\
 	.rf_id = true,							\
 	.gen2 = true,							\
-	.ext_nvm = true,						\
+	.nvm_type = IWL_NVM_EXT,					\
 	.dbgc_supported = true
 
 const struct iwl_cfg iwla000_2ac_cfg_hr = {

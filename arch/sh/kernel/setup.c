@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * arch/sh/kernel/setup.c
  *
@@ -32,7 +33,6 @@
 #include <linux/of.h>
 #include <linux/of_fdt.h>
 #include <linux/uaccess.h>
-#include <uapi/linux/mount.h>
 #include <asm/io.h>
 #include <asm/page.h>
 #include <asm/elf.h>

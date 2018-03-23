@@ -95,33 +95,6 @@
 			};
 		};
 	};
-
-	soc {
-		sound {
-			compatible = "simple-audio-card";
-			simple-audio-card,name = "meson-gxl-p230";
-
-			simple-audio-card,dai-link@0 {
-				/* RCA Output */
-				format = "i2s";
-				mclk-fs = <256>;
-				bitclock-master = <&i2s_dai>;
-				frame-master = <&i2s_dai>;
-
-				plat {
-					sound-dai = <&aiu_i2s_dma>;
-				};
-
-				cpu {
-					sound-dai = <&i2s_dai>;
-				};
-
-				codec {
-					sound-dai = <&hdmi_tx>;
-				};
-			};
-		};
-	};
 };
 
 &cec_AO {
@@ -173,19 +146,4 @@
 &saradc {
 	status = "okay";
 	vref-supply = <&vddio_ao18>;
-};
-
-&audio {
-	status = "okay";
-};
-
-&aiu_i2s_dma {
-	status = "okay";
-};
-
-&i2s_dai {
-	pinctrl-0 = <&i2s_am_clk_pins>, <&i2s_out_ao_clk_pins>,
-		    <&i2s_out_lr_clk_pins>, <&i2s_out_ch01_pins>;
-	pinctrl-names = "default";
-	status = "okay";
 };

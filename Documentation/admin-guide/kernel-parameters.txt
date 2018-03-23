@@ -1502,7 +1502,7 @@
 
 	ima_policy=	[IMA]
 			The builtin policies to load during IMA setup.
-			Format: "tcb | appraise_tcb | secure_boot | fs_unsafe"
+			Format: "tcb | appraise_tcb | secure_boot"
 
 			The "tcb" policy measures all programs exec'd, files
 			mmap'd for exec, and all files opened with the read
@@ -1516,12 +1516,6 @@
 			The "secure_boot" policy appraises the integrity
 			of files (eg. kexec kernel image, kernel modules,
 			firmware, policy, etc) based on file signatures.
-
-			The "fs_unsafe" policy permits normally denied
-			access/execute permission for files in policy on IMA
-			unsupported filesystems.  Note this option, as the
-			name implies, is not safe and not recommended for
-			any environments other than testing.
 
 	ima_tcb		[IMA] Deprecated.  Use ima_policy= instead.
 			Load a policy which meets the needs of the Trusted
@@ -2691,6 +2685,8 @@
 			steal time is computed, but won't influence scheduler
 			behaviour
 
+	nopti		[X86-64] Disable kernel page table isolation
+
 	nolapic		[X86-32,APIC] Do not enable or use the local APIC.
 
 	nolapic_timer	[X86-32,APIC] Do not use the local APIC timer.
@@ -3258,6 +3254,12 @@
 
 	pt.		[PARIDE]
 			See Documentation/blockdev/paride.txt.
+
+	pti=		[X86_64]
+			Control user/kernel address space isolation:
+			on - enable
+			off - disable
+			auto - default setting
 
 	pty.legacy_count=
 			[KNL] Number of legacy pty's. Overwrites compiled-in

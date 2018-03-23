@@ -145,13 +145,6 @@ static void nfs_io_completion_put(struct nfs_io_completion *ioc)
 		kref_put(&ioc->refcount, nfs_io_completion_release);
 }
 
-static void nfs_context_set_write_error(struct nfs_open_context *ctx, int error)
-{
-	ctx->error = error;
-	smp_wmb();
-	set_bit(NFS_CONTEXT_ERROR_WRITE, &ctx->flags);
-}
-
 static struct nfs_page *
 nfs_page_private_request(struct page *page)
 {
@@ -504,8 +497,12 @@ try_again:
 	for (subreq = head->wb_this_page; subreq != head;
 			subreq = subreq->wb_this_page) {
 
-		if (!kref_get_unless_zero(&subreq->wb_kref))
+		if (!kref_get_unless_zero(&subreq->wb_kref)) {
+			if (subreq->wb_offset == head->wb_offset + total_bytes)
+				total_bytes += subreq->wb_bytes;
 			continue;
+		}
+
 		while (!nfs_lock_request(subreq)) {
 			/*
 			 * Unlock page to allow nfs_page_group_sync_on_bit()
@@ -532,9 +529,9 @@ try_again:
 		} else if (WARN_ON_ONCE(subreq->wb_offset < head->wb_offset ||
 			    ((subreq->wb_offset + subreq->wb_bytes) >
 			     (head->wb_offset + total_bytes)))) {
+			nfs_page_group_unlock(head);
 			nfs_unroll_locks(inode, head, subreq);
 			nfs_unlock_and_release_request(subreq);
-			nfs_page_group_unlock(head);
 			nfs_unlock_and_release_request(head);
 			return ERR_PTR(-EIO);
 		}
@@ -1028,23 +1025,31 @@ int
 nfs_scan_commit_list(struct list_head *src, struct list_head *dst,
 		     struct nfs_commit_info *cinfo, int max)
 {
-	struct nfs_page *req;
+	struct nfs_page *req, *tmp;
 	int ret = 0;
 
-	while(!list_empty(src)) {
-		req = list_first_entry(src, struct nfs_page, wb_list);
+restart:
+	list_for_each_entry_safe(req, tmp, src, wb_list) {
 		kref_get(&req->wb_kref);
 		if (!nfs_lock_request(req)) {
 			int status;
+
+			/* Prevent deadlock with nfs_lock_and_join_requests */
+			if (!list_empty(dst)) {
+				nfs_release_request(req);
+				continue;
+			}
+			/* Ensure we make progress to prevent livelock */
 			mutex_unlock(&NFS_I(cinfo->inode)->commit_mutex);
 			status = nfs_wait_on_request(req);
 			nfs_release_request(req);
 			mutex_lock(&NFS_I(cinfo->inode)->commit_mutex);
 			if (status < 0)
 				break;
-			continue;
+			goto restart;
 		}
 		nfs_request_remove_commit_list(req, cinfo);
+		clear_bit(PG_COMMIT_TO_DS, &req->wb_flags);
 		nfs_list_add_request(req, dst);
 		ret++;
 		if ((ret == max) && !cinfo->dreq)
@@ -1053,6 +1058,7 @@ nfs_scan_commit_list(struct list_head *src, struct list_head *dst,
 	}
 	return ret;
 }
+EXPORT_SYMBOL_GPL(nfs_scan_commit_list);
 
 /*
  * nfs_scan_commit - Scan an inode for commit requests
@@ -1370,6 +1376,8 @@ static void nfs_initiate_write(struct nfs_pgio_header *hdr,
 
 	task_setup_data->priority = priority;
 	rpc_ops->write_setup(hdr, msg);
+	trace_nfs_initiate_write(hdr->inode, hdr->io_start, hdr->good_bytes,
+				 hdr->args.stable);
 
 	nfs4_state_protect_write(NFS_SERVER(hdr->inode)->nfs_client,
 				 &task_setup_data->rpc_client, msg, hdr);
@@ -1527,7 +1535,10 @@ static int nfs_writeback_done(struct rpc_task *task,
 	status = NFS_PROTO(inode)->write_done(task, hdr);
 	if (status != 0)
 		return status;
+
 	nfs_add_stats(inode, NFSIOS_SERVERWRITTENBYTES, hdr->res.count);
+	trace_nfs_writeback_done(inode, task->tk_status,
+				 hdr->args.offset, hdr->res.verf);
 
 	if (hdr->res.verf->committed < hdr->args.stable &&
 	    task->tk_status >= 0) {
@@ -1656,6 +1667,7 @@ int nfs_initiate_commit(struct rpc_clnt *clnt, struct nfs_commit_data *data,
 	};
 	/* Set up the initial task struct.  */
 	nfs_ops->commit_setup(data, &msg);
+	trace_nfs_initiate_commit(data);
 
 	dprintk("NFS: initiated commit call\n");
 
@@ -1780,6 +1792,7 @@ static void nfs_commit_done(struct rpc_task *task, void *calldata)
 
 	/* Call the NFS version-specific code */
 	NFS_PROTO(data->inode)->commit_done(task, data);
+	trace_nfs_commit_done(data);
 }
 
 static void nfs_commit_release_pages(struct nfs_commit_data *data)
@@ -1876,6 +1889,8 @@ int nfs_commit_inode(struct inode *inode, int how)
 	if (res)
 		error = nfs_generic_commit_list(inode, &head, how, &cinfo);
 	nfs_commit_end(cinfo.mds);
+	if (res == 0)
+		return res;
 	if (error < 0)
 		goto out_error;
 	if (!may_wait)

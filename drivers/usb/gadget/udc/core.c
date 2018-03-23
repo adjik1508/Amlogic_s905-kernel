@@ -1080,8 +1080,12 @@ static inline void usb_gadget_udc_stop(struct usb_udc *udc)
 static inline void usb_gadget_udc_set_speed(struct usb_udc *udc,
 					    enum usb_device_speed speed)
 {
-	if (udc->gadget->ops->udc_set_speed)
-		udc->gadget->ops->udc_set_speed(udc->gadget, speed);
+	if (udc->gadget->ops->udc_set_speed) {
+		enum usb_device_speed s;
+
+		s = min(speed, udc->gadget->max_speed);
+		udc->gadget->ops->udc_set_speed(udc->gadget, s);
+	}
 }
 
 /**
@@ -1320,8 +1324,7 @@ static int udc_bind_to_driver(struct usb_udc *udc, struct usb_gadget_driver *dri
 	udc->dev.driver = &driver->driver;
 	udc->gadget->dev.driver = &driver->driver;
 
-	if (driver->max_speed < udc->gadget->max_speed)
-		usb_gadget_udc_set_speed(udc, driver->max_speed);
+	usb_gadget_udc_set_speed(udc, driver->max_speed);
 
 	ret = driver->bind(udc->gadget, driver);
 	if (ret)

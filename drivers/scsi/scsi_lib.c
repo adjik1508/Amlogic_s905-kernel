@@ -1379,8 +1379,6 @@ static int scsi_prep_fn(struct request_queue *q, struct request *req)
 
 	ret = scsi_setup_cmnd(sdev, req);
 out:
-	if (ret != BLKPREP_OK)
-		cmd->flags &= ~SCMD_INITIALIZED;
 	return scsi_prep_return(q, req, ret);
 }
 
@@ -1900,7 +1898,6 @@ static int scsi_mq_prep_fn(struct request *req)
 	struct scsi_device *sdev = req->q->queuedata;
 	struct Scsi_Host *shost = sdev->host;
 	struct scatterlist *sg;
-	int ret;
 
 	scsi_init_command(sdev, cmd);
 
@@ -1934,10 +1931,7 @@ static int scsi_mq_prep_fn(struct request *req)
 
 	blk_mq_start_request(req);
 
-	ret = scsi_setup_cmnd(sdev, req);
-	if (ret != BLK_STS_OK)
-		cmd->flags &= ~SCMD_INITIALIZED;
-	return ret;
+	return scsi_setup_cmnd(sdev, req);
 }
 
 static void scsi_mq_done(struct scsi_cmnd *cmd)
@@ -2132,11 +2126,13 @@ void __scsi_init_queue(struct Scsi_Host *shost, struct request_queue *q)
 		q->limits.cluster = 0;
 
 	/*
-	 * set a reasonable default alignment on word boundaries: the
-	 * host and device may alter it using
-	 * blk_queue_update_dma_alignment() later.
+	 * Set a reasonable default alignment:  The larger of 32-byte (dword),
+	 * which is a common minimum for HBAs, and the minimum DMA alignment,
+	 * which is set by the platform.
+	 *
+	 * Devices that require a bigger alignment can increase it later.
 	 */
-	blk_queue_dma_alignment(q, 0x03);
+	blk_queue_dma_alignment(q, max(4, dma_get_cache_alignment()) - 1);
 }
 EXPORT_SYMBOL_GPL(__scsi_init_queue);
 
@@ -2691,7 +2687,6 @@ scsi_device_set_state(struct scsi_device *sdev, enum scsi_device_state state)
 
 	}
 	sdev->sdev_state = state;
-	sysfs_notify(&sdev->sdev_gendev.kobj, NULL, "state");
 	return 0;
 
  illegal:
@@ -3115,7 +3110,6 @@ int scsi_internal_device_unblock_nowait(struct scsi_device *sdev,
 	case SDEV_BLOCK:
 	case SDEV_TRANSPORT_OFFLINE:
 		sdev->sdev_state = new_state;
-		sysfs_notify(&sdev->sdev_gendev.kobj, NULL, "state");
 		break;
 	case SDEV_CREATED_BLOCK:
 		if (new_state == SDEV_TRANSPORT_OFFLINE ||
@@ -3123,7 +3117,6 @@ int scsi_internal_device_unblock_nowait(struct scsi_device *sdev,
 			sdev->sdev_state = new_state;
 		else
 			sdev->sdev_state = SDEV_CREATED;
-		sysfs_notify(&sdev->sdev_gendev.kobj, NULL, "state");
 		break;
 	case SDEV_CANCEL:
 	case SDEV_OFFLINE:

@@ -710,14 +710,11 @@ EXPORT_SYMBOL(consume_skb);
  *	consume_stateless_skb - free an skbuff, assuming it is stateless
  *	@skb: buffer to free
  *
- *	Works like consume_skb(), but this variant assumes that all the head
- *	states have been already dropped.
+ *	Alike consume_skb(), but this variant assumes that this is the last
+ *	skb reference and all the head states have been already dropped
  */
-void consume_stateless_skb(struct sk_buff *skb)
+void __consume_stateless_skb(struct sk_buff *skb)
 {
-	if (!skb_unref(skb))
-		return;
-
 	trace_consume_skb(skb);
 	skb_release_data(skb);
 	kfree_skbmem(skb);
@@ -1127,9 +1124,13 @@ int skb_zerocopy_iter_stream(struct sock *sk, struct sk_buff *skb,
 
 	err = __zerocopy_sg_from_iter(sk, skb, &msg->msg_iter, len);
 	if (err == -EFAULT || (err == -EMSGSIZE && skb->len == orig_len)) {
+		struct sock *save_sk = skb->sk;
+
 		/* Streams do not free skb on error. Reset to prev state. */
 		msg->msg_iter = orig_iter;
+		skb->sk = sk;
 		___pskb_trim(skb, orig_len);
+		skb->sk = save_sk;
 		return err;
 	}
 
@@ -1180,11 +1181,11 @@ int skb_copy_ubufs(struct sk_buff *skb, gfp_t gfp_mask)
 	int i, new_frags;
 	u32 d_off;
 
-	if (!num_frags)
-		return 0;
-
 	if (skb_shared(skb) || skb_unclone(skb, gfp_mask))
 		return -EINVAL;
+
+	if (!num_frags)
+		goto release;
 
 	new_frags = (__skb_pagelen(skb) + PAGE_SIZE - 1) >> PAGE_SHIFT;
 	for (i = 0; i < new_frags; i++) {
@@ -1241,6 +1242,7 @@ int skb_copy_ubufs(struct sk_buff *skb, gfp_t gfp_mask)
 	__skb_fill_page_desc(skb, new_frags - 1, head, 0, d_off);
 	skb_shinfo(skb)->nr_frags = new_frags;
 
+release:
 	skb_zcopy_clear(skb, false);
 	return 0;
 }
@@ -1899,7 +1901,7 @@ void *__pskb_pull_tail(struct sk_buff *skb, int delta)
 	}
 
 	/* If we need update frag list, we are in troubles.
-	 * Certainly, it possible to add an offset to skb data,
+	 * Certainly, it is possible to add an offset to skb data,
 	 * but taking into account that pulling is expected to
 	 * be very rare operation, it is worth to fight against
 	 * further bloating skb head and crucify ourselves here instead.
@@ -3656,8 +3658,6 @@ normal:
 
 		skb_shinfo(nskb)->tx_flags |= skb_shinfo(head_skb)->tx_flags &
 					      SKBTX_SHARED_FRAG;
-		if (skb_zerocopy_clone(nskb, head_skb, GFP_ATOMIC))
-			goto err;
 
 		while (pos < offset + len) {
 			if (i >= nfrags) {
@@ -3682,6 +3682,8 @@ normal:
 			}
 
 			if (unlikely(skb_orphan_frags(frag_skb, GFP_ATOMIC)))
+				goto err;
+			if (skb_zerocopy_clone(nskb, frag_skb, GFP_ATOMIC))
 				goto err;
 
 			*nskb_frag = *frag;
@@ -4295,7 +4297,7 @@ void skb_complete_tx_timestamp(struct sk_buff *skb,
 	struct sock *sk = skb->sk;
 
 	if (!skb_may_tx_timestamp(sk, false))
-		return;
+		goto err;
 
 	/* Take a reference to prevent skb_orphan() from freeing the socket,
 	 * but only if the socket refcount is not zero.
@@ -4304,7 +4306,11 @@ void skb_complete_tx_timestamp(struct sk_buff *skb,
 		*skb_hwtstamps(skb) = *hwtstamps;
 		__skb_complete_tx_timestamp(skb, sk, SCM_TSTAMP_SND, false);
 		sock_put(sk);
+		return;
 	}
+
+err:
+	kfree_skb(skb);
 }
 EXPORT_SYMBOL_GPL(skb_complete_tx_timestamp);
 
@@ -4863,6 +4869,7 @@ void skb_scrub_packet(struct sk_buff *skb, bool xnet)
 	if (!xnet)
 		return;
 
+	ipvs_reset(skb);
 	skb_orphan(skb);
 	skb->mark = 0;
 }

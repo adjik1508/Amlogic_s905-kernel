@@ -662,7 +662,7 @@ static inline void update_cgrp_time_from_event(struct perf_event *event)
 	/*
 	 * Do not update time when cgroup is not active
 	 */
-	if (cgrp == event->cgrp)
+       if (cgroup_is_descendant(cgrp->css.cgroup, event->cgrp->css.cgroup))
 		__update_cgrp_time(event->cgrp);
 }
 
@@ -901,9 +901,11 @@ list_update_cgroup_event(struct perf_event *event,
 	cpuctx_entry = &cpuctx->cgrp_cpuctx_entry;
 	/* cpuctx->cgrp is NULL unless a cgroup event is active in this CPU .*/
 	if (add) {
+		struct perf_cgroup *cgrp = perf_cgroup_from_task(current, ctx);
+
 		list_add(cpuctx_entry, this_cpu_ptr(&cgrp_cpuctx_list));
-		if (perf_cgroup_from_task(current, ctx) == event->cgrp)
-			cpuctx->cgrp = event->cgrp;
+		if (cgroup_is_descendant(cgrp->css.cgroup, event->cgrp->css.cgroup))
+			cpuctx->cgrp = cgrp;
 	} else {
 		list_del(cpuctx_entry);
 		cpuctx->cgrp = NULL;
@@ -4231,7 +4233,7 @@ static void perf_remove_from_owner(struct perf_event *event)
 	 * indeed free this event, otherwise we need to serialize on
 	 * owner->perf_event_mutex.
 	 */
-	owner = lockless_dereference(event->owner);
+	owner = READ_ONCE(event->owner);
 	if (owner) {
 		/*
 		 * Since delayed_put_task_struct() also drops the last
@@ -4328,7 +4330,7 @@ again:
 		 * Cannot change, child events are not migrated, see the
 		 * comment with perf_event_ctx_lock_nested().
 		 */
-		ctx = lockless_dereference(child->ctx);
+		ctx = READ_ONCE(child->ctx);
 		/*
 		 * Since child_mutex nests inside ctx::mutex, we must jump
 		 * through hoops. We start by grabbing a reference on the ctx.
@@ -4431,6 +4433,8 @@ static int __perf_read_group_add(struct perf_event *leader,
 	if (ret)
 		return ret;
 
+	raw_spin_lock_irqsave(&ctx->lock, flags);
+
 	/*
 	 * Since we co-schedule groups, {enabled,running} times of siblings
 	 * will be identical to those of the leader, so we only publish one
@@ -4452,8 +4456,6 @@ static int __perf_read_group_add(struct perf_event *leader,
 	values[n++] += perf_event_count(leader);
 	if (read_format & PERF_FORMAT_ID)
 		values[n++] = primary_event_id(leader);
-
-	raw_spin_lock_irqsave(&ctx->lock, flags);
 
 	list_for_each_entry(sub, &leader->sibling_list, group_entry) {
 		values[n++] += perf_event_count(sub);
@@ -8171,6 +8173,7 @@ static int perf_event_set_bpf_prog(struct perf_event *event, u32 prog_fd)
 		}
 	}
 	event->tp_event->prog = prog;
+	event->tp_event->bpf_prog_owner = event;
 
 	return 0;
 }
@@ -8185,7 +8188,7 @@ static void perf_event_free_bpf_prog(struct perf_event *event)
 		return;
 
 	prog = event->tp_event->prog;
-	if (prog) {
+	if (prog && event->tp_event->bpf_prog_owner == event) {
 		event->tp_event->prog = NULL;
 		bpf_prog_put(prog);
 	}
@@ -8954,6 +8957,14 @@ static struct perf_cpu_context __percpu *find_pmu_context(int ctxn)
 
 static void free_pmu_context(struct pmu *pmu)
 {
+	/*
+	 * Static contexts such as perf_sw_context have a global lifetime
+	 * and may be shared between different PMUs. Avoid freeing them
+	 * when a single PMU is going away.
+	 */
+	if (pmu->task_ctx_nr > perf_invalid_context)
+		return;
+
 	mutex_lock(&pmus_lock);
 	free_percpu(pmu->pmu_cpu_context);
 	mutex_unlock(&pmus_lock);

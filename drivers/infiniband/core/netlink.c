@@ -57,12 +57,12 @@ EXPORT_SYMBOL(rdma_nl_chk_listeners);
 
 static bool is_nl_msg_valid(unsigned int type, unsigned int op)
 {
-	static const unsigned int max_num_ops[RDMA_NL_NUM_CLIENTS - 1] = {
-				  RDMA_NL_RDMA_CM_NUM_OPS,
-				  RDMA_NL_IWPM_NUM_OPS,
-				  0,
-				  RDMA_NL_LS_NUM_OPS,
-				  RDMA_NLDEV_NUM_OPS };
+	static const unsigned int max_num_ops[RDMA_NL_NUM_CLIENTS] = {
+		[RDMA_NL_RDMA_CM] = RDMA_NL_RDMA_CM_NUM_OPS,
+		[RDMA_NL_IWCM] = RDMA_NL_IWPM_NUM_OPS,
+		[RDMA_NL_LS] = RDMA_NL_LS_NUM_OPS,
+		[RDMA_NL_NLDEV] = RDMA_NLDEV_NUM_OPS,
+	};
 
 	/*
 	 * This BUILD_BUG_ON is intended to catch addition of new
@@ -70,10 +70,10 @@ static bool is_nl_msg_valid(unsigned int type, unsigned int op)
 	 */
 	BUILD_BUG_ON(RDMA_NL_NUM_CLIENTS != 6);
 
-	if (type > RDMA_NL_NUM_CLIENTS - 1)
+	if (type >= RDMA_NL_NUM_CLIENTS)
 		return false;
 
-	return (op < max_num_ops[type - 1]) ? true : false;
+	return (op < max_num_ops[type]) ? true : false;
 }
 
 static bool is_nl_valid(unsigned int type, unsigned int op)
@@ -175,13 +175,24 @@ static int rdma_nl_rcv_msg(struct sk_buff *skb, struct nlmsghdr *nlh,
 	    !netlink_capable(skb, CAP_NET_ADMIN))
 		return -EPERM;
 
+	/*
+	 * LS responses overload the 0x100 (NLM_F_ROOT) flag.  Don't
+	 * mistakenly call the .dump() function.
+	 */
+	if (index == RDMA_NL_LS) {
+		if (cb_table[op].doit)
+			return cb_table[op].doit(skb, nlh, extack);
+		return -EINVAL;
+	}
 	/* FIXME: Convert IWCM to properly handle doit callbacks */
 	if ((nlh->nlmsg_flags & NLM_F_DUMP) || index == RDMA_NL_RDMA_CM ||
 	    index == RDMA_NL_IWCM) {
 		struct netlink_dump_control c = {
 			.dump = cb_table[op].dump,
 		};
-		return netlink_dump_start(nls, skb, nlh, &c);
+		if (c.dump)
+			return netlink_dump_start(nls, skb, nlh, &c);
+		return -EINVAL;
 	}
 
 	if (cb_table[op].doit)

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * fs/proc_namespace.c - handling of /proc/<pid>/{mounts,mountinfo,mountstats}
  *
@@ -44,10 +45,10 @@ struct proc_fs_info {
 static int show_sb_opts(struct seq_file *m, struct super_block *sb)
 {
 	static const struct proc_fs_info fs_info[] = {
-		{ SB_SYNCHRONOUS, ",sync" },
-		{ SB_DIRSYNC, ",dirsync" },
-		{ SB_MANDLOCK, ",mand" },
-		{ SB_LAZYTIME, ",lazytime" },
+		{ MS_SYNCHRONOUS, ",sync" },
+		{ MS_DIRSYNC, ",dirsync" },
+		{ MS_MANDLOCK, ",mand" },
+		{ MS_LAZYTIME, ",lazytime" },
 		{ 0, NULL }
 	};
 	const struct proc_fs_info *fs_infop;

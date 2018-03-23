@@ -212,9 +212,9 @@ xfs_parseargs(
 	 */
 	if (sb_rdonly(sb))
 		mp->m_flags |= XFS_MOUNT_RDONLY;
-	if (sb->s_flags & SB_DIRSYNC)
+	if (sb->s_flags & MS_DIRSYNC)
 		mp->m_flags |= XFS_MOUNT_DIRSYNC;
-	if (sb->s_flags & SB_SYNCHRONOUS)
+	if (sb->s_flags & MS_SYNCHRONOUS)
 		mp->m_flags |= XFS_MOUNT_WSYNC;
 
 	/*
@@ -1312,7 +1312,7 @@ xfs_fs_remount(
 	}
 
 	/* ro -> rw */
-	if ((mp->m_flags & XFS_MOUNT_RDONLY) && !(*flags & SB_RDONLY)) {
+	if ((mp->m_flags & XFS_MOUNT_RDONLY) && !(*flags & MS_RDONLY)) {
 		if (mp->m_flags & XFS_MOUNT_NORECOVERY) {
 			xfs_warn(mp,
 		"ro->rw transition prohibited on norecovery mount");
@@ -1368,7 +1368,7 @@ xfs_fs_remount(
 	}
 
 	/* rw -> ro */
-	if (!(mp->m_flags & XFS_MOUNT_RDONLY) && (*flags & SB_RDONLY)) {
+	if (!(mp->m_flags & XFS_MOUNT_RDONLY) && (*flags & MS_RDONLY)) {
 		/* Free the per-AG metadata reservation pool. */
 		error = xfs_fs_unreserve_ag_blocks(mp);
 		if (error) {
@@ -1652,6 +1652,16 @@ xfs_fs_fill_super(
 		if (xfs_sb_version_hasreflink(&mp->m_sb))
 			xfs_alert(mp,
 		"DAX and reflink have not been tested together!");
+	}
+
+	if (mp->m_flags & XFS_MOUNT_DISCARD) {
+		struct request_queue *q = bdev_get_queue(sb->s_bdev);
+
+		if (!blk_queue_discard(q)) {
+			xfs_warn(mp, "mounting with \"discard\" option, but "
+					"the device does not support discard");
+			mp->m_flags &= ~XFS_MOUNT_DISCARD;
+		}
 	}
 
 	if (xfs_sb_version_hasrmapbt(&mp->m_sb)) {

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef _LINUX_DAX_H
 #define _LINUX_DAX_H
 
@@ -19,8 +20,6 @@ struct dax_operations {
 	/* copy_from_iter: required operation for fs-dax direct-i/o */
 	size_t (*copy_from_iter)(struct dax_device *, pgoff_t, void *, size_t,
 			struct iov_iter *);
-	/* flush: optional driver-specific cache management after writes */
-	void (*flush)(struct dax_device *, pgoff_t, void *, size_t);
 };
 
 extern struct attribute_group dax_attribute_group;
@@ -90,8 +89,7 @@ long dax_direct_access(struct dax_device *dax_dev, pgoff_t pgoff, long nr_pages,
 		void **kaddr, pfn_t *pfn);
 size_t dax_copy_from_iter(struct dax_device *dax_dev, pgoff_t pgoff, void *addr,
 		size_t bytes, struct iov_iter *i);
-void dax_flush(struct dax_device *dax_dev, pgoff_t pgoff, void *addr,
-		size_t size);
+void dax_flush(struct dax_device *dax_dev, void *addr, size_t size);
 void dax_write_cache(struct dax_device *dax_dev, bool wc);
 bool dax_write_cache_enabled(struct dax_device *dax_dev);
 

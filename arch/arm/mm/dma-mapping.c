@@ -513,13 +513,7 @@ void __init dma_contiguous_remap(void)
 		flush_tlb_kernel_range(__phys_to_virt(start),
 				       __phys_to_virt(end));
 
-		/*
-		 * For highmem system, all the memory in CMA region will be
-		 * considered as highmem even if it's physical address belong
-		 * to lowmem. Therefore, re-mapping isn't required.
-		 */
-		if (!IS_ENABLED(CONFIG_HIGHMEM))
-			iotable_init(&map, 1);
+		iotable_init(&map, 1);
 	}
 }
 

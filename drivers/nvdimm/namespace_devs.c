@@ -1417,6 +1417,15 @@ static int btt_claim_class(struct device *dev)
 		struct nvdimm_drvdata *ndd = to_ndd(nd_mapping);
 		struct nd_namespace_index *nsindex;
 
+		/*
+		 * If any of the DIMMs do not support labels the only
+		 * possible BTT format is v1.
+		 */
+		if (!ndd) {
+			loop_bitmask = 0;
+			break;
+		}
+
 		nsindex = to_namespace_index(ndd, ndd->ns_current);
 		if (nsindex == NULL)
 			loop_bitmask |= 1;
@@ -1611,7 +1620,7 @@ static umode_t namespace_visible(struct kobject *kobj,
 	if (a == &dev_attr_resource.attr) {
 		if (is_namespace_blk(dev))
 			return 0;
-		return a->mode;
+		return 0400;
 	}
 
 	if (is_namespace_pmem(dev) || is_namespace_blk(dev)) {

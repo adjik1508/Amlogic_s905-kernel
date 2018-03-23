@@ -50,7 +50,6 @@
 #include <linux/init_ohci1394_dma.h>
 #include <linux/kvm_para.h>
 #include <linux/dma-contiguous.h>
-#include <uapi/linux/mount.h>
 
 #include <linux/errno.h>
 #include <linux/kernel.h>
@@ -1179,8 +1178,11 @@ void __init setup_arch(char **cmdline_p)
 	 * with the current CR4 value.  This may not be necessary, but
 	 * auditing all the early-boot CR4 manipulation would be needed to
 	 * rule it out.
+	 *
+	 * Mask off features that don't work outside long mode (just
+	 * PCIDE for now).
 	 */
-	mmu_cr4_features = __read_cr4();
+	mmu_cr4_features = __read_cr4() & ~X86_CR4_PCIDE;
 
 	memblock_set_current_limit(get_max_mapped());
 

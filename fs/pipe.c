@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/fs/pipe.c
  *
@@ -1124,7 +1125,7 @@ int pipe_proc_fn(struct ctl_table *table, int write, void __user *buf,
 {
 	int ret;
 
-	ret = proc_dointvec_minmax(table, write, buf, lenp, ppos);
+	ret = proc_douintvec_minmax(table, write, buf, lenp, ppos);
 	if (ret < 0 || !write)
 		return ret;
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * bcache journalling code, for btree insertions
  *
@@ -506,7 +507,7 @@ static void journal_reclaim(struct cache_set *c)
 			continue;
 
 		ja->cur_idx = next;
-		k->ptr[n++] = PTR(0,
+		k->ptr[n++] = MAKE_PTR(0,
 				  bucket_to_sector(c, ca->sb.d[ja->cur_idx]),
 				  ca->sb.nr_this_dev);
 	}

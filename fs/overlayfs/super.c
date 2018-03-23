@@ -174,6 +174,9 @@ static struct inode *ovl_alloc_inode(struct super_block *sb)
 {
 	struct ovl_inode *oi = kmem_cache_alloc(ovl_inode_cachep, GFP_KERNEL);
 
+	if (!oi)
+		return NULL;
+
 	oi->cache = NULL;
 	oi->redirect = NULL;
 	oi->version = 0;
@@ -211,9 +214,10 @@ static void ovl_put_super(struct super_block *sb)
 
 	dput(ufs->indexdir);
 	dput(ufs->workdir);
-	ovl_inuse_unlock(ufs->workbasedir);
+	if (ufs->workdir_locked)
+		ovl_inuse_unlock(ufs->workbasedir);
 	dput(ufs->workbasedir);
-	if (ufs->upper_mnt)
+	if (ufs->upper_mnt && ufs->upperdir_locked)
 		ovl_inuse_unlock(ufs->upper_mnt->mnt_root);
 	mntput(ufs->upper_mnt);
 	for (i = 0; i < ufs->numlower; i++)
@@ -309,7 +313,7 @@ static int ovl_remount(struct super_block *sb, int *flags, char *data)
 {
 	struct ovl_fs *ufs = sb->s_fs_info;
 
-	if (!(*flags & SB_RDONLY) && ovl_force_readonly(ufs))
+	if (!(*flags & MS_RDONLY) && ovl_force_readonly(ufs))
 		return -EROFS;
 
 	return 0;
@@ -538,7 +542,7 @@ out_dput:
 out_err:
 	pr_warn("overlayfs: failed to create directory %s/%s (errno: %i); mounting read-only\n",
 		ufs->config.workdir, name, -err);
-	sb->s_flags |= SB_RDONLY;
+	sb->s_flags |= MS_RDONLY;
 	work = NULL;
 	goto out_unlock;
 }
@@ -881,9 +885,13 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 			goto out_put_upperpath;
 
 		err = -EBUSY;
-		if (!ovl_inuse_trylock(upperpath.dentry)) {
-			pr_err("overlayfs: upperdir is in-use by another mount\n");
+		if (ovl_inuse_trylock(upperpath.dentry)) {
+			ufs->upperdir_locked = true;
+		} else if (ufs->config.index) {
+			pr_err("overlayfs: upperdir is in-use by another mount, mount with '-o index=off' to override exclusive upperdir protection.\n");
 			goto out_put_upperpath;
+		} else {
+			pr_warn("overlayfs: upperdir is in-use by another mount, accessing files from both mounts will result in undefined behavior.\n");
 		}
 
 		err = ovl_mount_dir(ufs->config.workdir, &workpath);
@@ -901,9 +909,13 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 		}
 
 		err = -EBUSY;
-		if (!ovl_inuse_trylock(workpath.dentry)) {
-			pr_err("overlayfs: workdir is in-use by another mount\n");
+		if (ovl_inuse_trylock(workpath.dentry)) {
+			ufs->workdir_locked = true;
+		} else if (ufs->config.index) {
+			pr_err("overlayfs: workdir is in-use by another mount, mount with '-o index=off' to override exclusive workdir protection.\n");
 			goto out_put_workpath;
+		} else {
+			pr_warn("overlayfs: workdir is in-use by another mount, accessing files from both mounts will result in undefined behavior.\n");
 		}
 
 		ufs->workbasedir = workpath.dentry;
@@ -1044,7 +1056,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 
 	/* If the upper fs is nonexistent, we mark overlayfs r/o too */
 	if (!ufs->upper_mnt)
-		sb->s_flags |= SB_RDONLY;
+		sb->s_flags |= MS_RDONLY;
 	else if (ufs->upper_mnt->mnt_sb != ufs->same_sb)
 		ufs->same_sb = NULL;
 
@@ -1104,7 +1116,7 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_op = &ovl_super_operations;
 	sb->s_xattr = ovl_xattr_handlers;
 	sb->s_fs_info = ufs;
-	sb->s_flags |= SB_POSIXACL | SB_NOREMOTELOCK;
+	sb->s_flags |= MS_POSIXACL | MS_NOREMOTELOCK;
 
 	root_dentry = d_make_root(ovl_new_inode(sb, S_IFDIR, 0));
 	if (!root_dentry)
@@ -1156,11 +1168,13 @@ out_put_lowerpath:
 out_free_lowertmp:
 	kfree(lowertmp);
 out_unlock_workdentry:
-	ovl_inuse_unlock(workpath.dentry);
+	if (ufs->workdir_locked)
+		ovl_inuse_unlock(workpath.dentry);
 out_put_workpath:
 	path_put(&workpath);
 out_unlock_upperdentry:
-	ovl_inuse_unlock(upperpath.dentry);
+	if (ufs->upperdir_locked)
+		ovl_inuse_unlock(upperpath.dentry);
 out_put_upperpath:
 	path_put(&upperpath);
 out_free_config:

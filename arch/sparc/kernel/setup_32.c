@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  *  linux/arch/sparc/kernel/setup.c
  *
@@ -33,7 +34,6 @@
 #include <linux/kdebug.h>
 #include <linux/export.h>
 #include <linux/start_kernel.h>
-#include <uapi/linux/mount.h>
 
 #include <asm/io.h>
 #include <asm/processor.h>

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * This code is used on x86_64 to create page table identity mappings on
  * demand by building up a new set of page tables (or appending to the
@@ -21,6 +22,9 @@
  * the SME support to avoid any compile and link errors.
  */
 #undef CONFIG_AMD_MEM_ENCRYPT
+
+/* No PAGE_TABLE_ISOLATION support needed either: */
+#undef CONFIG_PAGE_TABLE_ISOLATION
 
 #include "misc.h"
 

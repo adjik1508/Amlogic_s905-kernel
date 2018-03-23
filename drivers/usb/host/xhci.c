@@ -1703,7 +1703,8 @@ static int xhci_add_endpoint(struct usb_hcd *hcd, struct usb_device *udev,
 	if (xhci->quirks & XHCI_MTK_HOST) {
 		ret = xhci_mtk_add_ep_quirk(hcd, udev, ep);
 		if (ret < 0) {
-			xhci_free_endpoint_ring(xhci, virt_dev, ep_index);
+			xhci_ring_free(xhci, virt_dev->eps[ep_index].new_ring);
+			virt_dev->eps[ep_index].new_ring = NULL;
 			return ret;
 		}
 	}
@@ -3582,10 +3583,9 @@ int xhci_disable_slot(struct xhci_hcd *xhci, struct xhci_command *command,
 	state = readl(&xhci->op_regs->status);
 	if (state == 0xffffffff || (xhci->xhc_state & XHCI_STATE_DYING) ||
 			(xhci->xhc_state & XHCI_STATE_HALTED)) {
-		xhci_free_virt_device(xhci, slot_id);
 		spin_unlock_irqrestore(&xhci->lock, flags);
 		kfree(command);
-		return ret;
+		return -ENODEV;
 	}
 
 	ret = xhci_queue_slot_control(xhci, command, TRB_DISABLE_SLOT,
@@ -4804,7 +4804,8 @@ int xhci_gen_setup(struct usb_hcd *hcd, xhci_get_quirks_t get_quirks)
 		 */
 		hcd->has_tt = 1;
 	} else {
-		if (xhci->sbrn == 0x31) {
+		/* Some 3.1 hosts return sbrn 0x30, can't rely on sbrn alone */
+		if (xhci->sbrn == 0x31 || xhci->usb3_rhub.min_rev >= 1) {
 			xhci_info(xhci, "Host supports USB 3.1 Enhanced SuperSpeed\n");
 			hcd->speed = HCD_USB31;
 			hcd->self.root_hub->speed = USB_SPEED_SUPER_PLUS;
