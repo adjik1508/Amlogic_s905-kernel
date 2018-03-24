@@ -3,7 +3,9 @@ dtb-$(CONFIG_ARM64) += meson64_odroidc2.dtb \
 			spot_i7.dtb acemax_kiii.dtb ki_plus.dtb \
 			iconbit.dtb mini_m8s.dtb mk808b_pro.dtb mxv.dtb \
 			mxq_pro_4k.dtb mxq_pro_plus.dtb mini_mx.dtb no_emmc.dtb \
-			minimx-g.dtb vega_s95_telos_v1.dtb
+			minimx-g.dtb vega_s95_telos_v1.dtb \
+			gxbb_p200.dtb gxbb_p200_2G.dtb gxbb_p201.dtb \
+			gxbb_odroid.dtb
 
 targets += dtbs
 
