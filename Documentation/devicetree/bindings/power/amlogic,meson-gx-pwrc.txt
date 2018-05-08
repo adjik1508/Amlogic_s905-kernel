@@ -48,9 +48,9 @@ ao_sysctrl: sys-ctrl@0 {
 			 <&reset RESET_RDMA>,
 			 <&reset RESET_VENCI>,
 			 <&reset RESET_VENCP>,
-		 	 <&reset RESET_VDAC>,
-		 	 <&reset RESET_VDI6>,
-		 	 <&reset RESET_VENCL>,
+			 <&reset RESET_VDAC>,
+			 <&reset RESET_VDI6>,
+			 <&reset RESET_VENCL>,
 			 <&reset RESET_VID_LOCK>;
 		clocks = <&clkc CLKID_VPU>,
 			 <&clkc CLKID_VAPB>;

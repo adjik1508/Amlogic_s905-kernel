@@ -83,9 +83,6 @@ static int meson_reset_reset(struct reset_controller_dev *rcdev,
 	unsigned int offset = id % BITS_PER_REG;
 	void __iomem *reg_addr = data->reg_base + (bank << 2);
 
-	if (bank >= REG_COUNT)
-		return -EINVAL;
-
 	writel(BIT(offset), reg_addr);
 
 	return 0;
@@ -141,6 +138,8 @@ static const struct of_device_id meson_reset_dt_ids[] = {
 	 { .compatible = "amlogic,meson8b-reset",
 	   .data = &meson_reset_meson8_ops, },
 	 { .compatible = "amlogic,meson-gxbb-reset",
+	   .data = &meson_reset_gx_ops, },
+	 { .compatible = "amlogic,meson-axg-reset",
 	   .data = &meson_reset_gx_ops, },
 	 { /* sentinel */ },
 };

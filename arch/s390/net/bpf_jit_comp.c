@@ -28,8 +28,6 @@
 #include <asm/set_memory.h>
 #include "bpf_jit.h"
 
-int bpf_jit_enable __read_mostly;
-
 struct bpf_jit {
 	u32 seen;		/* Flags to remember seen eBPF instructions */
 	u32 seen_reg[16];	/* Array to remember which registers are used */
@@ -319,12 +317,12 @@ static void save_regs(struct bpf_jit *jit, u32 rs, u32 re)
 /*
  * Restore registers from "rs" (register start) to "re" (register end) on stack
  */
-static void restore_regs(struct bpf_jit *jit, u32 rs, u32 re)
+static void restore_regs(struct bpf_jit *jit, u32 rs, u32 re, u32 stack_depth)
 {
 	u32 off = STK_OFF_R6 + (rs - 6) * 8;
 
 	if (jit->seen & SEEN_STACK)
-		off += STK_OFF;
+		off += STK_OFF + stack_depth;
 
 	if (rs == re)
 		/* lg %rs,off(%r15) */
@@ -368,7 +366,7 @@ static int get_end(struct bpf_jit *jit, int start)
  * Save and restore clobbered registers (6-15) on stack.
  * We save/restore registers in chunks with gap >= 2 registers.
  */
-static void save_restore_regs(struct bpf_jit *jit, int op)
+static void save_restore_regs(struct bpf_jit *jit, int op, u32 stack_depth)
 {
 
 	int re = 6, rs;
@@ -381,7 +379,7 @@ static void save_restore_regs(struct bpf_jit *jit, int op)
 		if (op == REGS_SAVE)
 			save_regs(jit, rs, re);
 		else
-			restore_regs(jit, rs, re);
+			restore_regs(jit, rs, re, stack_depth);
 		re++;
 	} while (re <= 15);
 }
@@ -413,7 +411,7 @@ static void emit_load_skb_data_hlen(struct bpf_jit *jit)
  * Save registers and create stack frame if necessary.
  * See stack frame layout desription in "bpf_jit.h"!
  */
-static void bpf_jit_prologue(struct bpf_jit *jit)
+static void bpf_jit_prologue(struct bpf_jit *jit, u32 stack_depth)
 {
 	if (jit->seen & SEEN_TAIL_CALL) {
 		/* xc STK_OFF_TCCNT(4,%r15),STK_OFF_TCCNT(%r15) */
@@ -426,7 +424,7 @@ static void bpf_jit_prologue(struct bpf_jit *jit)
 	/* Tail calls have to skip above initialization */
 	jit->tail_call_start = jit->prg;
 	/* Save registers */
-	save_restore_regs(jit, REGS_SAVE);
+	save_restore_regs(jit, REGS_SAVE, stack_depth);
 	/* Setup literal pool */
 	if (jit->seen & SEEN_LITERAL) {
 		/* basr %r13,0 */
@@ -441,7 +439,7 @@ static void bpf_jit_prologue(struct bpf_jit *jit)
 		/* la %bfp,STK_160_UNUSED(%r15) (BPF frame pointer) */
 		EMIT4_DISP(0x41000000, BPF_REG_FP, REG_15, STK_160_UNUSED);
 		/* aghi %r15,-STK_OFF */
-		EMIT4_IMM(0xa70b0000, REG_15, -STK_OFF);
+		EMIT4_IMM(0xa70b0000, REG_15, -(STK_OFF + stack_depth));
 		if (jit->seen & SEEN_FUNC)
 			/* stg %w1,152(%r15) (backchain) */
 			EMIT6_DISP_LH(0xe3000000, 0x0024, REG_W1, REG_0,
@@ -458,7 +456,7 @@ static void bpf_jit_prologue(struct bpf_jit *jit)
 /*
  * Function epilogue
  */
-static void bpf_jit_epilogue(struct bpf_jit *jit)
+static void bpf_jit_epilogue(struct bpf_jit *jit, u32 stack_depth)
 {
 	/* Return 0 */
 	if (jit->seen & SEEN_RET0) {
@@ -470,7 +468,7 @@ static void bpf_jit_epilogue(struct bpf_jit *jit)
 	/* Load exit code: lgr %r2,%b0 */
 	EMIT4(0xb9040000, REG_2, BPF_REG_0);
 	/* Restore registers */
-	save_restore_regs(jit, REGS_RESTORE);
+	save_restore_regs(jit, REGS_RESTORE, stack_depth);
 	/* br %r14 */
 	_EMIT2(0x07fe);
 }
@@ -612,11 +610,6 @@ static noinline int bpf_jit_insn(struct bpf_jit *jit, struct bpf_prog *fp, int i
 	{
 		int rc_reg = BPF_OP(insn->code) == BPF_DIV ? REG_W1 : REG_W0;
 
-		jit->seen |= SEEN_RET0;
-		/* ltr %src,%src (if src == 0 goto fail) */
-		EMIT2(0x1200, src_reg, src_reg);
-		/* jz <ret0> */
-		EMIT4_PCREL(0xa7840000, jit->ret0_ip - jit->prg);
 		/* lhi %w0,0 */
 		EMIT4_IMM(0xa7080000, REG_W0, 0);
 		/* lr %w1,%dst */
@@ -632,11 +625,6 @@ static noinline int bpf_jit_insn(struct bpf_jit *jit, struct bpf_prog *fp, int i
 	{
 		int rc_reg = BPF_OP(insn->code) == BPF_DIV ? REG_W1 : REG_W0;
 
-		jit->seen |= SEEN_RET0;
-		/* ltgr %src,%src (if src == 0 goto fail) */
-		EMIT4(0xb9020000, src_reg, src_reg);
-		/* jz <ret0> */
-		EMIT4_PCREL(0xa7840000, jit->ret0_ip - jit->prg);
 		/* lghi %w0,0 */
 		EMIT4_IMM(0xa7090000, REG_W0, 0);
 		/* lgr %w1,%dst */
@@ -1018,7 +1006,7 @@ static noinline int bpf_jit_insn(struct bpf_jit *jit, struct bpf_prog *fp, int i
 		 */
 
 		if (jit->seen & SEEN_STACK)
-			off = STK_OFF_TCCNT + STK_OFF;
+			off = STK_OFF_TCCNT + STK_OFF + fp->aux->stack_depth;
 		else
 			off = STK_OFF_TCCNT;
 		/* lhi %w0,1 */
@@ -1046,7 +1034,7 @@ static noinline int bpf_jit_insn(struct bpf_jit *jit, struct bpf_prog *fp, int i
 		/*
 		 * Restore registers before calling function
 		 */
-		save_restore_regs(jit, REGS_RESTORE);
+		save_restore_regs(jit, REGS_RESTORE, fp->aux->stack_depth);
 
 		/*
 		 * goto *(prog->bpf_func + tail_call_start);
@@ -1272,7 +1260,7 @@ static int bpf_jit_prog(struct bpf_jit *jit, struct bpf_prog *fp)
 	jit->lit = jit->lit_start;
 	jit->prg = 0;
 
-	bpf_jit_prologue(jit);
+	bpf_jit_prologue(jit, fp->aux->stack_depth);
 	for (i = 0; i < fp->len; i += insn_count) {
 		insn_count = bpf_jit_insn(jit, fp, i);
 		if (insn_count < 0)
@@ -1280,7 +1268,7 @@ static int bpf_jit_prog(struct bpf_jit *jit, struct bpf_prog *fp)
 		/* Next instruction address */
 		jit->addrs[i + insn_count] = jit->prg;
 	}
-	bpf_jit_epilogue(jit);
+	bpf_jit_epilogue(jit, fp->aux->stack_depth);
 
 	jit->lit_start = jit->prg;
 	jit->size = jit->lit;
@@ -1299,7 +1287,7 @@ struct bpf_prog *bpf_int_jit_compile(struct bpf_prog *fp)
 	struct bpf_jit jit;
 	int pass;
 
-	if (!bpf_jit_enable)
+	if (!fp->jit_requested)
 		return orig_fp;
 
 	tmp = bpf_jit_blind_constants(fp);

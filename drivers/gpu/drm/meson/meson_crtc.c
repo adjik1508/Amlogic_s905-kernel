@@ -36,6 +36,7 @@
 #include "meson_venc.h"
 #include "meson_vpp.h"
 #include "meson_viu.h"
+#include "meson_canvas.h"
 #include "meson_registers.h"
 
 /* CRTC definition */
@@ -101,6 +102,8 @@ static void meson_crtc_atomic_enable(struct drm_crtc *crtc,
 			    priv->io_base + _REG(VPP_MISC));
 
 	priv->viu.osd1_enabled = true;
+
+	drm_crtc_vblank_on(crtc);
 }
 
 static void meson_crtc_atomic_disable(struct drm_crtc *crtc,
@@ -108,6 +111,8 @@ static void meson_crtc_atomic_disable(struct drm_crtc *crtc,
 {
 	struct meson_crtc *meson_crtc = to_meson_crtc(crtc);
 	struct meson_drm *priv = meson_crtc->priv;
+
+	drm_crtc_vblank_off(crtc);
 
 	priv->viu.osd1_enabled = false;
 	priv->viu.osd1_commit = false;
@@ -191,6 +196,11 @@ void meson_crtc_irq(struct meson_drm *priv)
 			meson_vpp_setup_interlace_vscaler_osd1(priv, &dest);
 		} else
 			meson_vpp_disable_interlace_vscaler_osd1(priv);
+
+		meson_canvas_setup(priv, MESON_CANVAS_ID_OSD1,
+			   priv->viu.osd1_addr, priv->viu.osd1_stride,
+			   priv->viu.osd1_height, MESON_CANVAS_WRAP_NONE,
+			   MESON_CANVAS_BLKMODE_LINEAR);
 
 		/* Enable OSD1 */
 		writel_bits_relaxed(VPP_OSD1_POSTBLEND, VPP_OSD1_POSTBLEND,

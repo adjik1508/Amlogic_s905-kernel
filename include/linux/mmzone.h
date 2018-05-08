@@ -713,12 +713,6 @@ typedef struct pglist_data {
 	/* Fields commonly accessed by the page reclaim scanner */
 	struct lruvec		lruvec;
 
-	/*
-	 * The target ratio of ACTIVE_ANON to INACTIVE_ANON pages on
-	 * this node's LRU.  Maintained by the pageout code.
-	 */
-	unsigned int inactive_ratio;
-
 	unsigned long		flags;
 
 	ZONE_PADDING(_pad2_)
@@ -1172,8 +1166,16 @@ extern unsigned long usemap_size(void);
 
 /*
  * We use the lower bits of the mem_map pointer to store
- * a little bit of information.  There should be at least
- * 3 bits here due to 32-bit alignment.
+ * a little bit of information.  The pointer is calculated
+ * as mem_map - section_nr_to_pfn(pnum).  The result is
+ * aligned to the minimum alignment of the two values:
+ *   1. All mem_map arrays are page-aligned.
+ *   2. section_nr_to_pfn() always clears PFN_SECTION_SHIFT
+ *      lowest bits.  PFN_SECTION_SHIFT is arch-specific
+ *      (equal SECTION_SIZE_BITS - PAGE_SHIFT), and the
+ *      worst combination is powerpc with 256k pages,
+ *      which results in PFN_SECTION_SHIFT equal 6.
+ * To sum it up, at least 6 bits are available.
  */
 #define	SECTION_MARKED_PRESENT	(1UL<<0)
 #define SECTION_HAS_MEM_MAP	(1UL<<1)

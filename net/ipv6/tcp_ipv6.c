@@ -69,6 +69,8 @@
 #include <crypto/hash.h>
 #include <linux/scatterlist.h>
 
+#include <trace/events/tcp.h>
+
 static void	tcp_v6_send_reset(const struct sock *sk, struct sk_buff *skb);
 static void	tcp_v6_reqsk_send_ack(const struct sock *sk, struct sk_buff *skb,
 				      struct request_sock *req);
@@ -174,8 +176,7 @@ static int tcp_v6_connect(struct sock *sk, struct sockaddr *uaddr,
 			/* If interface is set while binding, indices
 			 * must coincide.
 			 */
-			if (sk->sk_bound_dev_if &&
-			    sk->sk_bound_dev_if != usin->sin6_scope_id)
+			if (!sk_dev_equal_l3scope(sk, usin->sin6_scope_id))
 				return -EINVAL;
 
 			sk->sk_bound_dev_if = usin->sin6_scope_id;
@@ -890,7 +891,7 @@ static void tcp_v6_send_reset(const struct sock *sk, struct sk_buff *skb)
 	int genhash;
 	struct sock *sk1 = NULL;
 #endif
-	int oif;
+	int oif = 0;
 
 	if (th->rst)
 		return;
@@ -939,7 +940,12 @@ static void tcp_v6_send_reset(const struct sock *sk, struct sk_buff *skb)
 		ack_seq = ntohl(th->seq) + th->syn + th->fin + skb->len -
 			  (th->doff << 2);
 
-	oif = sk ? sk->sk_bound_dev_if : 0;
+	if (sk) {
+		oif = sk->sk_bound_dev_if;
+		if (sk_fullsock(sk))
+			trace_tcp_send_reset(sk, skb);
+	}
+
 	tcp_v6_send_response(sk, skb, seq, ack_seq, 0, 0, 0, oif, key, 1, 0, 0);
 
 #ifdef CONFIG_TCP_MD5SIG
@@ -1579,8 +1585,9 @@ do_time_wait:
 			refcounted = false;
 			goto process;
 		}
-		/* Fall through to ACK */
 	}
+		/* to ACK */
+		/* fall through */
 	case TCP_TW_ACK:
 		tcp_v6_timewait_ack(sk, skb);
 		break;
@@ -1788,7 +1795,7 @@ static void get_tcp6_sock(struct seq_file *seq, struct sock *sp, int i)
 		timer_expires = jiffies;
 	}
 
-	state = sk_state_load(sp);
+	state = inet_sk_state_load(sp);
 	if (state == TCP_LISTEN)
 		rx_queue = sp->sk_ack_backlog;
 	else
@@ -1877,7 +1884,6 @@ out:
 }
 
 static const struct file_operations tcp6_afinfo_seq_fops = {
-	.owner   = THIS_MODULE,
 	.open    = tcp_seq_open,
 	.read    = seq_read,
 	.llseek  = seq_lseek,
@@ -1934,8 +1940,8 @@ struct proto tcpv6_prot = {
 	.memory_pressure	= &tcp_memory_pressure,
 	.orphan_count		= &tcp_orphan_count,
 	.sysctl_mem		= sysctl_tcp_mem,
-	.sysctl_wmem		= sysctl_tcp_wmem,
-	.sysctl_rmem		= sysctl_tcp_rmem,
+	.sysctl_wmem_offset	= offsetof(struct net, ipv4.sysctl_tcp_wmem),
+	.sysctl_rmem_offset	= offsetof(struct net, ipv4.sysctl_tcp_rmem),
 	.max_header		= MAX_TCP_HEADER,
 	.obj_size		= sizeof(struct tcp6_sock),
 	.slab_flags		= SLAB_TYPESAFE_BY_RCU,

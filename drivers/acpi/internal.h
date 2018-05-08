@@ -159,7 +159,7 @@ static inline void acpi_early_processor_osc(void) {}
    -------------------------------------------------------------------------- */
 struct acpi_ec {
 	acpi_handle handle;
-	unsigned long gpe;
+	u32 gpe;
 	unsigned long command_addr;
 	unsigned long data_addr;
 	bool global_lock;
@@ -247,6 +247,12 @@ static inline void acpi_extract_apple_properties(struct acpi_device *adev) {}
 void acpi_watchdog_init(void);
 #else
 static inline void acpi_watchdog_init(void) {}
+#endif
+
+#ifdef CONFIG_ACPI_LPIT
+void acpi_init_lpit(void);
+#else
+static inline void acpi_init_lpit(void) { }
 #endif
 
 #endif /* _ACPI_INTERNAL_H_ */

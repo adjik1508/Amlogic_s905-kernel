@@ -61,10 +61,10 @@ static int meson_plane_atomic_check(struct drm_plane *plane,
 	clip.x2 = crtc_state->mode.hdisplay;
 	clip.y2 = crtc_state->mode.vdisplay;
 
-	return drm_plane_helper_check_state(state, &clip,
-					    DRM_PLANE_HELPER_NO_SCALING,
-					    DRM_PLANE_HELPER_NO_SCALING,
-					    true, true);
+	return drm_atomic_helper_check_plane_state(state, crtc_state, &clip,
+						   DRM_PLANE_HELPER_NO_SCALING,
+						   DRM_PLANE_HELPER_NO_SCALING,
+						   true, true);
 }
 
 /* Takes a fixed 16.16 number and converts it to integer. */
@@ -118,9 +118,15 @@ static void meson_plane_atomic_update(struct drm_plane *plane,
 
 	switch (fb->format->format) {
 	case DRM_FORMAT_XRGB8888:
-	case DRM_FORMAT_ARGB8888:
 		/* For XRGB, replace the pixel's alpha by 0xFF */
 		writel_bits_relaxed(OSD_REPLACE_EN, OSD_REPLACE_EN,
+				    priv->io_base + _REG(VIU_OSD1_CTRL_STAT2));
+		priv->viu.osd1_blk0_cfg[0] |= OSD_BLK_MODE_32 |
+					      OSD_COLOR_MATRIX_32_ARGB;
+		break;
+	case DRM_FORMAT_ARGB8888:
+		/* For ARGB, use the pixel's alpha */
+		writel_bits_relaxed(OSD_REPLACE_EN, 0,
 				    priv->io_base + _REG(VIU_OSD1_CTRL_STAT2));
 		priv->viu.osd1_blk0_cfg[0] |= OSD_BLK_MODE_32 |
 					      OSD_COLOR_MATRIX_32_ARGB;
@@ -158,10 +164,9 @@ static void meson_plane_atomic_update(struct drm_plane *plane,
 	/* Update Canvas with buffer address */
 	gem = drm_fb_cma_get_gem_obj(fb, 0);
 
-	meson_canvas_setup(priv, MESON_CANVAS_ID_OSD1,
-			   gem->paddr, fb->pitches[0],
-			   fb->height, MESON_CANVAS_WRAP_NONE,
-			   MESON_CANVAS_BLKMODE_LINEAR);
+	priv->viu.osd1_addr = gem->paddr;
+	priv->viu.osd1_stride = fb->pitches[0];
+	priv->viu.osd1_height = fb->height;
 
 	spin_unlock_irqrestore(&priv->drm->event_lock, flags);
 }

@@ -67,7 +67,6 @@ static void transport_complete_task_attr(struct se_cmd *cmd);
 static int translate_sense_reason(struct se_cmd *cmd, sense_reason_t reason);
 static void transport_handle_queue_full(struct se_cmd *cmd,
 		struct se_device *dev, int err, bool write_pending);
-static int transport_put_cmd(struct se_cmd *cmd);
 static void target_complete_ok_work(struct work_struct *work);
 
 int init_se_kmem_caches(void)
@@ -668,7 +667,7 @@ int transport_cmd_finish_abort(struct se_cmd *cmd, int remove)
 	if (transport_cmd_check_stop_to_fabric(cmd))
 		return 1;
 	if (remove && ack_kref)
-		ret = transport_put_cmd(cmd);
+		ret = target_put_sess_cmd(cmd);
 
 	return ret;
 }
@@ -1773,8 +1772,11 @@ void transport_generic_request_failure(struct se_cmd *cmd,
 	case TCM_UNSUPPORTED_SEGMENT_DESC_TYPE_CODE:
 		break;
 	case TCM_OUT_OF_RESOURCES:
-		sense_reason = TCM_LOGICAL_UNIT_COMMUNICATION_FAILURE;
-		break;
+		cmd->scsi_status = SAM_STAT_TASK_SET_FULL;
+		goto queue_status;
+	case TCM_LUN_BUSY:
+		cmd->scsi_status = SAM_STAT_BUSY;
+		goto queue_status;
 	case TCM_RESERVATION_CONFLICT:
 		/*
 		 * No SENSE Data payload for this case, set SCSI Status
@@ -1796,11 +1798,8 @@ void transport_generic_request_failure(struct se_cmd *cmd,
 					       cmd->orig_fe_lun, 0x2C,
 					ASCQ_2CH_PREVIOUS_RESERVATION_CONFLICT_STATUS);
 		}
-		trace_target_cmd_complete(cmd);
-		ret = cmd->se_tfo->queue_status(cmd);
-		if (ret)
-			goto queue_full;
-		goto check_stop;
+
+		goto queue_status;
 	default:
 		pr_err("Unknown transport error for CDB 0x%02x: %d\n",
 			cmd->t_task_cdb[0], sense_reason);
@@ -1817,6 +1816,11 @@ check_stop:
 	transport_cmd_check_stop_to_fabric(cmd);
 	return;
 
+queue_status:
+	trace_target_cmd_complete(cmd);
+	ret = cmd->se_tfo->queue_status(cmd);
+	if (!ret)
+		goto check_stop;
 queue_full:
 	transport_handle_queue_full(cmd, cmd->se_dev, ret, false);
 }
@@ -2096,7 +2100,7 @@ static void transport_complete_qf(struct se_cmd *cmd)
 			ret = cmd->se_tfo->queue_data_in(cmd);
 			break;
 		}
-		/* Fall through for DMA_TO_DEVICE */
+		/* fall through */
 	case DMA_NONE:
 queue_status:
 		trace_target_cmd_complete(cmd);
@@ -2274,7 +2278,7 @@ queue_rsp:
 				goto queue_full;
 			break;
 		}
-		/* Fall through for DMA_TO_DEVICE */
+		/* fall through */
 	case DMA_NONE:
 queue_status:
 		trace_target_cmd_complete(cmd);
@@ -2299,13 +2303,7 @@ queue_full:
 
 void target_free_sgl(struct scatterlist *sgl, int nents)
 {
-	struct scatterlist *sg;
-	int count;
-
-	for_each_sg(sgl, sg, nents, count)
-		__free_page(sg_page(sg));
-
-	kfree(sgl);
+	sgl_free_n_order(sgl, nents, 0);
 }
 EXPORT_SYMBOL(target_free_sgl);
 
@@ -2356,22 +2354,6 @@ static inline void transport_free_pages(struct se_cmd *cmd)
 	target_free_sgl(cmd->t_bidi_data_sg, cmd->t_bidi_data_nents);
 	cmd->t_bidi_data_sg = NULL;
 	cmd->t_bidi_data_nents = 0;
-}
-
-/**
- * transport_put_cmd - release a reference to a command
- * @cmd:       command to release
- *
- * This routine releases our reference to the command and frees it if possible.
- */
-static int transport_put_cmd(struct se_cmd *cmd)
-{
-	BUG_ON(!cmd->se_tfo);
-	/*
-	 * If this cmd has been setup with target_get_sess_cmd(), drop
-	 * the kref and call ->release_cmd() in kref callback.
-	 */
-	return target_put_sess_cmd(cmd);
 }
 
 void *transport_kmap_data_sg(struct se_cmd *cmd)
@@ -2429,42 +2411,10 @@ int
 target_alloc_sgl(struct scatterlist **sgl, unsigned int *nents, u32 length,
 		 bool zero_page, bool chainable)
 {
-	struct scatterlist *sg;
-	struct page *page;
-	gfp_t zero_flag = (zero_page) ? __GFP_ZERO : 0;
-	unsigned int nalloc, nent;
-	int i = 0;
+	gfp_t gfp = GFP_KERNEL | (zero_page ? __GFP_ZERO : 0);
 
-	nalloc = nent = DIV_ROUND_UP(length, PAGE_SIZE);
-	if (chainable)
-		nalloc++;
-	sg = kmalloc_array(nalloc, sizeof(struct scatterlist), GFP_KERNEL);
-	if (!sg)
-		return -ENOMEM;
-
-	sg_init_table(sg, nalloc);
-
-	while (length) {
-		u32 page_len = min_t(u32, length, PAGE_SIZE);
-		page = alloc_page(GFP_KERNEL | zero_flag);
-		if (!page)
-			goto out;
-
-		sg_set_page(&sg[i], page, page_len, 0);
-		length -= page_len;
-		i++;
-	}
-	*sgl = sg;
-	*nents = nent;
-	return 0;
-
-out:
-	while (i > 0) {
-		i--;
-		__free_page(sg_page(&sg[i]));
-	}
-	kfree(sg);
-	return -ENOMEM;
+	*sgl = sgl_alloc_order(length, 0, chainable, gfp, nents);
+	return *sgl ? 0 : -ENOMEM;
 }
 EXPORT_SYMBOL(target_alloc_sgl);
 
@@ -2622,7 +2572,7 @@ int transport_generic_free_cmd(struct se_cmd *cmd, int wait_for_tasks)
 			target_wait_free_cmd(cmd, &aborted, &tas);
 
 		if (!aborted || tas)
-			ret = transport_put_cmd(cmd);
+			ret = target_put_sess_cmd(cmd);
 	} else {
 		if (wait_for_tasks)
 			target_wait_free_cmd(cmd, &aborted, &tas);
@@ -2638,7 +2588,7 @@ int transport_generic_free_cmd(struct se_cmd *cmd, int wait_for_tasks)
 			transport_lun_remove_cmd(cmd);
 
 		if (!aborted || tas)
-			ret = transport_put_cmd(cmd);
+			ret = target_put_sess_cmd(cmd);
 	}
 	/*
 	 * If the task has been internally aborted due to TMR ABORT_TASK
@@ -3164,6 +3114,21 @@ static const struct sense_info sense_info_table[] = {
 		 */
 		.key = NOT_READY,
 		.asc = 0x08, /* LOGICAL UNIT COMMUNICATION FAILURE */
+	},
+	[TCM_INSUFFICIENT_REGISTRATION_RESOURCES] = {
+		/*
+		 * From spc4r22 section5.7.7,5.7.8
+		 * If a PERSISTENT RESERVE OUT command with a REGISTER service action
+		 * or a REGISTER AND IGNORE EXISTING KEY service action or
+		 * REGISTER AND MOVE service actionis attempted,
+		 * but there are insufficient device server resources to complete the
+		 * operation, then the command shall be terminated with CHECK CONDITION
+		 * status, with the sense key set to ILLEGAL REQUEST,and the additonal
+		 * sense code set to INSUFFICIENT REGISTRATION RESOURCES.
+		 */
+		.key = ILLEGAL_REQUEST,
+		.asc = 0x55,
+		.ascq = 0x04, /* INSUFFICIENT REGISTRATION RESOURCES */
 	},
 };
 

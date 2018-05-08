@@ -517,7 +517,8 @@ void xprt_write_space(struct rpc_xprt *xprt)
 	if (xprt->snd_task) {
 		dprintk("RPC:       write space: waking waiting task on "
 				"xprt %p\n", xprt);
-		rpc_wake_up_queued_task(&xprt->pending, xprt->snd_task);
+		rpc_wake_up_queued_task_on_wq(xprtiod_workqueue,
+				&xprt->pending, xprt->snd_task);
 	}
 	spin_unlock_bh(&xprt->transport_lock);
 }
@@ -696,9 +697,9 @@ xprt_schedule_autodisconnect(struct rpc_xprt *xprt)
 }
 
 static void
-xprt_init_autodisconnect(unsigned long data)
+xprt_init_autodisconnect(struct timer_list *t)
 {
-	struct rpc_xprt *xprt = (struct rpc_xprt *)data;
+	struct rpc_xprt *xprt = from_timer(xprt, t, timer);
 
 	spin_lock(&xprt->transport_lock);
 	if (!list_empty(&xprt->recv))
@@ -940,8 +941,8 @@ static void xprt_timer(struct rpc_task *task)
 
 	if (task->tk_status != -ETIMEDOUT)
 		return;
-	dprintk("RPC: %5u xprt_timer\n", task->tk_pid);
 
+	trace_xprt_timer(xprt, req->rq_xid, task->tk_status);
 	if (!req->rq_reply_bytes_recvd) {
 		if (xprt->ops->timer)
 			xprt->ops->timer(xprt, task);
@@ -1149,6 +1150,7 @@ void xprt_alloc_slot(struct rpc_xprt *xprt, struct rpc_task *task)
 	case -EAGAIN:
 		xprt_add_backlog(xprt, task);
 		dprintk("RPC:       waiting for request slot\n");
+		/* fall through */
 	default:
 		task->tk_status = -EAGAIN;
 	}
@@ -1432,10 +1434,9 @@ found:
 		xprt->idle_timeout = 0;
 	INIT_WORK(&xprt->task_cleanup, xprt_autoclose);
 	if (xprt_has_timer(xprt))
-		setup_timer(&xprt->timer, xprt_init_autodisconnect,
-			    (unsigned long)xprt);
+		timer_setup(&xprt->timer, xprt_init_autodisconnect, 0);
 	else
-		init_timer(&xprt->timer);
+		timer_setup(&xprt->timer, NULL, 0);
 
 	if (strlen(args->servername) > RPC_MAXNETNAMELEN) {
 		xprt_destroy(xprt);

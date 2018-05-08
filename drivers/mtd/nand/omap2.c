@@ -1530,7 +1530,9 @@ static int omap_write_page_bch(struct mtd_info *mtd, struct nand_chip *chip,
 			       const uint8_t *buf, int oob_required, int page)
 {
 	int ret;
-	uint8_t *ecc_calc = chip->buffers->ecccalc;
+	uint8_t *ecc_calc = chip->ecc.calc_buf;
+
+	nand_prog_page_begin_op(chip, page, 0, NULL, 0);
 
 	/* Enable GPMC ecc engine */
 	chip->ecc.hwctl(mtd, NAND_ECC_WRITE);
@@ -1548,7 +1550,8 @@ static int omap_write_page_bch(struct mtd_info *mtd, struct nand_chip *chip,
 
 	/* Write ecc vector to OOB area */
 	chip->write_buf(mtd, chip->oob_poi, mtd->oobsize);
-	return 0;
+
+	return nand_prog_page_end_op(chip);
 }
 
 /**
@@ -1568,7 +1571,7 @@ static int omap_write_subpage_bch(struct mtd_info *mtd,
 				  u32 data_len, const u8 *buf,
 				  int oob_required, int page)
 {
-	u8 *ecc_calc = chip->buffers->ecccalc;
+	u8 *ecc_calc = chip->ecc.calc_buf;
 	int ecc_size      = chip->ecc.size;
 	int ecc_bytes     = chip->ecc.bytes;
 	int ecc_steps     = chip->ecc.steps;
@@ -1582,6 +1585,7 @@ static int omap_write_subpage_bch(struct mtd_info *mtd,
 	 * ECC is calculated for all subpages but we choose
 	 * only what we want.
 	 */
+	nand_prog_page_begin_op(chip, page, 0, NULL, 0);
 
 	/* Enable GPMC ECC engine */
 	chip->ecc.hwctl(mtd, NAND_ECC_WRITE);
@@ -1605,7 +1609,7 @@ static int omap_write_subpage_bch(struct mtd_info *mtd,
 
 	/* copy calculated ECC for whole page to chip->buffer->oob */
 	/* this include masked-value(0xFF) for unwritten subpages */
-	ecc_calc = chip->buffers->ecccalc;
+	ecc_calc = chip->ecc.calc_buf;
 	ret = mtd_ooblayout_set_eccbytes(mtd, ecc_calc, chip->oob_poi, 0,
 					 chip->ecc.total);
 	if (ret)
@@ -1614,7 +1618,7 @@ static int omap_write_subpage_bch(struct mtd_info *mtd,
 	/* write OOB buffer to NAND device */
 	chip->write_buf(mtd, chip->oob_poi, mtd->oobsize);
 
-	return 0;
+	return nand_prog_page_end_op(chip);
 }
 
 /**
@@ -1635,10 +1639,12 @@ static int omap_write_subpage_bch(struct mtd_info *mtd,
 static int omap_read_page_bch(struct mtd_info *mtd, struct nand_chip *chip,
 				uint8_t *buf, int oob_required, int page)
 {
-	uint8_t *ecc_calc = chip->buffers->ecccalc;
-	uint8_t *ecc_code = chip->buffers->ecccode;
+	uint8_t *ecc_calc = chip->ecc.calc_buf;
+	uint8_t *ecc_code = chip->ecc.code_buf;
 	int stat, ret;
 	unsigned int max_bitflips = 0;
+
+	nand_read_page_op(chip, page, 0, NULL, 0);
 
 	/* Enable GPMC ecc engine */
 	chip->ecc.hwctl(mtd, NAND_ECC_READ);
@@ -1647,10 +1653,10 @@ static int omap_read_page_bch(struct mtd_info *mtd, struct nand_chip *chip,
 	chip->read_buf(mtd, buf, mtd->writesize);
 
 	/* Read oob bytes */
-	chip->cmdfunc(mtd, NAND_CMD_RNDOUT,
-		      mtd->writesize + BADBLOCK_MARKER_LENGTH, -1);
-	chip->read_buf(mtd, chip->oob_poi + BADBLOCK_MARKER_LENGTH,
-		       chip->ecc.total);
+	nand_change_read_column_op(chip,
+				   mtd->writesize + BADBLOCK_MARKER_LENGTH,
+				   chip->oob_poi + BADBLOCK_MARKER_LENGTH,
+				   chip->ecc.total, false);
 
 	/* Calculate ecc bytes */
 	omap_calculate_ecc_bch_multi(mtd, buf, ecc_calc);
@@ -1697,8 +1703,7 @@ static bool is_elm_present(struct omap_nand_info *info,
 	return true;
 }
 
-static bool omap2_nand_ecc_check(struct omap_nand_info *info,
-				 struct omap_nand_platform_data	*pdata)
+static bool omap2_nand_ecc_check(struct omap_nand_info *info)
 {
 	bool ecc_needs_bch, ecc_needs_omap_bch, ecc_needs_elm;
 
@@ -1913,7 +1918,6 @@ static const struct mtd_ooblayout_ops omap_sw_ooblayout_ops = {
 static int omap_nand_probe(struct platform_device *pdev)
 {
 	struct omap_nand_info		*info;
-	struct omap_nand_platform_data	*pdata = NULL;
 	struct mtd_info			*mtd;
 	struct nand_chip		*nand_chip;
 	int				err;
@@ -1930,29 +1934,10 @@ static int omap_nand_probe(struct platform_device *pdev)
 
 	info->pdev = pdev;
 
-	if (dev->of_node) {
-		if (omap_get_dt_info(dev, info))
-			return -EINVAL;
-	} else {
-		pdata = dev_get_platdata(&pdev->dev);
-		if (!pdata) {
-			dev_err(&pdev->dev, "platform data missing\n");
-			return -EINVAL;
-		}
+	err = omap_get_dt_info(dev, info);
+	if (err)
+		return err;
 
-		info->gpmc_cs = pdata->cs;
-		info->reg = pdata->reg;
-		info->ecc_opt = pdata->ecc_opt;
-		if (pdata->dev_ready)
-			dev_info(&pdev->dev, "pdata->dev_ready is deprecated\n");
-
-		info->xfer_type = pdata->xfer_type;
-		info->devsize = pdata->devsize;
-		info->elm_of_node = pdata->elm_of_node;
-		info->flash_bbt = pdata->flash_bbt;
-	}
-
-	platform_set_drvdata(pdev, info);
 	info->ops = gpmc_omap_get_nand_ops(&info->reg, info->gpmc_cs);
 	if (!info->ops) {
 		dev_err(&pdev->dev, "Failed to get GPMC->NAND interface\n");
@@ -2111,7 +2096,7 @@ static int omap_nand_probe(struct platform_device *pdev)
 		goto return_error;
 	}
 
-	if (!omap2_nand_ecc_check(info, pdata)) {
+	if (!omap2_nand_ecc_check(info)) {
 		err = -EINVAL;
 		goto return_error;
 	}
@@ -2276,10 +2261,9 @@ scan_tail:
 	if (err)
 		goto return_error;
 
-	if (dev->of_node)
-		mtd_device_register(mtd, NULL, 0);
-	else
-		mtd_device_register(mtd, pdata->parts, pdata->nr_parts);
+	err = mtd_device_register(mtd, NULL, 0);
+	if (err)
+		goto return_error;
 
 	platform_set_drvdata(pdev, mtd);
 

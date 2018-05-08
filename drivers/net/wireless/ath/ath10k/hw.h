@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2005-2011 Atheros Communications Inc.
- * Copyright (c) 2011-2013 Qualcomm Atheros, Inc.
+ * Copyright (c) 2011-2017 Qualcomm Atheros, Inc.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -20,16 +20,26 @@
 
 #include "targaddrs.h"
 
+enum ath10k_bus {
+	ATH10K_BUS_PCI,
+	ATH10K_BUS_AHB,
+	ATH10K_BUS_SDIO,
+	ATH10K_BUS_USB,
+	ATH10K_BUS_SNOC,
+};
+
 #define ATH10K_FW_DIR			"ath10k"
 
-#define QCA988X_2_0_DEVICE_ID   (0x003c)
-#define QCA6164_2_1_DEVICE_ID   (0x0041)
-#define QCA6174_2_1_DEVICE_ID   (0x003e)
-#define QCA99X0_2_0_DEVICE_ID   (0x0040)
-#define QCA9888_2_0_DEVICE_ID	(0x0056)
-#define QCA9984_1_0_DEVICE_ID	(0x0046)
-#define QCA9377_1_0_DEVICE_ID   (0x0042)
-#define QCA9887_1_0_DEVICE_ID   (0x0050)
+#define QCA988X_2_0_DEVICE_ID_UBNT	(0x11ac)
+#define QCA988X_2_0_DEVICE_ID		(0x003c)
+#define QCA6164_2_1_DEVICE_ID		(0x0041)
+#define QCA6174_2_1_DEVICE_ID		(0x003e)
+#define QCA99X0_2_0_DEVICE_ID		(0x0040)
+#define QCA9888_2_0_DEVICE_ID		(0x0056)
+#define QCA9984_1_0_DEVICE_ID		(0x0046)
+#define QCA9377_1_0_DEVICE_ID		(0x0042)
+#define QCA9887_1_0_DEVICE_ID		(0x0050)
+#define SPARKLAN_WPEQ_160N_DEVICE_ID	(0x9378)
 
 /* QCA988X 1.0 definitions (unsupported) */
 #define QCA988X_HW_1_0_CHIP_ID_REV	0x0
@@ -120,6 +130,8 @@ enum qca9377_chip_id_rev {
 /* QCA9377 1.0 definitions */
 #define QCA9377_HW_1_0_FW_DIR          ATH10K_FW_DIR "/QCA9377/hw1.0"
 #define QCA9377_HW_1_0_BOARD_DATA_FILE "board.bin"
+#define QCA9377_HW_1_0_BOARD_DATA_FILE_USB "board-usb.bin"
+#define QCA9377_HW_1_0_BOARD_DATA_FILE_SDIO "board-sdio.bin"
 #define QCA9377_HW_1_0_PATCH_LOAD_ADDR	0x1234
 
 /* QCA4019 1.0 definitions */
@@ -127,6 +139,10 @@ enum qca9377_chip_id_rev {
 #define QCA4019_HW_1_0_FW_DIR          ATH10K_FW_DIR "/QCA4019/hw1.0"
 #define QCA4019_HW_1_0_BOARD_DATA_FILE "board.bin"
 #define QCA4019_HW_1_0_PATCH_LOAD_ADDR  0x1234
+
+/* WCN3990 1.0 definitions */
+#define WCN3990_HW_1_0_DEV_VERSION	ATH10K_HW_WCN3990
+#define WCN3990_HW_1_0_FW_DIR		ATH10K_FW_DIR "/WCN3990/hw3.0"
 
 #define ATH10K_FW_FILE_BASE		"firmware"
 #define ATH10K_FW_API_MAX		6
@@ -369,8 +385,8 @@ extern const struct ath10k_hw_values qca99x0_values;
 extern const struct ath10k_hw_values qca9888_values;
 extern const struct ath10k_hw_values qca4019_values;
 extern const struct ath10k_hw_values wcn3990_values;
-extern struct ath10k_hw_ce_regs wcn3990_ce_regs;
-extern struct ath10k_hw_ce_regs qcax_ce_regs;
+extern const struct ath10k_hw_ce_regs wcn3990_ce_regs;
+extern const struct ath10k_hw_ce_regs qcax_ce_regs;
 
 void ath10k_hw_fill_survey_time(struct ath10k *ar, struct survey_info *survey,
 				u32 cc, u32 rcc, u32 cc_prev, u32 rcc_prev);
@@ -487,6 +503,7 @@ struct ath10k_hw_clk_params {
 struct ath10k_hw_params {
 	u32 id;
 	u16 dev_id;
+	enum ath10k_bus bus;
 	const char *name;
 	u32 patch_load_addr;
 	int uart_pin;
@@ -550,6 +567,25 @@ struct ath10k_hw_params {
 	 */
 	int vht160_mcs_rx_highest;
 	int vht160_mcs_tx_highest;
+
+	/* Number of ciphers supported (i.e First N) in cipher_suites array */
+	int n_cipher_suites;
+
+	u32 num_peers;
+	u32 ast_skid_limit;
+	u32 num_wds_entries;
+
+	/* Targets supporting physical addressing capability above 32-bits */
+	bool target_64bit;
+
+	/* Target rx ring fill level */
+	u32 rx_ring_fill_level;
+
+	/* Specifies whether or not the device should be started once.
+	 * If set, the device will be started once by the early fw probe
+	 * and it will not be terminated afterwards.
+	 */
+	bool start_once;
 };
 
 struct htt_rx_desc;
@@ -564,6 +600,7 @@ struct ath10k_hw_ops {
 extern const struct ath10k_hw_ops qca988x_ops;
 extern const struct ath10k_hw_ops qca99x0_ops;
 extern const struct ath10k_hw_ops qca6174_ops;
+extern const struct ath10k_hw_ops wcn3990_ops;
 
 extern const struct ath10k_hw_clk_params qca6174_clk[];
 
@@ -658,7 +695,16 @@ ath10k_rx_desc_get_l3_pad_bytes(struct ath10k_hw_params *hw,
 #define TARGET_TLV_NUM_TDLS_VDEVS		1
 #define TARGET_TLV_NUM_TIDS			((TARGET_TLV_NUM_PEERS) * 2)
 #define TARGET_TLV_NUM_MSDU_DESC		(1024 + 32)
+#define TARGET_TLV_NUM_MSDU_DESC_HL		64
 #define TARGET_TLV_NUM_WOW_PATTERNS		22
+
+/* Target specific defines for WMI-HL-1.0 firmware */
+#define TARGET_HL_10_TLV_NUM_PEERS		14
+#define TARGET_HL_10_TLV_AST_SKID_LIMIT		6
+#define TARGET_HL_10_TLV_NUM_WDS_ENTRIES	2
+
+/* Target specific defines for QCA9377 high latency firmware */
+#define TARGET_QCA9377_HL_NUM_PEERS		15
 
 /* Diagnostic Window */
 #define CE_DIAG_PIPE	7
@@ -865,6 +911,7 @@ ath10k_rx_desc_get_l3_pad_bytes(struct ath10k_hw_params *hw,
 #define PCIE_INTR_CLR_ADDRESS			ar->regs->pcie_intr_clr_address
 #define SCRATCH_3_ADDRESS			ar->regs->scratch_3_address
 #define CPU_INTR_ADDRESS			0x0010
+#define FW_RAM_CONFIG_ADDRESS			0x0018
 
 #define CCNT_TO_MSEC(ar, x) ((x) / ar->hw_params.channel_counters_freq_hz)
 

@@ -2013,10 +2013,6 @@ static struct v4l2_ctrl *v4l2_ctrl_new(struct v4l2_ctrl_handler *hdl,
 		handler_set_err(hdl, err);
 		return NULL;
 	}
-	if (type == V4L2_CTRL_TYPE_BITMASK && ((def & ~max) || min || step)) {
-		handler_set_err(hdl, -ERANGE);
-		return NULL;
-	}
 	if (is_array &&
 	    (type == V4L2_CTRL_TYPE_BUTTON ||
 	     type == V4L2_CTRL_TYPE_CTRL_CLASS)) {
@@ -2826,7 +2822,7 @@ static int prepare_ext_ctrls(struct v4l2_ctrl_handler *hdl,
 static int class_check(struct v4l2_ctrl_handler *hdl, u32 which)
 {
 	if (which == 0 || which == V4L2_CTRL_WHICH_DEF_VAL)
-		return list_empty(&hdl->ctrl_refs) ? -EINVAL : 0;
+		return 0;
 	return find_ref_lock(hdl, which | 1) ? 0 : -EINVAL;
 }
 
@@ -3461,12 +3457,12 @@ int v4l2_ctrl_subdev_subscribe_event(struct v4l2_subdev *sd, struct v4l2_fh *fh,
 }
 EXPORT_SYMBOL(v4l2_ctrl_subdev_subscribe_event);
 
-unsigned int v4l2_ctrl_poll(struct file *file, struct poll_table_struct *wait)
+__poll_t v4l2_ctrl_poll(struct file *file, struct poll_table_struct *wait)
 {
 	struct v4l2_fh *fh = file->private_data;
 
 	if (v4l2_event_pending(fh))
-		return POLLPRI;
+		return EPOLLPRI;
 	poll_wait(file, &fh->wait, wait);
 	return 0;
 }

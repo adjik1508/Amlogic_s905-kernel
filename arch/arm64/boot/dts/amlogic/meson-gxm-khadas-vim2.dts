@@ -12,7 +12,6 @@
 #include <dt-bindings/thermal/thermal.h>
 
 #include "meson-gxm.dtsi"
-//#include "meson-gx-p23x-q20x.dtsi"
 
 / {
 	compatible = "khadas,vim2", "amlogic,s912", "amlogic,meson-gxm";
@@ -285,13 +284,17 @@
 
 	/* External PHY is in RGMII */
 	phy-mode = "rgmii";
+
+	status = "okay";
 };
 
 &external_mdio {
 	external_phy: ethernet-phy@0 {
-		compatible = "ethernet-phy-id001c.c916", "ethernet-phy-ieee802.3-c22";
+		/* Realtek RTL8211F (0x001cc916) */
 		reg = <0>;
-		max-speed = <1000>;
+		interrupt-parent = <&gpio_intc>;
+		/* MAC_INTR on GPIOZ_15 */
+		interrupts = <25 IRQ_TYPE_LEVEL_LOW>;
 	};
 };
 
@@ -396,25 +399,25 @@
 };
 
 /* eMMC */
-//&sd_emmc_c {
-//	status = "okay";
-//	pinctrl-0 = <&emmc_pins>, <&emmc_ds_pins>;
-//	pinctrl-names = "default";
+&sd_emmc_c {
+	status = "okay";
+	pinctrl-0 = <&emmc_pins>, <&emmc_ds_pins>;
+	pinctrl-names = "default";
 
-//	bus-width = <8>;
-//	cap-sd-highspeed;
-//	cap-mmc-highspeed;
-//	max-frequency = <200000000>;
-//	non-removable;
-//	disable-wp;
-//	mmc-ddr-1_8v;
-//	mmc-hs200-1_8v;
-//	mmc-hs400-1_8v;
+	bus-width = <8>;
+	cap-sd-highspeed;
+	cap-mmc-highspeed;
+	max-frequency = <200000000>;
+	non-removable;
+	disable-wp;
+	mmc-ddr-1_8v;
+	mmc-hs200-1_8v;
+	mmc-hs400-1_8v;
 
-//	mmc-pwrseq = <&emmc_pwrseq>;
-//	vmmc-supply = <&vcc_3v3>;
-//	vqmmc-supply = <&vddio_boot>;
-//};
+	mmc-pwrseq = <&emmc_pwrseq>;
+	vmmc-supply = <&vcc_3v3>;
+	vqmmc-supply = <&vddio_boot>;
+};
 
 /*
  * EMMC_DS pin is shared between SPI NOR CS and eMMC Data Strobe

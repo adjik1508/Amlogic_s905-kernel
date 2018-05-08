@@ -27,12 +27,12 @@ struct kmem_cache *bch_search_cache;
 
 static void bch_data_insert_start(struct closure *);
 
-static unsigned cache_mode(struct cached_dev *dc, struct bio *bio)
+static unsigned cache_mode(struct cached_dev *dc)
 {
 	return BDEV_CACHE_MODE(&dc->sb);
 }
 
-static bool verify(struct cached_dev *dc, struct bio *bio)
+static bool verify(struct cached_dev *dc)
 {
 	return dc->verify;
 }
@@ -370,7 +370,7 @@ static struct hlist_head *iohash(struct cached_dev *dc, uint64_t k)
 static bool check_should_bypass(struct cached_dev *dc, struct bio *bio)
 {
 	struct cache_set *c = dc->disk.c;
-	unsigned mode = cache_mode(dc, bio);
+	unsigned mode = cache_mode(dc);
 	unsigned sectors, congested = bch_get_congested(c);
 	struct task_struct *task = current;
 	struct io *i;
@@ -383,6 +383,14 @@ static bool check_should_bypass(struct cached_dev *dc, struct bio *bio)
 	if (mode == CACHE_MODE_NONE ||
 	    (mode == CACHE_MODE_WRITEAROUND &&
 	     op_is_write(bio_op(bio))))
+		goto skip;
+
+	/*
+	 * Flag for bypass if the IO is for read-ahead or background,
+	 * unless the read-ahead request is for metadata (eg, for gfs2).
+	 */
+	if (bio->bi_opf & (REQ_RAHEAD|REQ_BACKGROUND) &&
+	    !(bio->bi_opf & REQ_META))
 		goto skip;
 
 	if (bio->bi_iter.bi_sector & (c->sb.block_size - 1) ||
@@ -568,6 +576,7 @@ static void cache_lookup(struct closure *cl)
 {
 	struct search *s = container_of(cl, struct search, iop.cl);
 	struct bio *bio = &s->bio.bio;
+	struct cached_dev *dc;
 	int ret;
 
 	bch_btree_op_init(&s->op, -1);
@@ -578,6 +587,27 @@ static void cache_lookup(struct closure *cl)
 	if (ret == -EAGAIN) {
 		continue_at(cl, cache_lookup, bcache_wq);
 		return;
+	}
+
+	/*
+	 * We might meet err when searching the btree, If that happens, we will
+	 * get negative ret, in this scenario we should not recover data from
+	 * backing device (when cache device is dirty) because we don't know
+	 * whether bkeys the read request covered are all clean.
+	 *
+	 * And after that happened, s->iop.status is still its initial value
+	 * before we submit s->bio.bio
+	 */
+	if (ret < 0) {
+		BUG_ON(ret == -EINTR);
+		if (s->d && s->d->c &&
+				!UUID_FLASH_ONLY(&s->d->c->uuids[s->d->id])) {
+			dc = container_of(s->d, struct cached_dev, disk);
+			if (dc && atomic_read(&dc->has_dirty))
+				s->recoverable = false;
+		}
+		if (!s->iop.status)
+			s->iop.status = BLK_STS_IOERR;
 	}
 
 	closure_return(cl);
@@ -603,8 +633,8 @@ static void request_endio(struct bio *bio)
 static void bio_complete(struct search *s)
 {
 	if (s->orig_bio) {
-		struct request_queue *q = s->orig_bio->bi_disk->queue;
-		generic_end_io_acct(q, bio_data_dir(s->orig_bio),
+		generic_end_io_acct(s->d->disk->queue,
+				    bio_data_dir(s->orig_bio),
 				    &s->d->disk->part0, s->start_time);
 
 		trace_bcache_request_end(s->d, s->orig_bio);
@@ -629,11 +659,11 @@ static void do_bio_hook(struct search *s, struct bio *orig_bio)
 static void search_free(struct closure *cl)
 {
 	struct search *s = container_of(cl, struct search, cl);
-	bio_complete(s);
 
 	if (s->iop.bio)
 		bio_put(s->iop.bio);
 
+	bio_complete(s);
 	closure_debug_destroy(cl);
 	mempool_free(s, s->d->c->search);
 }
@@ -749,7 +779,7 @@ static void cached_dev_read_done(struct closure *cl)
 		s->cache_miss = NULL;
 	}
 
-	if (verify(dc, &s->bio.bio) && s->recoverable && !s->read_dirty_data)
+	if (verify(dc) && s->recoverable && !s->read_dirty_data)
 		bch_data_verify(dc, s->orig_bio);
 
 	bio_complete(s);
@@ -774,7 +804,7 @@ static void cached_dev_read_done_bh(struct closure *cl)
 
 	if (s->iop.status)
 		continue_at_nobarrier(cl, cached_dev_read_error, bcache_wq);
-	else if (s->iop.bio || verify(dc, &s->bio.bio))
+	else if (s->iop.bio || verify(dc))
 		continue_at_nobarrier(cl, cached_dev_read_done, bcache_wq);
 	else
 		continue_at_nobarrier(cl, cached_dev_bio_complete, NULL);
@@ -833,7 +863,7 @@ static int cached_dev_cache_miss(struct btree *b, struct search *s,
 	cache_bio->bi_private	= &s->cl;
 
 	bch_bio_map(cache_bio, NULL);
-	if (bio_alloc_pages(cache_bio, __GFP_NOWARN|GFP_NOIO))
+	if (bch_bio_alloc_pages(cache_bio, __GFP_NOWARN|GFP_NOIO))
 		goto out_put;
 
 	if (reada)
@@ -903,7 +933,7 @@ static void cached_dev_write(struct cached_dev *dc, struct search *s)
 		s->iop.bypass = true;
 
 	if (should_writeback(dc, s->orig_bio,
-			     cache_mode(dc, bio),
+			     cache_mode(dc),
 			     s->iop.bypass)) {
 		s->iop.bypass = false;
 		s->iop.writeback = true;
@@ -966,6 +996,7 @@ static blk_qc_t cached_dev_make_request(struct request_queue *q,
 	struct cached_dev *dc = container_of(d, struct cached_dev, disk);
 	int rw = bio_data_dir(bio);
 
+	atomic_set(&dc->backing_idle, 0);
 	generic_start_io_acct(q, rw, bio_sectors(bio), &d->disk->part0);
 
 	bio_set_dev(bio, dc->bdev);

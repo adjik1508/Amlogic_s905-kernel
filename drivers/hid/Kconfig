@@ -280,6 +280,7 @@ config HID_ELECOM
 	---help---
 	Support for ELECOM devices:
 	  - BM084 Bluetooth Mouse
+	  - EX-G Trackball (Wired and wireless)
 	  - DEFT Trackball (Wired and wireless)
 	  - HUGE Trackball (Wired and wireless)
 
@@ -395,6 +396,17 @@ config HID_ITE
 	default !EXPERT
 	---help---
 	Support for ITE devices not fully compliant with HID standard.
+
+config HID_JABRA
+	tristate "Jabra USB HID Driver"
+	depends on HID
+	---help---
+	Support for Jabra USB HID devices.
+
+	Prevents mapping of vendor defined HID usages to input events. Without
+	this driver HID	reports from Jabra devices may incorrectly be seen as
+	mouse button events.
+	Say M here if you may ever plug in a Jabra USB device.
 
 config HID_TWINHAN
 	tristate "Twinhan IR remote control"
@@ -750,11 +762,10 @@ config HID_PRIMAX
 	HID standard.
 
 config HID_RETRODE
-	tristate "Retrode"
+	tristate "Retrode 2 USB adapter for vintage video games"
 	depends on USB_HID
 	---help---
 	Support for
-
 	  * Retrode 2 cartridge and controller adapter
 
 config HID_ROCCAT
