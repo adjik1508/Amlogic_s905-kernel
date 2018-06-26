@@ -194,8 +194,22 @@
 #define CLKID_VPU_1_DIV		  130
 #define CLKID_VAPB_0_DIV	  134
 #define CLKID_VAPB_1_DIV	  137
+#define CLKID_HDMI_PLL_PRE_MULT	  141
+#define CLKID_MPLL0_DIV		  142
+#define CLKID_MPLL1_DIV		  143
+#define CLKID_MPLL2_DIV		  144
+#define CLKID_MPLL_PREDIV	  145
+#define CLKID_FCLK_DIV2_DIV	  146
+#define CLKID_FCLK_DIV3_DIV	  147
+#define CLKID_FCLK_DIV4_DIV	  148
+#define CLKID_FCLK_DIV5_DIV	  149
+#define CLKID_FCLK_DIV7_DIV	  150
+#define CLKID_VDEC_1_SEL	  151
+#define CLKID_VDEC_1_DIV	  152
+#define CLKID_VDEC_HEVC_SEL	  154
+#define CLKID_VDEC_HEVC_DIV	  155
 
-#define NR_CLKS			  141
+#define NR_CLKS			  157
 
 /* include the CLKIDs that have been made part of the DT binding */
 #include <dt-bindings/clock/gxbb-clkc.h>

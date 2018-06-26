@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2005-2011 Atheros Communications Inc.
  * Copyright (c) 2011-2017 Qualcomm Atheros, Inc.
+ * Copyright (c) 2018, The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -86,6 +87,14 @@
 #define ATH10K_SMBIOS_BDF_EXT_MAGIC "BDF_"
 
 struct ath10k;
+
+enum ath10k_bus {
+	ATH10K_BUS_PCI,
+	ATH10K_BUS_AHB,
+	ATH10K_BUS_SDIO,
+	ATH10K_BUS_USB,
+	ATH10K_BUS_SNOC,
+};
 
 static inline const char *ath10k_bus_str(enum ath10k_bus bus)
 {
@@ -213,6 +222,27 @@ struct ath10k_fw_stats_vdev {
 	u32 beacon_rssi_history[10];
 };
 
+struct ath10k_fw_stats_vdev_extd {
+	struct list_head list;
+
+	u32 vdev_id;
+	u32 ppdu_aggr_cnt;
+	u32 ppdu_noack;
+	u32 mpdu_queued;
+	u32 ppdu_nonaggr_cnt;
+	u32 mpdu_sw_requeued;
+	u32 mpdu_suc_retry;
+	u32 mpdu_suc_multitry;
+	u32 mpdu_fail_retry;
+	u32 tx_ftm_suc;
+	u32 tx_ftm_suc_retry;
+	u32 tx_ftm_fail;
+	u32 rx_ftmr_cnt;
+	u32 rx_ftmr_dup_cnt;
+	u32 rx_iftmr_cnt;
+	u32 rx_iftmr_dup_cnt;
+};
+
 struct ath10k_fw_stats_pdev {
 	struct list_head list;
 
@@ -316,6 +346,27 @@ struct ath10k_tpc_stats {
 	struct ath10k_tpc_table tpc_table[WMI_TPC_FLAG];
 };
 
+struct ath10k_tpc_table_final {
+	u32 pream_idx[WMI_TPC_FINAL_RATE_MAX];
+	u8 rate_code[WMI_TPC_FINAL_RATE_MAX];
+	char tpc_value[WMI_TPC_FINAL_RATE_MAX][WMI_TPC_TX_N_CHAIN * WMI_TPC_BUF_SIZE];
+};
+
+struct ath10k_tpc_stats_final {
+	u32 reg_domain;
+	u32 chan_freq;
+	u32 phy_mode;
+	u32 twice_antenna_reduction;
+	u32 twice_max_rd_power;
+	s32 twice_antenna_gain;
+	u32 power_limit;
+	u32 num_tx_chain;
+	u32 ctl;
+	u32 rate_max;
+	u8 flag[WMI_TPC_FLAG];
+	struct ath10k_tpc_table_final tpc_table_final[WMI_TPC_FLAG];
+};
+
 struct ath10k_dfs_stats {
 	u32 phy_errors;
 	u32 pulses_total;
@@ -346,6 +397,45 @@ struct ath10k_txq {
 	unsigned long num_push_allowed;
 };
 
+enum ath10k_pkt_rx_err {
+	ATH10K_PKT_RX_ERR_FCS,
+	ATH10K_PKT_RX_ERR_TKIP,
+	ATH10K_PKT_RX_ERR_CRYPT,
+	ATH10K_PKT_RX_ERR_PEER_IDX_INVAL,
+	ATH10K_PKT_RX_ERR_MAX,
+};
+
+enum ath10k_ampdu_subfrm_num {
+	ATH10K_AMPDU_SUBFRM_NUM_10,
+	ATH10K_AMPDU_SUBFRM_NUM_20,
+	ATH10K_AMPDU_SUBFRM_NUM_30,
+	ATH10K_AMPDU_SUBFRM_NUM_40,
+	ATH10K_AMPDU_SUBFRM_NUM_50,
+	ATH10K_AMPDU_SUBFRM_NUM_60,
+	ATH10K_AMPDU_SUBFRM_NUM_MORE,
+	ATH10K_AMPDU_SUBFRM_NUM_MAX,
+};
+
+enum ath10k_amsdu_subfrm_num {
+	ATH10K_AMSDU_SUBFRM_NUM_1,
+	ATH10K_AMSDU_SUBFRM_NUM_2,
+	ATH10K_AMSDU_SUBFRM_NUM_3,
+	ATH10K_AMSDU_SUBFRM_NUM_4,
+	ATH10K_AMSDU_SUBFRM_NUM_MORE,
+	ATH10K_AMSDU_SUBFRM_NUM_MAX,
+};
+
+struct ath10k_sta_tid_stats {
+	unsigned long int rx_pkt_from_fw;
+	unsigned long int rx_pkt_unchained;
+	unsigned long int rx_pkt_drop_chained;
+	unsigned long int rx_pkt_drop_filter;
+	unsigned long int rx_pkt_err[ATH10K_PKT_RX_ERR_MAX];
+	unsigned long int rx_pkt_queued_for_mac;
+	unsigned long int rx_pkt_ampdu[ATH10K_AMPDU_SUBFRM_NUM_MAX];
+	unsigned long int rx_pkt_amsdu[ATH10K_AMSDU_SUBFRM_NUM_MAX];
+};
+
 struct ath10k_sta {
 	struct ath10k_vif *arvif;
 
@@ -363,6 +453,9 @@ struct ath10k_sta {
 #ifdef CONFIG_MAC80211_DEBUGFS
 	/* protected by conf_mutex */
 	bool aggr_mode;
+
+	/* Protected with ar->data_lock */
+	struct ath10k_sta_tid_stats tid_stats[IEEE80211_NUM_TIDS + 1];
 #endif
 };
 
@@ -479,6 +572,7 @@ struct ath10k_debug {
 
 	/* used for tpc-dump storage, protected by data-lock */
 	struct ath10k_tpc_stats *tpc_stats;
+	struct ath10k_tpc_stats_final *tpc_stats_final;
 
 	struct completion tpc_complete;
 
@@ -761,11 +855,6 @@ struct ath10k_per_peer_tx_stats {
 	u32	reserved2;
 };
 
-struct ath10k_bus_params {
-	u32 chip_id;
-	bool is_high_latency;
-};
-
 struct ath10k {
 	struct ath_common ath_common;
 	struct ieee80211_hw *hw;
@@ -776,7 +865,6 @@ struct ath10k {
 	enum ath10k_hw_rev hw_rev;
 	u16 dev_id;
 	u32 chip_id;
-	bool is_high_latency;
 	u32 target_version;
 	u8 fw_version_major;
 	u32 fw_version_minor;
@@ -797,8 +885,6 @@ struct ath10k {
 	bool ani_enabled;
 
 	bool p2p;
-
-	bool is_started;
 
 	struct {
 		enum ath10k_bus bus;
@@ -1019,6 +1105,8 @@ struct ath10k {
 
 	void *ce_priv;
 
+	u32 sta_tid_stats_mask;
+
 	/* must be last */
 	u8 drv_priv[0] __aligned(sizeof(void *));
 };
@@ -1049,8 +1137,7 @@ int ath10k_core_start(struct ath10k *ar, enum ath10k_firmware_mode mode,
 		      const struct ath10k_fw_components *fw_components);
 int ath10k_wait_for_suspend(struct ath10k *ar, u32 suspend_opt);
 void ath10k_core_stop(struct ath10k *ar);
-int ath10k_core_register(struct ath10k *ar,
-			 const struct ath10k_bus_params *bus_params);
+int ath10k_core_register(struct ath10k *ar, u32 chip_id);
 void ath10k_core_unregister(struct ath10k *ar);
 
 #endif /* _CORE_H_ */

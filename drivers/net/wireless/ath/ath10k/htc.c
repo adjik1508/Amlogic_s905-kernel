@@ -53,8 +53,7 @@ static inline void ath10k_htc_restore_tx_skb(struct ath10k_htc *htc,
 {
 	struct ath10k_skb_cb *skb_cb = ATH10K_SKB_CB(skb);
 
-	if (!htc->ar->is_high_latency)
-		dma_unmap_single(htc->ar->dev, skb_cb->paddr, skb->len, DMA_TO_DEVICE);
+	dma_unmap_single(htc->ar->dev, skb_cb->paddr, skb->len, DMA_TO_DEVICE);
 	skb_pull(skb, sizeof(struct ath10k_htc_hdr));
 }
 
@@ -84,13 +83,11 @@ static void ath10k_htc_prepare_tx_skb(struct ath10k_htc_ep *ep,
 	struct ath10k_htc_hdr *hdr;
 
 	hdr = (struct ath10k_htc_hdr *)skb->data;
-	memset(hdr, 0, sizeof(struct ath10k_htc_hdr));
 
 	hdr->eid = ep->eid;
 	hdr->len = __cpu_to_le16(skb->len - sizeof(*hdr));
 	hdr->flags = 0;
-	if (ep->tx_credit_flow_enabled)
-		hdr->flags |= ATH10K_HTC_FLAG_NEED_CREDIT_UPDATE;
+	hdr->flags |= ATH10K_HTC_FLAG_NEED_CREDIT_UPDATE;
 
 	spin_lock_bh(&ep->htc->tx_lock);
 	hdr->seq_no = ep->seq_no++;
@@ -140,14 +137,11 @@ int ath10k_htc_send(struct ath10k_htc *htc,
 	ath10k_htc_prepare_tx_skb(ep, skb);
 
 	skb_cb->eid = eid;
-	if (!ar->is_high_latency) {
-		skb_cb->paddr = dma_map_single(dev, skb->data, skb->len,
-					       DMA_TO_DEVICE);
-		ret = dma_mapping_error(dev, skb_cb->paddr);
-		if (ret) {
-			ret = -EIO;
-			goto err_credits;
-		}
+	skb_cb->paddr = dma_map_single(dev, skb->data, skb->len, DMA_TO_DEVICE);
+	ret = dma_mapping_error(dev, skb_cb->paddr);
+	if (ret) {
+		ret = -EIO;
+		goto err_credits;
 	}
 
 	sg_item.transfer_id = ep->eid;
@@ -163,8 +157,7 @@ int ath10k_htc_send(struct ath10k_htc *htc,
 	return 0;
 
 err_unmap:
-	if (!ar->is_high_latency)
-		dma_unmap_single(dev, skb_cb->paddr, skb->len, DMA_TO_DEVICE);
+	dma_unmap_single(dev, skb_cb->paddr, skb->len, DMA_TO_DEVICE);
 err_credits:
 	if (ep->tx_credit_flow_enabled) {
 		spin_lock_bh(&htc->tx_lock);

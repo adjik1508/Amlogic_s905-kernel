@@ -57,6 +57,10 @@ MODULE_PARM_DESC(reset_mode, "0: auto, 1: warm only (default: 0)");
  */
 #define ATH10K_DIAG_TRANSFER_LIMIT	0x5000
 
+#define QCA99X0_PCIE_BAR0_START_REG    0x81030
+#define QCA99X0_CPU_MEM_ADDR_REG       0x4d00c
+#define QCA99X0_CPU_MEM_DATA_REG       0x4d010
+
 static const struct pci_device_id ath10k_pci_id_table[] = {
 	/* PCI-E QCA988X V2 (Ubiquiti branded) */
 	{ PCI_VDEVICE(UBIQUITI, QCA988X_2_0_DEVICE_ID_UBNT) },
@@ -1584,6 +1588,69 @@ static int ath10k_pci_set_ram_config(struct ath10k *ar, u32 config)
 	return 0;
 }
 
+/* if an error happened returns < 0, otherwise the length */
+static int ath10k_pci_dump_memory_sram(struct ath10k *ar,
+				       const struct ath10k_mem_region *region,
+				       u8 *buf)
+{
+	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
+	u32 base_addr, i;
+
+	base_addr = ioread32(ar_pci->mem + QCA99X0_PCIE_BAR0_START_REG);
+	base_addr += region->start;
+
+	for (i = 0; i < region->len; i += 4) {
+		iowrite32(base_addr + i, ar_pci->mem + QCA99X0_CPU_MEM_ADDR_REG);
+		*(u32 *)(buf + i) = ioread32(ar_pci->mem + QCA99X0_CPU_MEM_DATA_REG);
+	}
+
+	return region->len;
+}
+
+/* if an error happened returns < 0, otherwise the length */
+static int ath10k_pci_dump_memory_reg(struct ath10k *ar,
+				      const struct ath10k_mem_region *region,
+				      u8 *buf)
+{
+	struct ath10k_pci *ar_pci = ath10k_pci_priv(ar);
+	u32 i;
+
+	for (i = 0; i < region->len; i += 4)
+		*(u32 *)(buf + i) = ioread32(ar_pci->mem + region->start + i);
+
+	return region->len;
+}
+
+/* if an error happened returns < 0, otherwise the length */
+static int ath10k_pci_dump_memory_generic(struct ath10k *ar,
+					  const struct ath10k_mem_region *current_region,
+					  u8 *buf)
+{
+	int ret;
+
+	if (current_region->section_table.size > 0)
+		/* Copy each section individually. */
+		return ath10k_pci_dump_memory_section(ar,
+						      current_region,
+						      buf,
+						      current_region->len);
+
+	/* No individiual memory sections defined so we can
+	 * copy the entire memory region.
+	 */
+	ret = ath10k_pci_diag_read_mem(ar,
+				       current_region->start,
+				       buf,
+				       current_region->len);
+	if (ret) {
+		ath10k_warn(ar, "failed to copy ramdump region %s: %d\n",
+			    current_region->name, ret);
+		return ret;
+	}
+
+	return current_region->len;
+}
+
 static void ath10k_pci_dump_memory(struct ath10k *ar,
 				   struct ath10k_fw_crash_data *crash_data)
 {
@@ -1642,27 +1709,20 @@ static void ath10k_pci_dump_memory(struct ath10k *ar,
 		buf += sizeof(*hdr);
 		buf_len -= sizeof(*hdr);
 
-		if (current_region->section_table.size > 0) {
-			/* Copy each section individually. */
-			count = ath10k_pci_dump_memory_section(ar,
-							       current_region,
-							       buf,
-							       current_region->len);
-		} else {
-			/* No individiual memory sections defined so we can
-			 * copy the entire memory region.
-			 */
-			ret = ath10k_pci_diag_read_mem(ar,
-						       current_region->start,
-						       buf,
-						       current_region->len);
-			if (ret) {
-				ath10k_warn(ar, "failed to copy ramdump region %s: %d\n",
-					    current_region->name, ret);
+		switch (current_region->type) {
+		case ATH10K_MEM_REGION_TYPE_IOSRAM:
+			count = ath10k_pci_dump_memory_sram(ar, current_region, buf);
+			break;
+		case ATH10K_MEM_REGION_TYPE_IOREG:
+			count = ath10k_pci_dump_memory_reg(ar, current_region, buf);
+			break;
+		default:
+			ret = ath10k_pci_dump_memory_generic(ar, current_region, buf);
+			if (ret < 0)
 				break;
-			}
 
-			count = current_region->len;
+			count = ret;
+			break;
 		}
 
 		hdr->region_type = cpu_to_le32(current_region->type);
@@ -2221,7 +2281,7 @@ static int ath10k_pci_get_num_banks(struct ath10k *ar)
 		}
 		break;
 	case QCA9377_1_0_DEVICE_ID:
-		return 4;
+		return 9;
 	}
 
 	ath10k_warn(ar, "unknown number of banks, assuming 1\n");
@@ -3422,7 +3482,7 @@ static int ath10k_pci_probe(struct pci_dev *pdev,
 	struct ath10k *ar;
 	struct ath10k_pci *ar_pci;
 	enum ath10k_hw_rev hw_rev;
-	struct ath10k_bus_params bus_params;
+	u32 chip_id;
 	bool pci_ps;
 	int (*pci_soft_reset)(struct ath10k *ar);
 	int (*pci_hard_reset)(struct ath10k *ar);
@@ -3558,20 +3618,19 @@ static int ath10k_pci_probe(struct pci_dev *pdev,
 		goto err_free_irq;
 	}
 
-	bus_params.is_high_latency = false;
-	bus_params.chip_id = ath10k_pci_soc_read32(ar, SOC_CHIP_ID_ADDRESS);
-	if (bus_params.chip_id == 0xffffffff) {
+	chip_id = ath10k_pci_soc_read32(ar, SOC_CHIP_ID_ADDRESS);
+	if (chip_id == 0xffffffff) {
 		ath10k_err(ar, "failed to get chip id\n");
 		goto err_free_irq;
 	}
 
-	if (!ath10k_pci_chip_is_supported(pdev->device, bus_params.chip_id)) {
+	if (!ath10k_pci_chip_is_supported(pdev->device, chip_id)) {
 		ath10k_err(ar, "device %04x with chip_id %08x isn't supported\n",
-			   pdev->device, bus_params.chip_id);
+			   pdev->device, chip_id);
 		goto err_free_irq;
 	}
 
-	ret = ath10k_core_register(ar, &bus_params);
+	ret = ath10k_core_register(ar, chip_id);
 	if (ret) {
 		ath10k_err(ar, "failed to register driver core: %d\n", ret);
 		goto err_free_irq;
@@ -3719,5 +3778,6 @@ MODULE_FIRMWARE(QCA6174_HW_3_0_FW_DIR "/" QCA6174_HW_3_0_BOARD_DATA_FILE);
 MODULE_FIRMWARE(QCA6174_HW_3_0_FW_DIR "/" ATH10K_BOARD_API2_FILE);
 
 /* QCA9377 1.0 firmware files */
+MODULE_FIRMWARE(QCA9377_HW_1_0_FW_DIR "/" ATH10K_FW_API6_FILE);
 MODULE_FIRMWARE(QCA9377_HW_1_0_FW_DIR "/" ATH10K_FW_API5_FILE);
 MODULE_FIRMWARE(QCA9377_HW_1_0_FW_DIR "/" QCA9377_HW_1_0_BOARD_DATA_FILE);

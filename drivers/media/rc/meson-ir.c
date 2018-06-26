@@ -69,7 +69,6 @@ struct meson_ir {
 	void __iomem	*reg;
 	struct rc_dev	*rc;
 	spinlock_t	lock;
-	struct timer_list timeout_timer;
 };
 
 static void meson_ir_set_mask(struct meson_ir *ir, unsigned int reg,
@@ -98,27 +97,11 @@ static irqreturn_t meson_ir_irq(int irqno, void *dev_id)
 	status = readl_relaxed(ir->reg + IR_DEC_STATUS);
 	rawir.pulse = !!(status & STATUS_IR_DEC_IN);
 
-	ir_raw_event_store(ir->rc, &rawir);
-
-	mod_timer(&ir->timeout_timer,
-		jiffies + nsecs_to_jiffies(ir->rc->timeout));
-
-	ir_raw_event_handle(ir->rc);
+	ir_raw_event_store_with_timeout(ir->rc, &rawir);
 
 	spin_unlock(&ir->lock);
 
 	return IRQ_HANDLED;
-}
-
-static void meson_ir_timeout_timer(struct timer_list *t)
-{
-	struct meson_ir *ir = from_timer(ir, t, timeout_timer);
-	DEFINE_IR_RAW_EVENT(rawir);
-
-	rawir.timeout = true;
-	rawir.duration = ir->rc->timeout;
-	ir_raw_event_store(ir->rc, &rawir);
-	ir_raw_event_handle(ir->rc);
 }
 
 static int meson_ir_probe(struct platform_device *pdev)
@@ -162,7 +145,7 @@ static int meson_ir_probe(struct platform_device *pdev)
 	ir->rc->allowed_protocols = RC_PROTO_BIT_ALL_IR_DECODER;
 	ir->rc->rx_resolution = US_TO_NS(MESON_TRATE);
 	ir->rc->min_timeout = 1;
-	ir->rc->timeout = MS_TO_NS(200);
+	ir->rc->timeout = IR_DEFAULT_TIMEOUT;
 	ir->rc->max_timeout = 10 * IR_DEFAULT_TIMEOUT;
 	ir->rc->driver_name = DRIVER_NAME;
 
@@ -174,8 +157,6 @@ static int meson_ir_probe(struct platform_device *pdev)
 		dev_err(dev, "failed to register rc device\n");
 		return ret;
 	}
-
-	timer_setup(&ir->timeout_timer, meson_ir_timeout_timer, 0);
 
 	ret = devm_request_irq(dev, irq, meson_ir_irq, 0, NULL, ir);
 	if (ret) {
@@ -217,8 +198,6 @@ static int meson_ir_remove(struct platform_device *pdev)
 	spin_lock_irqsave(&ir->lock, flags);
 	meson_ir_set_mask(ir, IR_DEC_REG1, REG1_ENABLE, 0);
 	spin_unlock_irqrestore(&ir->lock, flags);
-
-	del_timer_sync(&ir->timeout_timer);
 
 	return 0;
 }

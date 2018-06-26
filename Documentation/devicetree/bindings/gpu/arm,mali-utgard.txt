@@ -10,6 +10,7 @@ Required properties:
     * And, optionally, one of the vendor specific compatible:
       + allwinner,sun4i-a10-mali
       + allwinner,sun7i-a20-mali
+      + allwinner,sun8i-h3-mali
       + allwinner,sun50i-h5-mali
       + amlogic,meson-gxbb-mali
       + amlogic,meson-gxl-mali
@@ -56,6 +57,10 @@ Optional properties:
   - power-domains:
     A power domain consumer specifier as defined in
     Documentation/devicetree/bindings/power/power_domain.txt
+
+  - switch-delay:
+    This value is the number of Mali clock cycles it takes to
+    enable the power gates and turn on the power mesh.
 
 Vendor-specific bindings
 ------------------------

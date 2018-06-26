@@ -51,7 +51,7 @@
 #elif (PAGE_OFFSET & 0x1fffff) != 0
 #error PAGE_OFFSET must be at least 2MB aligned
 #elif TEXT_OFFSET > 0x1fffff
-//#error TEXT_OFFSET must be less than 2MB
+#error TEXT_OFFSET must be less than 2MB
 #endif
 
 /*
@@ -576,6 +576,13 @@ set_hcr:
 	orr	x3, x3, #MDCR_EL2_TPMS		// and disable access from EL1
 7:
 	msr	mdcr_el2, x3			// Configure debug traps
+
+	/* LORegions */
+	mrs	x1, id_aa64mmfr1_el1
+	ubfx	x0, x1, #ID_AA64MMFR1_LOR_SHIFT, 4
+	cbz	x0, 1f
+	msr_s	SYS_LORC_EL1, xzr
+1:
 
 	/* Stage-2 translation */
 	msr	vttbr_el2, xzr

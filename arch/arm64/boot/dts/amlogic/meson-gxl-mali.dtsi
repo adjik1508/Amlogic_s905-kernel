@@ -1,8 +1,7 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 /*
  * Copyright (c) 2017 BayLibre SAS
  * Author: Neil Armstrong <narmstrong@baylibre.com>
- *
- * SPDX-License-Identifier: (GPL-2.0+ OR MIT)
  */
 
 &apb {
@@ -24,6 +23,7 @@
 			"pp2", "ppmmu2";
 		clocks = <&clkc CLKID_CLK81>, <&clkc CLKID_MALI>;
 		clock-names = "bus", "core";
+		switch-delay = <0xffff>;
 
 		/*
 		 * Mali clocking is provided by two identical clock paths

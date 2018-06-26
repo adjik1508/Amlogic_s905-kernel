@@ -20,26 +20,17 @@
 
 #include "targaddrs.h"
 
-enum ath10k_bus {
-	ATH10K_BUS_PCI,
-	ATH10K_BUS_AHB,
-	ATH10K_BUS_SDIO,
-	ATH10K_BUS_USB,
-	ATH10K_BUS_SNOC,
-};
-
 #define ATH10K_FW_DIR			"ath10k"
 
-#define QCA988X_2_0_DEVICE_ID_UBNT	(0x11ac)
-#define QCA988X_2_0_DEVICE_ID		(0x003c)
-#define QCA6164_2_1_DEVICE_ID		(0x0041)
-#define QCA6174_2_1_DEVICE_ID		(0x003e)
-#define QCA99X0_2_0_DEVICE_ID		(0x0040)
-#define QCA9888_2_0_DEVICE_ID		(0x0056)
-#define QCA9984_1_0_DEVICE_ID		(0x0046)
-#define QCA9377_1_0_DEVICE_ID		(0x0042)
-#define QCA9887_1_0_DEVICE_ID		(0x0050)
-#define SPARKLAN_WPEQ_160N_DEVICE_ID	(0x9378)
+#define QCA988X_2_0_DEVICE_ID_UBNT   (0x11ac)
+#define QCA988X_2_0_DEVICE_ID   (0x003c)
+#define QCA6164_2_1_DEVICE_ID   (0x0041)
+#define QCA6174_2_1_DEVICE_ID   (0x003e)
+#define QCA99X0_2_0_DEVICE_ID   (0x0040)
+#define QCA9888_2_0_DEVICE_ID	(0x0056)
+#define QCA9984_1_0_DEVICE_ID	(0x0046)
+#define QCA9377_1_0_DEVICE_ID   (0x0042)
+#define QCA9887_1_0_DEVICE_ID   (0x0050)
 
 /* QCA988X 1.0 definitions (unsupported) */
 #define QCA988X_HW_1_0_CHIP_ID_REV	0x0
@@ -130,8 +121,6 @@ enum qca9377_chip_id_rev {
 /* QCA9377 1.0 definitions */
 #define QCA9377_HW_1_0_FW_DIR          ATH10K_FW_DIR "/QCA9377/hw1.0"
 #define QCA9377_HW_1_0_BOARD_DATA_FILE "board.bin"
-#define QCA9377_HW_1_0_BOARD_DATA_FILE_USB "board-usb.bin"
-#define QCA9377_HW_1_0_BOARD_DATA_FILE_SDIO "board-sdio.bin"
 #define QCA9377_HW_1_0_PATCH_LOAD_ADDR	0x1234
 
 /* QCA4019 1.0 definitions */
@@ -503,7 +492,6 @@ struct ath10k_hw_clk_params {
 struct ath10k_hw_params {
 	u32 id;
 	u16 dev_id;
-	enum ath10k_bus bus;
 	const char *name;
 	u32 patch_load_addr;
 	int uart_pin;
@@ -580,12 +568,6 @@ struct ath10k_hw_params {
 
 	/* Target rx ring fill level */
 	u32 rx_ring_fill_level;
-
-	/* Specifies whether or not the device should be started once.
-	 * If set, the device will be started once by the early fw probe
-	 * and it will not be terminated afterwards.
-	 */
-	bool start_once;
 };
 
 struct htt_rx_desc;
@@ -695,16 +677,12 @@ ath10k_rx_desc_get_l3_pad_bytes(struct ath10k_hw_params *hw,
 #define TARGET_TLV_NUM_TDLS_VDEVS		1
 #define TARGET_TLV_NUM_TIDS			((TARGET_TLV_NUM_PEERS) * 2)
 #define TARGET_TLV_NUM_MSDU_DESC		(1024 + 32)
-#define TARGET_TLV_NUM_MSDU_DESC_HL		64
 #define TARGET_TLV_NUM_WOW_PATTERNS		22
 
 /* Target specific defines for WMI-HL-1.0 firmware */
 #define TARGET_HL_10_TLV_NUM_PEERS		14
 #define TARGET_HL_10_TLV_AST_SKID_LIMIT		6
 #define TARGET_HL_10_TLV_NUM_WDS_ENTRIES	2
-
-/* Target specific defines for QCA9377 high latency firmware */
-#define TARGET_QCA9377_HL_NUM_PEERS		15
 
 /* Diagnostic Window */
 #define CE_DIAG_PIPE	7

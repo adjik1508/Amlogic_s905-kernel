@@ -1383,6 +1383,8 @@ static void hdmi_pcm_setup_pin(struct hdmi_spec *spec,
 		pcm = get_pcm_rec(spec, per_pin->pcm_idx);
 	else
 		return;
+	if (!pcm->pcm)
+		return;
 	if (!test_bit(per_pin->pcm_idx, &spec->pcm_in_use))
 		return;
 
@@ -1778,14 +1780,6 @@ static int hdmi_add_cvt(struct hda_codec *codec, hda_nid_t cvt_nid)
 	if (err < 0)
 		return err;
 
-	/*
-	 * Some HDMI codecs (at least NVIDIA 0x10de000b:0x10de0101:0x100100)
-	 * start transmitting an empty audio stream as soon as PIN_OUT and
-	 * AC_DIG1_ENABLE are enabled, which happens at open() time.
-	 * To avoid that, set format to 0, which is not valid for HDMI.
-	*/
-	snd_hda_codec_write(codec, cvt_nid, 0, AC_VERB_SET_STREAM_FORMAT, 0);
-
 	if (spec->num_cvts < ARRAY_SIZE(spec->cvt_nids))
 		spec->cvt_nids[spec->num_cvts] = cvt_nid;
 	spec->num_cvts++;
@@ -1944,12 +1938,6 @@ static int hdmi_pcm_close(struct hda_pcm_stream *hinfo,
 	int pinctl;
 
 	if (hinfo->nid) {
-		/*
-		 * Make sure no empty audio is output after this point by
-		 * setting stream format to 0, which is not valid for HDMI.
-		*/
-		__snd_hda_codec_cleanup_stream(codec, hinfo->nid, 1);
-
 		pcm_idx = hinfo_to_pcm_index(codec, hinfo);
 		if (snd_BUG_ON(pcm_idx < 0))
 			return -EINVAL;
@@ -2165,8 +2153,13 @@ static int generic_hdmi_build_controls(struct hda_codec *codec)
 	int dev, err;
 	int pin_idx, pcm_idx;
 
-
 	for (pcm_idx = 0; pcm_idx < spec->pcm_used; pcm_idx++) {
+		if (!get_pcm_rec(spec, pcm_idx)->pcm) {
+			/* no PCM: mark this for skipping permanently */
+			set_bit(pcm_idx, &spec->pcm_bitmap);
+			continue;
+		}
+
 		err = generic_hdmi_build_jack(codec, pcm_idx);
 		if (err < 0)
 			return err;

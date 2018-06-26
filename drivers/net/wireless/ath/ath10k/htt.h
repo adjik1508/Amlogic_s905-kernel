@@ -699,15 +699,6 @@ struct htt_rx_indication {
 	struct htt_rx_indication_mpdu_range mpdu_ranges[0];
 } __packed;
 
-/* High latency version of the RX indication */
-struct htt_rx_indication_hl {
-	struct htt_rx_indication_hdr hdr;
-	struct htt_rx_indication_ppdu ppdu;
-	struct htt_rx_indication_prefix prefix;
-	struct fw_rx_desc_hl fw_desc;
-	struct htt_rx_indication_mpdu_range mpdu_ranges[0];
-} __packed;
-
 static inline struct htt_rx_indication_mpdu_range *
 		htt_rx_ind_get_mpdu_ranges(struct htt_rx_indication *rx_ind)
 {
@@ -717,18 +708,6 @@ static inline struct htt_rx_indication_mpdu_range *
 	     + sizeof(rx_ind->ppdu)
 	     + sizeof(rx_ind->prefix)
 	     + roundup(__le16_to_cpu(rx_ind->prefix.fw_rx_desc_bytes), 4);
-	return ptr;
-}
-
-static inline struct htt_rx_indication_mpdu_range *
-	htt_rx_ind_get_mpdu_ranges_hl(struct htt_rx_indication_hl *rx_ind)
-{
-	void *ptr = rx_ind;
-
-	ptr += sizeof(rx_ind->hdr)
-	     + sizeof(rx_ind->ppdu)
-	     + sizeof(rx_ind->prefix)
-	     + sizeof(rx_ind->fw_desc);
 	return ptr;
 }
 
@@ -1642,7 +1621,6 @@ struct htt_resp {
 		struct htt_mgmt_tx_completion mgmt_tx_completion;
 		struct htt_data_tx_completion data_tx_completion;
 		struct htt_rx_indication rx_ind;
-		struct htt_rx_indication_hl rx_ind_hl;
 		struct htt_rx_fragment_indication rx_frag_ind;
 		struct htt_rx_peer_map peer_map;
 		struct htt_rx_peer_unmap peer_unmap;
@@ -1870,57 +1848,6 @@ struct ath10k_htt_tx_ops {
 	void (*htt_free_txbuff)(struct ath10k_htt *htt);
 };
 
-static inline int ath10k_htt_send_rx_ring_cfg(struct ath10k_htt *htt)
-{
-	if (!htt->tx_ops->htt_send_rx_ring_cfg)
-		return -EOPNOTSUPP;
-
-	return htt->tx_ops->htt_send_rx_ring_cfg(htt);
-}
-
-static inline int ath10k_htt_send_frag_desc_bank_cfg(struct ath10k_htt *htt)
-{
-	if (!htt->tx_ops->htt_send_frag_desc_bank_cfg)
-		return -EOPNOTSUPP;
-
-	return htt->tx_ops->htt_send_frag_desc_bank_cfg(htt);
-}
-
-static inline int ath10k_htt_alloc_frag_desc(struct ath10k_htt *htt)
-{
-	if (!htt->tx_ops->htt_alloc_frag_desc)
-		return -EOPNOTSUPP;
-
-	return htt->tx_ops->htt_alloc_frag_desc(htt);
-}
-
-static inline void ath10k_htt_free_frag_desc(struct ath10k_htt *htt)
-{
-	if (htt->tx_ops->htt_free_frag_desc)
-		htt->tx_ops->htt_free_frag_desc(htt);
-}
-
-static inline int ath10k_htt_tx(struct ath10k_htt *htt,
-				enum ath10k_hw_txrx_mode txmode,
-				struct sk_buff *msdu)
-{
-	return htt->tx_ops->htt_tx(htt, txmode, msdu);
-}
-
-static inline int ath10k_htt_alloc_txbuff(struct ath10k_htt *htt)
-{
-	if (!htt->tx_ops->htt_alloc_txbuff)
-		return -EOPNOTSUPP;
-
-	return htt->tx_ops->htt_alloc_txbuff(htt);
-}
-
-static inline void ath10k_htt_free_txbuff(struct ath10k_htt *htt)
-{
-	if (htt->tx_ops->htt_free_txbuff)
-		htt->tx_ops->htt_free_txbuff(htt);
-}
-
 struct ath10k_htt_rx_ops {
 	size_t (*htt_get_rx_ring_size)(struct ath10k_htt *htt);
 	void (*htt_config_paddrs_ring)(struct ath10k_htt *htt, void *vaddr);
@@ -1929,43 +1856,6 @@ struct ath10k_htt_rx_ops {
 	void* (*htt_get_vaddr_ring)(struct ath10k_htt *htt);
 	void (*htt_reset_paddrs_ring)(struct ath10k_htt *htt, int idx);
 };
-
-static inline size_t ath10k_htt_get_rx_ring_size(struct ath10k_htt *htt)
-{
-	if (!htt->rx_ops->htt_get_rx_ring_size)
-		return 0;
-
-	return htt->rx_ops->htt_get_rx_ring_size(htt);
-}
-
-static inline void ath10k_htt_config_paddrs_ring(struct ath10k_htt *htt,
-						 void *vaddr)
-{
-	if (htt->rx_ops->htt_config_paddrs_ring)
-		htt->rx_ops->htt_config_paddrs_ring(htt, vaddr);
-}
-
-static inline void ath10k_htt_set_paddrs_ring(struct ath10k_htt *htt,
-					      dma_addr_t paddr,
-					      int idx)
-{
-	if (htt->rx_ops->htt_set_paddrs_ring)
-		htt->rx_ops->htt_set_paddrs_ring(htt, paddr, idx);
-}
-
-static inline void *ath10k_htt_get_vaddr_ring(struct ath10k_htt *htt)
-{
-	if (!htt->rx_ops->htt_get_vaddr_ring)
-		return NULL;
-
-	return htt->rx_ops->htt_get_vaddr_ring(htt);
-}
-
-static inline void ath10k_htt_reset_paddrs_ring(struct ath10k_htt *htt, int idx)
-{
-	if (htt->rx_ops->htt_reset_paddrs_ring)
-		htt->rx_ops->htt_reset_paddrs_ring(htt, idx);
-}
 
 #define RX_HTT_HDR_STATUS_LEN 64
 
@@ -1994,31 +1884,6 @@ struct htt_rx_desc {
 	u8 rx_hdr_status[RX_HTT_HDR_STATUS_LEN];
 	u8 msdu_payload[0];
 };
-
-#define HTT_RX_DESC_HL_INFO_SEQ_NUM_MASK           0x00000fff
-#define HTT_RX_DESC_HL_INFO_SEQ_NUM_LSB            0
-#define HTT_RX_DESC_HL_INFO_ENCRYPTED_MASK         0x00001000
-#define HTT_RX_DESC_HL_INFO_ENCRYPTED_LSB          12
-#define HTT_RX_DESC_HL_INFO_CHAN_INFO_PRESENT_MASK 0x00002000
-#define HTT_RX_DESC_HL_INFO_CHAN_INFO_PRESENT_LSB  13
-#define HTT_RX_DESC_HL_INFO_MCAST_BCAST_MASK       0x00008000
-#define HTT_RX_DESC_HL_INFO_MCAST_BCAST_LSB        15
-#define HTT_RX_DESC_HL_INFO_FRAGMENT_MASK          0x00010000
-#define HTT_RX_DESC_HL_INFO_FRAGMENT_LSB           16
-#define HTT_RX_DESC_HL_INFO_KEY_ID_OCT_MASK        0x01fe0000
-#define HTT_RX_DESC_HL_INFO_KEY_ID_OCT_LSB         17
-
-struct htt_rx_desc_base_hl {
-	__le32 info; /* HTT_RX_DESC_HL_INFO_ */
-};
-
-struct htt_rx_chan_info {
-	__le16 primary_chan_center_freq_mhz;
-	__le16 contig_chan1_center_freq_mhz;
-	__le16 contig_chan2_center_freq_mhz;
-	u8 phy_mode;
-	u8 reserved;
-} __packed;
 
 #define HTT_RX_DESC_ALIGN 8
 
