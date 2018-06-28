@@ -374,5 +374,6 @@ struct vdec_codec_ops codec_h264_ops = {
 	.stop = codec_h264_stop,
 	.load_extended_firmware = codec_h264_load_extended_firmware,
 	.isr = codec_h264_isr,
+	.notify_dst_buffer = vdec_queue_recycle,
 };
 

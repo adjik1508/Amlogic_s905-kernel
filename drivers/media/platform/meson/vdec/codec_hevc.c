@@ -374,6 +374,24 @@ struct codec_hevc {
 	u32 tile_height_lcu;
 };
 
+static u32 codec_hevc_num_pending_bufs(struct vdec_session *sess)
+{
+	struct codec_hevc *hevc;
+	u32 ret;
+
+	mutex_lock(&sess->codec_lock);
+	hevc = sess->priv;
+	if (!hevc) {
+		mutex_unlock(&sess->codec_lock);
+		return 0;
+	}
+
+	ret = hevc->frames_num;
+	mutex_unlock(&sess->codec_lock);
+
+	return ret;
+}
+
 /* Update the L0 and L1 reference lists for a given frame */
 static void codec_hevc_update_frame_refs(struct vdec_session *sess, struct hevc_frame *frame)
 {
@@ -811,8 +829,9 @@ static int codec_hevc_start(struct vdec_session *sess)
 	/* AUX buffers */
 	hevc->aux_vaddr = dma_alloc_coherent(core->dev, SIZE_AUX, &hevc->aux_paddr, GFP_KERNEL);
 	if (!hevc->aux_vaddr) {
-		//printk("Failed to request HEVC AUX\n");
-		return -ENOMEM;
+		printk("Failed to request HEVC AUX\n");
+		ret = -ENOMEM;
+		goto free_hevc;
 	}
 	//printk("Allocated AUX: %08X - %08X\n", hevc->aux_paddr, hevc->aux_paddr + SIZE_AUX);
 
@@ -828,8 +847,6 @@ static int codec_hevc_start(struct vdec_session *sess)
 
 	if (sess->fmt_cap->pixfmt != V4L2_PIX_FMT_NV12M)
 		codec_hevc_setup_decode_head(sess);
-
-	//printk("HEVC start OK!\n");
 
 	return 0;
 
@@ -858,6 +875,7 @@ static int codec_hevc_stop(struct vdec_session *sess)
 
 	printk("codec_hevc_stop\n");
 
+	mutex_lock(&sess->codec_lock);
 	codec_hevc_flush_output(sess);
 
 	if (hevc->workspace_vaddr) {
@@ -882,6 +900,7 @@ static int codec_hevc_stop(struct vdec_session *sess)
 
 	kfree(hevc);
 	sess->priv = 0;
+	mutex_unlock(&sess->codec_lock);
 
 	return 0;
 }
@@ -1332,8 +1351,6 @@ static void codec_hevc_update_pocs(struct vdec_session *sess)
 	int iPOCmsb;
 	int iPOClsb = param->p.POClsb;
 
-	hevc->iPrevPOC = hevc->curr_poc;
-
 	if (nal_unit_type == NAL_UNIT_CODED_SLICE_IDR ||
 	    nal_unit_type == NAL_UNIT_CODED_SLICE_IDR_N_LP) {
 		hevc->curr_poc = 0;
@@ -1385,7 +1402,7 @@ static int codec_hevc_process_segment_header(struct vdec_session *sess)
 	}
 
 	codec_hevc_update_pocs(sess);
-	printk("curr_poc = %u; iPrevPOC = %u; iPrevTid0POC = %u\n", hevc->curr_poc, hevc->iPrevPOC, hevc->iPrevTid0POC);
+	printk("curr_poc = %u; iPrevTid0POC = %u\n", hevc->curr_poc, hevc->iPrevTid0POC);
 
 	/* First slice: new frame */
 	if (slice_segment_address == 0) {
@@ -1393,8 +1410,11 @@ static int codec_hevc_process_segment_header(struct vdec_session *sess)
 		codec_hevc_output_frames(sess);
 
 		hevc->cur_frame = codec_hevc_prepare_new_frame(sess);
-		if (!hevc->cur_frame)
+		if (!hevc->cur_frame) {
+			dev_err(sess->core->dev_dec,
+				"No destination buffer available\n");
 			return -1;
+		}
 
 		codec_hevc_update_tiles(sess);
 	} else {
@@ -1460,23 +1480,30 @@ static void codec_hevc_fetch_rpm(struct vdec_session *sess)
 static irqreturn_t codec_hevc_threaded_isr(struct vdec_session *sess)
 {
 	struct vdec_core *core = sess->core;
-	struct codec_hevc *hevc = sess->priv;
+	struct codec_hevc *hevc;
+
+	mutex_lock(&sess->codec_lock);
+	hevc = sess->priv;
+	if (!hevc)
+		goto unlock;
 
 	if (hevc->dec_status != HEVC_SLICE_SEGMENT_DONE) {
 		dev_err(core->dev_dec, "Unrecognized dec_status: %08X\n",
 			hevc->dec_status);
 		vdec_abort(sess);
-		return IRQ_HANDLED;
+		goto unlock;
 	}
 
 	codec_hevc_fetch_rpm(sess);
 	if (codec_hevc_process_rpm(sess)) {
 		vdec_abort(sess);
-		return IRQ_HANDLED;
+		goto unlock;
 	}
 
-	if (codec_hevc_process_segment_header(sess) == -1)
-		return IRQ_HANDLED;
+	if (codec_hevc_process_segment_header(sess)) {
+		vdec_abort(sess);
+		goto unlock;
+	}
 
 	codec_hevc_update_frame_refs(sess, hevc->cur_frame);
 	codec_hevc_update_col_frame(hevc);
@@ -1491,6 +1518,8 @@ static irqreturn_t codec_hevc_threaded_isr(struct vdec_session *sess)
 	/* Interrupt the firmware's processor */
 	writel_relaxed(AMRISC_MAIN_REQ, core->dos_base + HEVC_MCPU_INTR_REQ);
 
+unlock:
+	mutex_unlock(&sess->codec_lock);
 	return IRQ_HANDLED;
 }
 
@@ -1509,4 +1538,5 @@ struct vdec_codec_ops codec_hevc_ops = {
 	.stop = codec_hevc_stop,
 	.isr = codec_hevc_isr,
 	.threaded_isr = codec_hevc_threaded_isr,
+	.num_pending_bufs = codec_hevc_num_pending_bufs,
 };

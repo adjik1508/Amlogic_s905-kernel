@@ -41,6 +41,7 @@
 
 #include "meson_drv.h"
 #include "meson_plane.h"
+#include "meson_overlay.h"
 #include "meson_crtc.h"
 #include "meson_venc_cvbs.h"
 
@@ -197,8 +198,10 @@ static int meson_drv_bind_master(struct device *dev, bool has_components)
 	priv->io_base = regs;
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "hhi");
-	if (!res)
-		return -EINVAL;
+	if (!res) {
+		ret = -EINVAL;
+		goto free_drm;
+	}
 	/* Simply ioremap since it may be a shared register zone */
 	regs = devm_ioremap(dev, res->start, resource_size(res));
 	if (!regs) {
@@ -215,8 +218,10 @@ static int meson_drv_bind_master(struct device *dev, bool has_components)
 	}
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "dmc");
-	if (!res)
-		return -EINVAL;
+	if (!res) {
+		ret = -EINVAL;
+		goto free_drm;
+	}
 	/* Simply ioremap since it may be a shared register zone */
 	regs = devm_ioremap(dev, res->start, resource_size(res));
 	if (!regs) {
@@ -265,6 +270,10 @@ static int meson_drv_bind_master(struct device *dev, bool has_components)
 	}
 
 	ret = meson_plane_create(priv);
+	if (ret)
+		goto free_drm;
+
+	ret = meson_overlay_create(priv);
 	if (ret)
 		goto free_drm;
 

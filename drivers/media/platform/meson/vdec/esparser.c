@@ -172,15 +172,15 @@ int esparser_queue_eos(struct vdec_session *sess)
 	dma_addr_t eos_paddr;
 	int ret;
 
-	eos_vaddr = dma_alloc_coherent(dev, sizeof(eos_tail_data) + 512, &eos_paddr, GFP_KERNEL);
+	eos_vaddr = dma_alloc_coherent(dev, EOS_TAIL_BUF_SIZE + 512, &eos_paddr, GFP_KERNEL);
 	if (!eos_vaddr)
 		return -ENOMEM;
 
 	sess->should_stop = 1;
 
 	memcpy(eos_vaddr, eos_tail_data, sizeof(eos_tail_data));
-	ret = esparser_write_data(core, eos_paddr, sizeof(eos_tail_data));
-	dma_free_coherent(dev, sizeof(eos_tail_data) + 512,
+	ret = esparser_write_data(core, eos_paddr, EOS_TAIL_BUF_SIZE);
+	dma_free_coherent(dev, EOS_TAIL_BUF_SIZE + 512,
 			  eos_vaddr, eos_paddr);
 
 	return ret;
@@ -191,6 +191,8 @@ static int esparser_queue(struct vdec_session *sess, struct vb2_v4l2_buffer *vbu
 	int ret;
 	struct vb2_buffer *vb = &vbuf->vb2_buf;
 	struct vdec_core *core = sess->core;
+	struct vdec_codec_ops *codec_ops = sess->fmt_out->codec_ops;
+	u32 num_dst_bufs = v4l2_m2m_num_dst_bufs_ready(sess->m2m_ctx);
 	u32 payload_size = vb2_get_plane_payload(vb, 0);
 	dma_addr_t phy = vb2_dma_contig_plane_dma_addr(vb, 0);
 
@@ -199,8 +201,11 @@ static int esparser_queue(struct vdec_session *sess, struct vb2_v4l2_buffer *vbu
 		return 0;
 	}
 
+	if (codec_ops->num_pending_bufs)
+		num_dst_bufs += codec_ops->num_pending_bufs(sess);
+
 	if (esparser_vififo_get_free_space(sess) < payload_size ||
-	    atomic_read(&sess->esparser_queued_bufs) >= 17)
+	    atomic_read(&sess->esparser_queued_bufs) >= num_dst_bufs)
 		return -EAGAIN;
 
 	v4l2_m2m_src_buf_remove_by_buf(sess->m2m_ctx, vbuf);

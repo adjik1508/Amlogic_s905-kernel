@@ -203,4 +203,5 @@ struct vdec_codec_ops codec_mjpeg_ops = {
 	.start = codec_mjpeg_start,
 	.stop = codec_mjpeg_stop,
 	.isr = codec_mjpeg_isr,
+	.notify_dst_buffer = vdec_queue_recycle,
 };

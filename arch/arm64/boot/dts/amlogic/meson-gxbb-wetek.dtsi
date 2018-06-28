@@ -85,7 +85,7 @@
 		clock-names = "ext_clock";
 	};
 
-	cvbs-connector {
+	cvbs_connector: cvbs-connector {
 		compatible = "composite-video-connector";
 
 		port {
@@ -108,13 +108,37 @@
 
 	sound {
 		compatible = "simple-audio-card";
-		simple-audio-card,name = "meson-gx-preview";
+		simple-audio-card,name = "HDMI";
 		status = "okay";
 
 		simple-audio-card,dai-link@0 {
 			/* HDMI Output */
 			format = "i2s";
-			mclk-fs = <256>;
+			mclk-fs = <128>;
+			bitclock-master =  <&i2s_dai>;
+			frame-master = <&i2s_dai>;
+			plat {
+				sound-dai = <&aiu_i2s_dma>;
+			};
+
+			cpu {
+				sound-dai = <&i2s_dai>;
+			};
+
+			codec {
+				sound-dai = <&hdmi_tx>;
+			};
+		};
+	};
+
+	sound {
+		compatible = "simple-audio-card";
+		simple-audio-card,name = "HDMI";
+
+		simple-audio-card,dai-link@0 {
+			/* HDMI Output */
+			format = "i2s";
+			mclk-fs = <128>;
 			bitclock-master =  <&i2s_dai>;
 			frame-master = <&i2s_dai>;
 			plat {
@@ -149,6 +173,18 @@
 	pinctrl-0 = <&ao_cec_pins>;
 	pinctrl-names = "default";
 	hdmi-phandle = <&hdmi_tx>;
+};
+
+&audio {
+	status = "okay";
+};
+
+&aiu_i2s_dma {
+	status = "okay";
+};
+
+&i2s_dai {
+	status = "okay";
 };
 
 &cvbs_vdac_port {

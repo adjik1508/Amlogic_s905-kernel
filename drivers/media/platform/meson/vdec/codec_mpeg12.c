@@ -188,5 +188,6 @@ struct vdec_codec_ops codec_mpeg12_ops = {
 	.start = codec_mpeg12_start,
 	.stop = codec_mpeg12_stop,
 	.isr = codec_mpeg12_isr,
+	.notify_dst_buffer = vdec_queue_recycle,
 };
 

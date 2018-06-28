@@ -213,5 +213,6 @@ struct vdec_codec_ops codec_mpeg4_ops = {
 	.start = codec_mpeg4_start,
 	.stop = codec_mpeg4_stop,
 	.isr = codec_mpeg4_isr,
+	.notify_dst_buffer = vdec_queue_recycle,
 };
 

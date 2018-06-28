@@ -82,7 +82,7 @@ static void vdec_poweroff(struct vdec_session *sess) {
 	clk_disable_unprepare(sess->core->dos_parser_clk);
 }
 
-static void vdec_queue_recycle(struct vdec_session *sess, struct vb2_buffer *vb)
+void vdec_queue_recycle(struct vdec_session *sess, struct vb2_buffer *vb)
 {
 	struct vdec_buffer *new_buf;
 
@@ -148,6 +148,7 @@ static void vdec_vb2_buf_queue(struct vb2_buffer *vb)
 	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
 	struct vdec_session *sess = vb2_get_drv_priv(vb->vb2_queue);
 	struct v4l2_m2m_ctx *m2m_ctx = sess->m2m_ctx;
+	struct vdec_codec_ops *codec_ops = sess->fmt_out->codec_ops;
 
 	mutex_lock(&sess->lock);
 	v4l2_m2m_buf_queue(m2m_ctx, vbuf);
@@ -157,8 +158,8 @@ static void vdec_vb2_buf_queue(struct vb2_buffer *vb)
 	
 	if (vb->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		schedule_work(&sess->esparser_queue_work);
-	} else
-		vdec_queue_recycle(sess, vb);
+	} else if (codec_ops->notify_dst_buffer)
+		codec_ops->notify_dst_buffer(sess, vb);
 
 unlock:
 	mutex_unlock(&sess->lock);
@@ -646,6 +647,7 @@ static int vdec_open(struct file *file)
 	INIT_WORK(&sess->esparser_queue_work, esparser_queue_all_src);
 	spin_lock_init(&sess->bufs_spinlock);
 	mutex_init(&sess->lock);
+	mutex_init(&sess->codec_lock);
 	mutex_init(&sess->bufs_recycle_lock);
 
 	sess->m2m_dev = v4l2_m2m_init(&vdec_m2m_ops);
@@ -720,8 +722,8 @@ void vdec_dst_buf_done(struct vdec_session *sess, struct vb2_v4l2_buffer *vbuf)
 unlock:
 	spin_unlock_irqrestore(&sess->bufs_spinlock, flags);
 
-	/* Buffer done probably means the vififo got freed */
 	atomic_dec(&sess->esparser_queued_bufs);
+	/* Buffer done probably means the vififo got freed */
 	schedule_work(&sess->esparser_queue_work);
 }
 
