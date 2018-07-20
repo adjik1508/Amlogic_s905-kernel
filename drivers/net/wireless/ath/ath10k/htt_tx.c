@@ -153,28 +153,22 @@ void ath10k_htt_tx_txq_update(struct ieee80211_hw *hw,
 
 void ath10k_htt_tx_dec_pending(struct ath10k_htt *htt)
 {
-	if (htt->ar->hif.bus == ATH10K_BUS_USB)
-		return;
-
 	lockdep_assert_held(&htt->tx_lock);
 
 	htt->num_pending_tx--;
-	if (htt->num_pending_tx == htt->max_num_pending_tx - 1)
+	if (htt->num_pending_tx == htt->num_pending_tx_unlock)
 		ath10k_mac_tx_unlock(htt->ar, ATH10K_TX_PAUSE_Q_FULL);
 }
 
 int ath10k_htt_tx_inc_pending(struct ath10k_htt *htt)
 {
-	if (htt->ar->hif.bus == ATH10K_BUS_USB)
-		return 0;
-
 	lockdep_assert_held(&htt->tx_lock);
 
 	if (htt->num_pending_tx >= htt->max_num_pending_tx)
 		return -EBUSY;
 
 	htt->num_pending_tx++;
-	if (htt->num_pending_tx == htt->max_num_pending_tx)
+	if (htt->num_pending_tx == htt->num_pending_tx_lock)
 		ath10k_mac_tx_lock(htt->ar, ATH10K_TX_PAUSE_Q_FULL);
 
 	return 0;
@@ -501,7 +495,7 @@ int ath10k_htt_tx_start(struct ath10k_htt *htt)
 	if (htt->tx_mem_allocated)
 		return 0;
 
-	if (ar->is_high_latency)
+	if (ar->dev_type == ATH10K_DEV_TYPE_HL)
 		return 0;
 
 	ret = ath10k_htt_tx_alloc_buf(htt);
@@ -1117,7 +1111,7 @@ static u8 ath10k_htt_tx_get_tid(struct sk_buff *skb, bool is_eth)
 	if (!is_eth && ieee80211_is_mgmt(hdr->frame_control))
 		return HTT_DATA_TX_EXT_TID_MGMT;
 	else if (cb->flags & ATH10K_SKB_F_QOS)
-		return skb->priority % IEEE80211_QOS_CTL_TID_MASK;
+		return skb->priority & IEEE80211_QOS_CTL_TID_MASK;
 	else
 		return HTT_DATA_TX_EXT_TID_NON_QOS_MCAST_BCAST;
 }
@@ -1186,7 +1180,7 @@ int ath10k_htt_mgmt_tx(struct ath10k_htt *htt, struct sk_buff *msdu)
 	return 0;
 
 err_unmap_msdu:
-	if (!ar->is_high_latency)
+	if (ar->dev_type != ATH10K_DEV_TYPE_HL)
 		dma_unmap_single(dev, skb_cb->paddr, msdu->len, DMA_TO_DEVICE);
 err_free_txdesc:
 	dev_kfree_skb_any(txdesc);
@@ -1198,13 +1192,70 @@ err:
 	return res;
 }
 
+#define P80211_OUI_LEN 3
+
+struct ieee80211_snap_hdr {
+	u8     dsap;   /* always 0xAA */
+	u8     ssap;   /* always 0xAA */
+	u8     ctrl;   /* always 0x03 */
+	u8     oui[P80211_OUI_LEN];    /* organizational universal id */
+	__be16 ether_type;
+} __attribute__ ((packed));
+
+static int __dot11_to_dot3(struct sk_buff *skb)
+{
+	struct ieee80211_hdr_3addr *dot11_hdr;
+	struct ieee80211_snap_hdr *snap_hdr;
+	struct ethhdr eth_hdr;
+	size_t dot11_hdr_len;
+	bool tods, fromds;
+	u8 *dst_addr, *src_addr;
+
+	dot11_hdr = (struct ieee80211_hdr_3addr *) skb->data;
+
+	/* Depending on the TODS and FROMDS flags, the addresses will have
+	 * different meaning
+	 */
+	tods = ieee80211_has_tods(dot11_hdr->frame_control);
+	fromds = ieee80211_has_fromds(dot11_hdr->frame_control);
+	if (!tods && !fromds) {
+		dst_addr = dot11_hdr->addr1;
+		src_addr = dot11_hdr->addr2;
+	} else if (!tods && fromds) {
+		dst_addr = dot11_hdr->addr1;
+		src_addr = dot11_hdr->addr3;
+	} else if (tods && !fromds) {
+		dst_addr = dot11_hdr->addr3;
+		src_addr = dot11_hdr->addr2;
+	} else { /* tods && fromds */
+		/* Unsupported for now */
+		return -1;
+	}
+
+	if (ieee80211_is_data_qos(dot11_hdr->frame_control))
+		dot11_hdr_len = sizeof(struct ieee80211_qos_hdr);
+	else
+		dot11_hdr_len = sizeof(struct ieee80211_hdr_3addr);
+
+	snap_hdr = (struct ieee80211_snap_hdr *)(skb->data + dot11_hdr_len);
+	memcpy(eth_hdr.h_dest, dst_addr, ETH_ALEN);
+	memcpy(eth_hdr.h_source, src_addr, ETH_ALEN);
+	eth_hdr.h_proto = snap_hdr->ether_type;
+
+	skb_pull(skb, dot11_hdr_len + sizeof(struct ieee80211_snap_hdr));
+	skb_push(skb, sizeof(eth_hdr));
+	memcpy(skb->data, &eth_hdr, sizeof(eth_hdr));
+
+	return dot11_hdr_len + sizeof(struct ieee80211_snap_hdr) - sizeof(eth_hdr);
+}
+
 #define HTT_TX_HL_NEEDED_HEADROOM \
 	(unsigned int)(sizeof(struct htt_cmd_hdr) + \
 	sizeof(struct htt_data_tx_desc) + \
 	sizeof(struct ath10k_htc_hdr))
 
 static int ath10k_htt_tx_hl(struct ath10k_htt *htt, enum ath10k_hw_txrx_mode txmode,
-			    struct sk_buff *msdu)
+			    struct sk_buff *msdu, bool more_data)
 {
 	struct ath10k *ar = htt->ar;
 	int res, data_len;
@@ -1224,7 +1275,19 @@ static int ath10k_htt_tx_hl(struct ath10k_htt *htt, enum ath10k_hw_txrx_mode txm
 	switch (txmode) {
 	case ATH10K_HW_TXRX_RAW:
 	case ATH10K_HW_TXRX_NATIVE_WIFI:
-		flags0 |= HTT_DATA_TX_DESC_FLAGS0_MAC_HDR_PRESENT;
+		res = __dot11_to_dot3(msdu);
+		if (res >= 0) {
+			/* Header conversion was successful. Treat the frame as
+			 * a dot3 frame from now on.
+			 */
+			txmode = ATH10K_HW_TXRX_ETHERNET;
+			/* The dot3 frame is always shorter than the native wifi
+			 * frame. Adjust data_len accordingly
+			 */
+			data_len -= res;
+		} else {
+			flags0 |= HTT_DATA_TX_DESC_FLAGS0_MAC_HDR_PRESENT;
+		}
 		/* fall through */
 	case ATH10K_HW_TXRX_ETHERNET:
 		flags0 |= SM(txmode, HTT_DATA_TX_DESC_FLAGS0_PKT_TYPE);
@@ -1266,7 +1329,6 @@ static int ath10k_htt_tx_hl(struct ath10k_htt *htt, enum ath10k_hw_txrx_mode txm
 	}
 
 	if (ar->hif.bus == ATH10K_BUS_SDIO) {
-		flags1 |= HTT_DATA_TX_DESC_FLAGS1_POSTPONED;
 		spin_lock_bh(&htt->tx_lock);
 		res = ath10k_htt_tx_alloc_msdu_id(htt, msdu);
 		spin_unlock_bh(&htt->tx_lock);
@@ -1293,7 +1355,7 @@ static int ath10k_htt_tx_hl(struct ath10k_htt *htt, enum ath10k_hw_txrx_mode txm
 	 */
 	tx_desc->peerid = __cpu_to_le32(HTT_INVALID_PEERID);
 
-	res = ath10k_htc_send(&htt->ar->htc, htt->eid, msdu);
+	res = ath10k_htc_send_bundle(&htt->ar->htc, htt->eid, msdu, more_data);
 
 out:
 	return res;
@@ -1301,7 +1363,8 @@ out:
 
 static int ath10k_htt_tx_32(struct ath10k_htt *htt,
 			    enum ath10k_hw_txrx_mode txmode,
-			    struct sk_buff *msdu)
+			    struct sk_buff *msdu,
+			    bool more_data)
 {
 	struct ath10k *ar = htt->ar;
 	struct device *dev = ar->dev;
@@ -1503,7 +1566,8 @@ err:
 
 static int ath10k_htt_tx_64(struct ath10k_htt *htt,
 			    enum ath10k_hw_txrx_mode txmode,
-			    struct sk_buff *msdu)
+			    struct sk_buff *msdu,
+			    bool more_data)
 {
 	struct ath10k *ar = htt->ar;
 	struct device *dev = ar->dev;
@@ -1638,8 +1702,11 @@ static int ath10k_htt_tx_64(struct ath10k_htt *htt,
 	    !test_bit(ATH10K_FLAG_RAW_MODE, &ar->dev_flags)) {
 		flags1 |= HTT_DATA_TX_DESC_FLAGS1_CKSUM_L3_OFFLOAD;
 		flags1 |= HTT_DATA_TX_DESC_FLAGS1_CKSUM_L4_OFFLOAD;
-		if (ar->hw_params.continuous_frag_desc)
-			ext_desc->flags |= HTT_MSDU_CHECKSUM_ENABLE;
+		if (ar->hw_params.continuous_frag_desc) {
+			memset(ext_desc->tso_flag, 0, sizeof(ext_desc->tso_flag));
+			ext_desc->tso_flag[3] |=
+				__cpu_to_le32(HTT_MSDU_CHECKSUM_ENABLE_64);
+		}
 	}
 
 	/* Prevent firmware from sending up tx inspection requests. There's
@@ -1737,7 +1804,7 @@ void ath10k_htt_set_tx_ops(struct ath10k_htt *htt)
 {
 	struct ath10k *ar = htt->ar;
 
-	if (ar->is_high_latency)
+	if (ar->dev_type == ATH10K_DEV_TYPE_HL)
 		htt->tx_ops = &htt_tx_ops_hl;
 	else if (ar->hw_params.target_64bit)
 		htt->tx_ops = &htt_tx_ops_64;

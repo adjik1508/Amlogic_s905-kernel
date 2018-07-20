@@ -137,10 +137,6 @@ static int dw_hdmi_i2s_hw_params(struct device *dev, void *data,
 			 HDMI_FC_AUDICONF0_CC_MASK, HDMI_FC_AUDICONF0);
 	hdmi_write(audio, hparms->cea.channel_allocation, HDMI_FC_AUDICONF2);
 
-	hdmi_update_bits(audio, HDMI_AUD_CONF0_SW_RESET,
-			 HDMI_AUD_CONF0_SW_RESET, HDMI_AUD_CONF0);
-	hdmi_write(audio, (u8)~HDMI_MC_SWRSTZ_I2SSWRST_REQ, HDMI_MC_SWRSTZ);
-
 	dw_hdmi_audio_enable(hdmi);
 
 	return 0;
@@ -154,6 +150,7 @@ static void dw_hdmi_i2s_audio_shutdown(struct device *dev, void *data)
 	dw_hdmi_audio_disable(hdmi);
 
 	hdmi_write(audio, HDMI_AUD_CONF0_SW_RESET, HDMI_AUD_CONF0);
+	hdmi_write(audio, (u8)~HDMI_MC_SWRSTZ_I2SSWRST_REQ, HDMI_MC_SWRSTZ);
 }
 
 static int dw_hdmi_i2s_get_eld(struct device *dev, void *data,
@@ -236,7 +233,6 @@ static struct platform_driver snd_dw_hdmi_driver = {
 	.remove	= snd_dw_hdmi_remove,
 	.driver	= {
 		.name = DRIVER_NAME,
-		.owner = THIS_MODULE,
 	},
 };
 module_platform_driver(snd_dw_hdmi_driver);

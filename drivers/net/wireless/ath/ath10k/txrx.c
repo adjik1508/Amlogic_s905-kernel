@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2005-2011 Atheros Communications Inc.
  * Copyright (c) 2011-2016 Qualcomm Atheros, Inc.
+ * Copyright (c) 2018, The Linux Foundation. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -90,11 +91,11 @@ int ath10k_txrx_tx_unref(struct ath10k_htt *htt,
 
 	ath10k_htt_tx_free_msdu_id(htt, tx_done->msdu_id);
 	ath10k_htt_tx_dec_pending(htt);
-	if (!ar->is_high_latency && (htt->num_pending_tx == 0))
+	if (htt->num_pending_tx == 0)
 		wake_up(&htt->empty_tx_wq);
 	spin_unlock_bh(&htt->tx_lock);
 
-	if (!ar->is_high_latency)
+	if (ar->dev_type != ATH10K_DEV_TYPE_HL)
 		dma_unmap_single(dev, skb_cb->paddr, msdu->len, DMA_TO_DEVICE);
 
 	ath10k_report_offchan_tx(htt->ar, msdu);
@@ -118,6 +119,13 @@ int ath10k_txrx_tx_unref(struct ath10k_htt *htt,
 			info->flags &= ~IEEE80211_TX_STAT_NOACK_TRANSMITTED;
 		else
 			info->flags &= ~IEEE80211_TX_STAT_ACK;
+	}
+
+	if (tx_done->status == HTT_TX_COMPL_STATE_ACK &&
+	    tx_done->ack_rssi != ATH10K_INVALID_RSSI) {
+		info->status.ack_signal = ATH10K_DEFAULT_NOISE_FLOOR +
+						tx_done->ack_rssi;
+		info->status.is_valid_ack_signal = true;
 	}
 
 	ieee80211_tx_status(htt->ar->hw, msdu);

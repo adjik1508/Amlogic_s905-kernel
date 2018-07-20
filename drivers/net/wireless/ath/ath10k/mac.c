@@ -945,7 +945,7 @@ static void ath10k_mac_vif_beacon_cleanup(struct ath10k_vif *arvif)
 	ath10k_mac_vif_beacon_free(arvif);
 
 	if (arvif->beacon_buf) {
-		if (ar->is_high_latency)
+		if (ar->dev_type == ATH10K_DEV_TYPE_HL)
 			kfree(arvif->beacon_buf);
 		else
 			dma_free_coherent(ar->dev, IEEE80211_MAX_FRAME_LEN,
@@ -3221,6 +3221,15 @@ static void ath10k_reg_notifier(struct wiphy *wiphy,
 					       ar->hw->wiphy->bands[NL80211_BAND_5GHZ]);
 }
 
+static void ath10k_stop_radar_confirmation(struct ath10k *ar)
+{
+	spin_lock_bh(&ar->data_lock);
+	ar->radar_conf_state = ATH10K_RADAR_CONFIRMATION_STOPPED;
+	spin_unlock_bh(&ar->data_lock);
+
+	cancel_work_sync(&ar->radar_confirmation_work);
+}
+
 /***************/
 /* TX handlers */
 /***************/
@@ -3237,6 +3246,9 @@ void ath10k_mac_tx_lock(struct ath10k *ar, int reason)
 	lockdep_assert_held(&ar->htt.tx_lock);
 
 	WARN_ON(reason >= ATH10K_TX_PAUSE_MAX);
+	if (ar->tx_paused & BIT(reason))
+		/* already locked due to this reason */
+		return;
 	ar->tx_paused |= BIT(reason);
 	ieee80211_stop_queues(ar->hw);
 }
@@ -3595,14 +3607,15 @@ ath10k_mac_tx_h_get_txpath(struct ath10k *ar,
 static int ath10k_mac_tx_submit(struct ath10k *ar,
 				enum ath10k_hw_txrx_mode txmode,
 				enum ath10k_mac_tx_path txpath,
-				struct sk_buff *skb)
+				struct sk_buff *skb,
+				bool more_data)
 {
 	struct ath10k_htt *htt = &ar->htt;
 	int ret = -EINVAL;
 
 	switch (txpath) {
 	case ATH10K_MAC_TX_HTT:
-		ret = ath10k_htt_tx(htt, txmode, skb);
+		ret = ath10k_htt_tx(htt, txmode, skb, more_data);
 		break;
 	case ATH10K_MAC_TX_HTT_MGMT:
 		ret = ath10k_htt_mgmt_tx(htt, skb);
@@ -3632,7 +3645,8 @@ static int ath10k_mac_tx(struct ath10k *ar,
 			 struct ieee80211_vif *vif,
 			 enum ath10k_hw_txrx_mode txmode,
 			 enum ath10k_mac_tx_path txpath,
-			 struct sk_buff *skb)
+			 struct sk_buff *skb,
+			 bool more_data)
 {
 	struct ieee80211_hw *hw = ar->hw;
 	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
@@ -3671,7 +3685,7 @@ static int ath10k_mac_tx(struct ath10k *ar,
 		}
 	}
 
-	ret = ath10k_mac_tx_submit(ar, txmode, txpath, skb);
+	ret = ath10k_mac_tx_submit(ar, txmode, txpath, skb, more_data);
 	if (ret) {
 		ath10k_warn(ar, "failed to submit frame: %d\n", ret);
 		return ret;
@@ -3772,7 +3786,7 @@ void ath10k_offchan_tx_work(struct work_struct *work)
 		txmode = ath10k_mac_tx_h_get_txmode(ar, vif, sta, skb);
 		txpath = ath10k_mac_tx_h_get_txpath(ar, skb, txmode);
 
-		ret = ath10k_mac_tx(ar, vif, txmode, txpath, skb);
+		ret = ath10k_mac_tx(ar, vif, txmode, txpath, skb, false);
 		if (ret) {
 			ath10k_warn(ar, "failed to transmit offchannel frame: %d\n",
 				    ret);
@@ -3905,6 +3919,29 @@ struct ieee80211_txq *ath10k_mac_txq_lookup(struct ath10k *ar,
 		return NULL;
 }
 
+static bool ath10k_mac_tx_more_data(struct ath10k *ar,
+				    struct ieee80211_txq *txq,
+				    int max)
+{
+	unsigned long txq_frame_cnt;
+
+	if (max <= 0)
+		return false;
+
+	spin_lock_bh(&ar->htt.tx_lock);
+	if (ar->htt.num_pending_tx >= ar->htt.max_num_pending_tx - 1) {
+		spin_unlock_bh(&ar->htt.tx_lock);
+		return false;
+	}
+	spin_unlock_bh(&ar->htt.tx_lock);
+
+	ieee80211_txq_get_depth(txq, &txq_frame_cnt, NULL);
+	if (txq_frame_cnt <= 1)
+		return false;
+
+	return true;
+}
+
 static bool ath10k_mac_tx_can_push(struct ieee80211_hw *hw,
 				   struct ieee80211_txq *txq)
 {
@@ -3926,7 +3963,8 @@ static bool ath10k_mac_tx_can_push(struct ieee80211_hw *hw,
 }
 
 int ath10k_mac_tx_push_txq(struct ieee80211_hw *hw,
-			   struct ieee80211_txq *txq)
+			   struct ieee80211_txq *txq,
+			   bool more_data)
 {
 	struct ath10k *ar = hw->priv;
 	struct ath10k_htt *htt = &ar->htt;
@@ -3979,7 +4017,7 @@ int ath10k_mac_tx_push_txq(struct ieee80211_hw *hw,
 		spin_unlock_bh(&ar->htt.tx_lock);
 	}
 
-	ret = ath10k_mac_tx(ar, vif, txmode, txpath, skb);
+	ret = ath10k_mac_tx(ar, vif, txmode, txpath, skb, more_data);
 	if (unlikely(ret)) {
 		ath10k_warn(ar, "failed to push frame: %d\n", ret);
 
@@ -4007,6 +4045,7 @@ void ath10k_mac_tx_push_pending(struct ath10k *ar)
 	struct ath10k_txq *last;
 	int ret;
 	int max;
+	bool more_data;
 
 	if (ar->htt.num_pending_tx >= (ar->htt.max_num_pending_tx / 2))
 		return;
@@ -4021,10 +4060,11 @@ void ath10k_mac_tx_push_pending(struct ath10k *ar)
 				   drv_priv);
 
 		/* Prevent aggressive sta/tid taking over tx queue */
-		max = 16;
+		max = HTC_HOST_MAX_MSG_PER_TX_BUNDLE;
 		ret = 0;
 		while (ath10k_mac_tx_can_push(hw, txq) && max--) {
-			ret = ath10k_mac_tx_push_txq(hw, txq);
+			more_data = ath10k_mac_tx_more_data(ar, txq, max);
+			ret = ath10k_mac_tx_push_txq(hw, txq, more_data);
 			if (ret < 0)
 				break;
 		}
@@ -4042,6 +4082,7 @@ void ath10k_mac_tx_push_pending(struct ath10k *ar)
 	rcu_read_unlock();
 	spin_unlock_bh(&ar->txqs_lock);
 }
+EXPORT_SYMBOL(ath10k_mac_tx_push_pending);
 
 /************/
 /* Scanning */
@@ -4260,7 +4301,7 @@ static void ath10k_mac_op_tx(struct ieee80211_hw *hw,
 		spin_unlock_bh(&ar->htt.tx_lock);
 	}
 
-	ret = ath10k_mac_tx(ar, vif, txmode, txpath, skb);
+	ret = ath10k_mac_tx(ar, vif, txmode, txpath, skb, false);
 	if (ret) {
 		ath10k_warn(ar, "failed to transmit frame: %d\n", ret);
 		if (is_htt) {
@@ -4281,8 +4322,9 @@ static void ath10k_mac_op_wake_tx_queue(struct ieee80211_hw *hw,
 	struct ath10k_txq *artxq = (void *)txq->drv_priv;
 	struct ieee80211_txq *f_txq;
 	struct ath10k_txq *f_artxq;
+	bool more_data;
 	int ret = 0;
-	int max = 16;
+	int max = HTC_HOST_MAX_MSG_PER_TX_BUNDLE;
 
 	spin_lock_bh(&ar->txqs_lock);
 	if (list_empty(&artxq->list))
@@ -4293,8 +4335,9 @@ static void ath10k_mac_op_wake_tx_queue(struct ieee80211_hw *hw,
 	list_del_init(&f_artxq->list);
 
 	while (ath10k_mac_tx_can_push(hw, f_txq) && max--) {
-		ret = ath10k_mac_tx_push_txq(hw, f_txq);
-		if (ret)
+		more_data = ath10k_mac_tx_more_data(ar, f_txq, max);
+		ret = ath10k_mac_tx_push_txq(hw, f_txq, more_data);
+		if (ret < 0)
 			break;
 	}
 	if (ret != -ENOENT)
@@ -4337,6 +4380,7 @@ void ath10k_halt(struct ath10k *ar)
 
 	ath10k_scan_finish(ar);
 	ath10k_peer_cleanup_all(ar);
+	ath10k_stop_radar_confirmation(ar);
 	ath10k_core_stop(ar);
 	ath10k_hif_power_down(ar);
 
@@ -4683,6 +4727,13 @@ static int ath10k_start(struct ieee80211_hw *hw)
 		}
 	}
 
+	param = ar->wmi.pdev_param->idle_ps_config;
+	ret = ath10k_wmi_pdev_set_param(ar, param, 1);
+	if (ret && ret != -EOPNOTSUPP) {
+		ath10k_warn(ar, "failed to enable idle_ps_config: %d\n", ret);
+		goto err_core_stop;
+	}
+
 	__ath10k_set_antenna(ar, ar->cfg_tx_chainmask, ar->cfg_rx_chainmask);
 
 	/*
@@ -4754,6 +4805,8 @@ static int ath10k_start(struct ieee80211_hw *hw)
 
 	ath10k_spectral_start(ar);
 	ath10k_thermal_set_throttling(ar);
+
+	ar->radar_conf_state = ATH10K_RADAR_CONFIRMATION_IDLE;
 
 	mutex_unlock(&ar->conf_mutex);
 	return 0;
@@ -5073,7 +5126,7 @@ static int ath10k_add_interface(struct ieee80211_hw *hw,
 	if (vif->type == NL80211_IFTYPE_ADHOC ||
 	    vif->type == NL80211_IFTYPE_MESH_POINT ||
 	    vif->type == NL80211_IFTYPE_AP) {
-		if (ar->is_high_latency) {
+		if (ar->dev_type == ATH10K_DEV_TYPE_HL) {
 			arvif->beacon_buf = kmalloc(IEEE80211_MAX_FRAME_LEN,
 						    GFP_KERNEL);
 			arvif->beacon_paddr = (dma_addr_t)arvif->beacon_buf;
@@ -5272,7 +5325,7 @@ err_vdev_delete:
 
 err:
 	if (arvif->beacon_buf) {
-		if (ar->is_high_latency)
+		if (ar->dev_type == ATH10K_DEV_TYPE_HL)
 			kfree(arvif->beacon_buf);
 		else
 			dma_free_coherent(ar->dev, IEEE80211_MAX_FRAME_LEN,
@@ -5683,6 +5736,7 @@ static int ath10k_hw_scan(struct ieee80211_hw *hw,
 	struct wmi_start_scan_arg arg;
 	int ret = 0;
 	int i;
+	u32 scan_timeout;
 
 	mutex_lock(&ar->conf_mutex);
 
@@ -5732,10 +5786,32 @@ static int ath10k_hw_scan(struct ieee80211_hw *hw,
 		arg.scan_ctrl_flags |= WMI_SCAN_FLAG_PASSIVE;
 	}
 
+	if (req->flags & NL80211_SCAN_FLAG_RANDOM_ADDR) {
+		arg.scan_ctrl_flags |=  WMI_SCAN_ADD_SPOOFED_MAC_IN_PROBE_REQ;
+		ether_addr_copy(arg.mac_addr.addr, req->mac_addr);
+		ether_addr_copy(arg.mac_mask.addr, req->mac_addr_mask);
+	}
+
 	if (req->n_channels) {
 		arg.n_channels = req->n_channels;
 		for (i = 0; i < arg.n_channels; i++)
 			arg.channels[i] = req->channels[i]->center_freq;
+	}
+
+	/* if duration is set, default dwell times will be overwritten */
+	if (req->duration) {
+		arg.dwell_time_active = req->duration;
+		arg.dwell_time_passive = req->duration;
+		arg.burst_duration_ms = req->duration;
+
+		scan_timeout = min_t(u32, arg.max_rest_time *
+				(arg.n_channels - 1) + (req->duration +
+				ATH10K_SCAN_CHANNEL_SWITCH_WMI_EVT_OVERHEAD) *
+				arg.n_channels, arg.max_scan_time + 200);
+
+	} else {
+		/* Add a 200ms margin to account for event/command processing */
+		scan_timeout = arg.max_scan_time + 200;
 	}
 
 	ret = ath10k_start_scan(ar, &arg);
@@ -5746,10 +5822,8 @@ static int ath10k_hw_scan(struct ieee80211_hw *hw,
 		spin_unlock_bh(&ar->data_lock);
 	}
 
-	/* Add a 200ms margin to account for event/command processing */
 	ieee80211_queue_delayed_work(ar->hw, &ar->scan.timeout,
-				     msecs_to_jiffies(arg.max_scan_time +
-						      200));
+				     msecs_to_jiffies(scan_timeout));
 
 exit:
 	mutex_unlock(&ar->conf_mutex);
@@ -8366,6 +8440,8 @@ int ath10k_mac_register(struct ath10k *ar)
 	}
 
 	wiphy_ext_feature_set(ar->hw->wiphy, NL80211_EXT_FEATURE_VHT_IBSS);
+	wiphy_ext_feature_set(ar->hw->wiphy,
+			      NL80211_EXT_FEATURE_SET_SCAN_DWELL);
 
 	/*
 	 * on LL hardware queues are managed entirely by the FW
@@ -8446,6 +8522,17 @@ int ath10k_mac_register(struct ath10k *ar)
 	if (ret) {
 		ath10k_err(ar, "failed to initialise regulatory: %i\n", ret);
 		goto err_dfs_detector_exit;
+	}
+
+	if (test_bit(WMI_SERVICE_SPOOF_MAC_SUPPORT, ar->wmi.svc_map)) {
+		ret = ath10k_wmi_scan_prob_req_oui(ar, ar->mac_addr);
+		if (ret) {
+			ath10k_err(ar, "failed to set prob req oui: %i\n", ret);
+			goto err_dfs_detector_exit;
+		}
+
+		ar->hw->wiphy->features |=
+			NL80211_FEATURE_SCAN_RANDOM_MAC_ADDR;
 	}
 
 	ar->hw->wiphy->cipher_suites = cipher_suites;

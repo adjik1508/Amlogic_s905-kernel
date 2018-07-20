@@ -125,9 +125,7 @@
 #define CLKID_VAPB_1		138
 #define CLKID_VAPB_SEL		139
 #define CLKID_VAPB		140
-#define CLKID_VDEC_1_SEL	151
 #define CLKID_VDEC_1		153
-#define CLKID_VDEC_HEVC_SEL	154
-#define CLKID_VDEC_HEVC	156
+#define CLKID_VDEC_HEVC		156
 
 #endif /* __GXBB_CLKC_H */

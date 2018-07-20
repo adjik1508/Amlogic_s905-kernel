@@ -124,6 +124,8 @@ static void meson_crtc_atomic_disable(struct drm_crtc *crtc,
 
 	DRM_DEBUG_DRIVER("\n");
 
+	DRM_DEBUG_DRIVER("\n");
+
 	drm_crtc_vblank_off(crtc);
 
 	priv->viu.osd1_enabled = false;

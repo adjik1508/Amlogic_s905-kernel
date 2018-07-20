@@ -30,6 +30,7 @@
 #include "debug.h"
 #include "hif.h"
 #include "htc.h"
+#include "mac.h"
 #include "targaddrs.h"
 #include "trace.h"
 #include "sdio.h"
@@ -543,11 +544,11 @@ static int ath10k_sdio_mbox_alloc_bundle(struct ath10k *ar,
 
 	*bndl_cnt = FIELD_GET(ATH10K_HTC_FLAG_BUNDLE_MASK, htc_hdr->flags);
 
-	if (*bndl_cnt > HTC_HOST_MAX_MSG_PER_BUNDLE) {
+	if (*bndl_cnt > HTC_HOST_MAX_MSG_PER_RX_BUNDLE) {
 		ath10k_warn(ar,
 			    "HTC bundle length %u exceeds maximum %u\n",
 			    le16_to_cpu(htc_hdr->len),
-			    HTC_HOST_MAX_MSG_PER_BUNDLE);
+			    HTC_HOST_MAX_MSG_PER_RX_BUNDLE);
 		return -ENOMEM;
 	}
 
@@ -1338,12 +1339,15 @@ static void __ath10k_sdio_write_async(struct ath10k *ar,
 	int ret;
 
 	skb = req->skb;
-	ret = ath10k_sdio_write(ar, req->address, skb->data, skb->len, true);
+	if (skb)
+		ret = ath10k_sdio_write(ar, req->address, skb->data, skb->len, true);
+	else
+		ret = ath10k_sdio_write(ar, req->address, req->buf, req->buf_len, true);
 	if (ret)
 		ath10k_warn(ar, "failed to write skb to 0x%x asynchronously: %d",
 			    req->address, ret);
 
-	if (req->htc_msg) {
+	if (req->htc_msg && skb) {
 		ep = &ar->htc.endpoint[req->eid];
 		ath10k_htc_notify_tx_completion(ep, skb);
 	} else if (req->comp) {
@@ -1403,6 +1407,30 @@ static int ath10k_sdio_prep_async_req(struct ath10k *ar, u32 addr,
 	return 0;
 }
 
+static struct ath10k_sdio_bus_request
+*ath10k_sdio_create_bundle_async_req(struct ath10k *ar,
+				     enum ath10k_htc_ep_id eid)
+{
+	struct ath10k_sdio *ar_sdio = ath10k_sdio_priv(ar);
+	struct ath10k_sdio_bus_request *bus_req;
+
+	lockdep_assert_held(&ar_sdio->wr_async_lock);
+
+	bus_req = ath10k_sdio_alloc_busreq(ar);
+	if (!bus_req) {
+		ath10k_warn(ar,
+			    "unable to allocate bus request for async request\n");
+		return ERR_PTR(-ENOMEM);
+	}
+
+	bus_req->eid = eid;
+	bus_req->htc_msg = true;
+
+	list_add_tail(&bus_req->list, &ar_sdio->wr_asyncq);
+
+	return bus_req;
+}
+
 /* IRQ handler */
 
 static void ath10k_sdio_irq_handler(struct sdio_func *func)
@@ -1424,6 +1452,8 @@ static void ath10k_sdio_irq_handler(struct sdio_func *func)
 		if (ret)
 			break;
 	} while (time_before(jiffies, timeout) && !done);
+
+	ath10k_mac_tx_push_pending(ar);
 
 	sdio_claim_host(ar_sdio->func);
 
@@ -1511,32 +1541,121 @@ static void ath10k_sdio_hif_power_down(struct ath10k *ar)
 	ar_sdio->is_disabled = true;
 }
 
+static size_t ath10k_sdio_hif_tx_bundle_padding(struct ath10k_htc_ep *ep,
+						size_t skb_len, u8 *buf)
+{
+	size_t padded_len;
+	struct ath10k_htc_hdr *htc_hdr;
+
+	padded_len = (skb_len / ep->tx_credit_size + 1) *
+		ep->tx_credit_size;
+	htc_hdr = (struct ath10k_htc_hdr *)buf;
+	htc_hdr->credit_pad = __cpu_to_le16(padded_len - skb_len);
+
+	return padded_len;
+}
+
+static bool ath10k_sdio_hif_is_htt_tx_msg(enum ath10k_htc_svc_id service_id,
+					  struct sk_buff *skb)
+{
+	struct htt_cmd_hdr *htt_cmd_hdr;
+	struct htt_data_tx_desc *tx_desc;
+	u8 txmode;
+
+	if (service_id != ATH10K_HTC_SVC_ID_HTT_DATA_MSG)
+		return false;
+
+	htt_cmd_hdr = (struct htt_cmd_hdr *)
+		(skb->data + sizeof(struct ath10k_htc_hdr));
+
+	if (htt_cmd_hdr->msg_type != HTT_H2T_MSG_TYPE_TX_FRM)
+		return false;
+
+	tx_desc = (struct htt_data_tx_desc *)
+		(skb->data + sizeof(struct ath10k_htc_hdr) + sizeof(struct htt_cmd_hdr));
+	txmode = MS(tx_desc->flags0, HTT_DATA_TX_DESC_FLAGS0_PKT_TYPE);
+
+	return (txmode != ATH10K_HW_TXRX_MGMT);
+}
+
+
 static int ath10k_sdio_hif_tx_sg(struct ath10k *ar, u8 pipe_id,
 				 struct ath10k_hif_sg_item *items, int n_items)
 {
 	struct ath10k_sdio *ar_sdio = ath10k_sdio_priv(ar);
 	enum ath10k_htc_ep_id eid;
+	enum ath10k_htc_svc_id service_id;
+	struct ath10k_htc_ep *ep;
 	struct sk_buff *skb;
 	int ret, i;
+	size_t padded_len, offset;
+	u32 address;
+	struct ath10k_sdio_bus_request *bus_req;
+	bool is_htt_tx_msg;
 
 	eid = pipe_id_to_eid(pipe_id);
+	ep = &ar->htc.endpoint[eid];
+	service_id = ar->htc.endpoint[eid].service_id;
 
-	for (i = 0; i < n_items; i++) {
-		size_t padded_len;
-		u32 address;
+	if (n_items == 1) {
+		skb = items[0].transfer_context;
+		is_htt_tx_msg = ath10k_sdio_hif_is_htt_tx_msg(service_id, skb);
+		if (is_htt_tx_msg) {
+			padded_len = ath10k_sdio_hif_tx_bundle_padding(ep,
+								       skb->len,
+								       skb->data);
+			skb->len = padded_len;
+			address = ar_sdio->mbox_addr[eid] +
+				  ar_sdio->mbox_size[eid] -
+				  skb->len;
 
-		skb = items[i].transfer_context;
+		}
 		padded_len = ath10k_sdio_calc_txrx_padded_len(ar_sdio,
 							      skb->len);
 		skb->len = padded_len;
 
-		/* Write TX data to the end of the mbox address space */
-		address = ar_sdio->mbox_addr[eid] + ar_sdio->mbox_size[eid] -
-			  skb->len;
+		if (!is_htt_tx_msg)
+			/* Write TX data to the end of the mbox address space */
+			address = ar_sdio->mbox_addr[eid] +
+				  ar_sdio->mbox_size[eid] -
+				  skb->len;
+
 		ret = ath10k_sdio_prep_async_req(ar, address, skb,
 						 NULL, true, eid);
 		if (ret)
 			return ret;
+
+	} else {
+		/* Bundle transfer case */
+		spin_lock_bh(&ar_sdio->wr_async_lock);
+		bus_req = ath10k_sdio_create_bundle_async_req(ar, eid);
+		if (IS_ERR(bus_req)) {
+			spin_unlock_bh(&ar_sdio->wr_async_lock);
+			return PTR_ERR(bus_req);
+		}
+
+		for (i = 0, offset = 0; i < n_items; i++) {
+			skb = items[i].transfer_context;
+			/* Each subframe in the bundle should be padded to the
+			 * HTC credit size.
+			 */
+			padded_len = ath10k_sdio_hif_tx_bundle_padding(ep,
+								       skb->len,
+								       bus_req->buf + offset);
+
+			memcpy(bus_req->buf + offset, skb->data, skb->len);
+			offset += padded_len;
+		}
+
+		/* Write TX data to the end of the mbox address space */
+		bus_req->address = ar_sdio->mbox_addr[eid] +
+			ar_sdio->mbox_size[eid] - offset;
+		/* The entire bundle should be padded to a multiple of the mbox
+		 * size.
+		 */
+		padded_len = ath10k_sdio_calc_txrx_padded_len(ar_sdio, offset);
+		bus_req->buf_len = padded_len;
+		spin_unlock_bh(&ar_sdio->wr_async_lock);
 	}
 
 	queue_work(ar_sdio->workqueue, &ar_sdio->wr_async_work);
@@ -2047,37 +2166,37 @@ static int ath10k_sdio_probe(struct sdio_func *func,
 	ar_sdio = ath10k_sdio_priv(ar);
 
 	ar_sdio->irq_data.irq_proc_reg =
-		kzalloc(sizeof(struct ath10k_sdio_irq_proc_regs),
-			GFP_KERNEL);
+		devm_kzalloc(ar->dev, sizeof(struct ath10k_sdio_irq_proc_regs),
+			     GFP_KERNEL);
 	if (!ar_sdio->irq_data.irq_proc_reg) {
 		ret = -ENOMEM;
 		goto err_core_destroy;
 	}
 
 	ar_sdio->irq_data.irq_en_reg =
-		kzalloc(sizeof(struct ath10k_sdio_irq_enable_regs),
-			GFP_KERNEL);
+		devm_kzalloc(ar->dev, sizeof(struct ath10k_sdio_irq_enable_regs),
+			     GFP_KERNEL);
 	if (!ar_sdio->irq_data.irq_en_reg) {
 		ret = -ENOMEM;
-		goto err_free_proc_reg;
+		goto err_core_destroy;
 	}
 
-	ar_sdio->bmi_buf = kzalloc(BMI_MAX_CMDBUF_SIZE, GFP_KERNEL);
+	ar_sdio->bmi_buf = devm_kzalloc(ar->dev, BMI_MAX_CMDBUF_SIZE, GFP_KERNEL);
 	if (!ar_sdio->bmi_buf) {
 		ret = -ENOMEM;
-		goto err_free_en_reg;
+		goto err_core_destroy;
 	}
 
-	ar_sdio->dma_buffer = kzalloc(ATH10K_SDIO_DMA_BUF_SIZE, GFP_KERNEL);
+	ar_sdio->dma_buffer = devm_kzalloc(ar->dev, ATH10K_SDIO_DMA_BUF_SIZE, GFP_KERNEL);
 	if (!ar_sdio->dma_buffer) {
 		ret = -ENOMEM;
-		goto err_free_bmi_buf;
+		goto err_core_destroy;
 	}
 
-	ar_sdio->vsg_buffer = kzalloc(ATH10K_SDIO_VSG_BUF_SIZE, GFP_KERNEL);
+	ar_sdio->vsg_buffer = devm_kzalloc(ar->dev, ATH10K_SDIO_VSG_BUF_SIZE, GFP_KERNEL);
 	if (!ar_sdio->vsg_buffer) {
 		ret = -ENOMEM;
-		goto err_free_bmi_buf;
+		goto err_core_destroy;
 	}
 
 	ar_sdio->func = func;
@@ -2098,7 +2217,7 @@ static int ath10k_sdio_probe(struct sdio_func *func,
 	ar_sdio->workqueue = create_singlethread_workqueue("ath10k_sdio_wq");
 	if (!ar_sdio->workqueue) {
 		ret = -ENOMEM;
-		goto err_dma;
+		goto err_core_destroy;
 	}
 
 	for (i = 0; i < ATH10K_SDIO_BUS_REQUEST_MAX_NUM; i++)
@@ -2114,7 +2233,7 @@ static int ath10k_sdio_probe(struct sdio_func *func,
 		ret = -ENODEV;
 		ath10k_err(ar, "unsupported device id %u (0x%x)\n",
 			   dev_id_base, id->device);
-		goto err_free_bmi_buf;
+		goto err_free_wq;
 	}
 
 	ar->id.vendor = id->vendor;
@@ -2128,7 +2247,7 @@ static int ath10k_sdio_probe(struct sdio_func *func,
 		goto err_free_wq;
 	}
 
-	bus_params.is_high_latency = true;
+	bus_params.dev_type = ATH10K_DEV_TYPE_HL;
 	/* TODO: don't know yet how to get chip_id with SDIO */
 	bus_params.chip_id = 0;
 	ret = ath10k_core_register(ar, &bus_params);
@@ -2144,14 +2263,6 @@ static int ath10k_sdio_probe(struct sdio_func *func,
 
 err_free_wq:
 	destroy_workqueue(ar_sdio->workqueue);
-err_dma:
-	kfree(ar_sdio->dma_buffer);
-err_free_bmi_buf:
-	kfree(ar_sdio->bmi_buf);
-err_free_en_reg:
-	kfree(ar_sdio->irq_data.irq_en_reg);
-err_free_proc_reg:
-	kfree(ar_sdio->irq_data.irq_proc_reg);
 err_core_destroy:
 	ath10k_core_destroy(ar);
 
@@ -2171,14 +2282,6 @@ static void ath10k_sdio_remove(struct sdio_func *func)
 	cancel_work_sync(&ar_sdio->wr_async_work);
 	ath10k_core_unregister(ar);
 	ath10k_core_destroy(ar);
-
-	if (ar->is_started && ar->hw_params.start_once) {
-		ath10k_hif_stop(ar);
-		ath10k_hif_power_down(ar);
-	}
-
-	kfree(ar_sdio->dma_buffer);
-	kfree(ar_sdio->vsg_buffer);
 }
 
 static const struct sdio_device_id ath10k_sdio_devices[] = {

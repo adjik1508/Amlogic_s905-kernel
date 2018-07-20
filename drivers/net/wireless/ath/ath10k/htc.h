@@ -25,6 +25,7 @@
 #include <linux/timer.h>
 
 struct ath10k;
+struct ath10k_hif_sg_item;
 
 /****************/
 /* HTC protocol */
@@ -50,7 +51,8 @@ struct ath10k;
  * 4-byte aligned.
  */
 
-#define HTC_HOST_MAX_MSG_PER_BUNDLE        8
+#define HTC_HOST_MAX_MSG_PER_RX_BUNDLE        8
+#define HTC_HOST_MAX_MSG_PER_TX_BUNDLE        16
 
 enum ath10k_htc_tx_flags {
 	ATH10K_HTC_FLAG_NEED_CREDIT_UPDATE = 0x01,
@@ -75,8 +77,7 @@ struct ath10k_htc_hdr {
 		u8 seq_no; /* for tx */
 		u8 control_byte1;
 	} __packed;
-	u8 pad0;
-	u8 pad1;
+	__le16 credit_pad; /* used by bundle processing in SDIO systems */
 } __packed __aligned(4);
 
 enum ath10k_ath10k_htc_msg_id {
@@ -137,8 +138,7 @@ struct ath10k_htc_ready_extended {
 	struct ath10k_htc_ready base;
 	u8 htc_version; /* @enum ath10k_htc_version */
 	u8 max_msgs_per_htc_bundle;
-	u8 pad0;
-	u8 pad1;
+	__le16 alt_data_credit_size;
 } __packed;
 
 struct ath10k_htc_conn_svc {
@@ -249,6 +249,7 @@ enum ath10k_htc_svc_gid {
 	ATH10K_HTC_SVC_GRP_WMI = 1,
 	ATH10K_HTC_SVC_GRP_NMI = 2,
 	ATH10K_HTC_SVC_GRP_HTT = 3,
+	ATH10K_LOG_SERVICE_GROUP = 6,
 
 	ATH10K_HTC_SVC_GRP_TEST = 254,
 	ATH10K_HTC_SVC_GRP_LAST = 255,
@@ -274,6 +275,9 @@ enum ath10k_htc_svc_id {
 
 	ATH10K_HTC_SVC_ID_HTT_DATA_MSG	= SVC(ATH10K_HTC_SVC_GRP_HTT, 0),
 
+	ATH10K_HTC_SVC_ID_HTT_DATA2_MSG = SVC(ATH10K_HTC_SVC_GRP_HTT, 1),
+	ATH10K_HTC_SVC_ID_HTT_DATA3_MSG = SVC(ATH10K_HTC_SVC_GRP_HTT, 2),
+	ATH10K_HTC_SVC_ID_HTT_LOG_MSG = SVC(ATH10K_LOG_SERVICE_GROUP, 0),
 	/* raw stream service (i.e. flash, tcmd, calibration apps) */
 	ATH10K_HTC_SVC_ID_TEST_RAW_STREAMS = SVC(ATH10K_HTC_SVC_GRP_TEST, 0),
 };
@@ -341,6 +345,7 @@ struct ath10k_htc_ep {
 
 	u8 seq_no; /* for debugging */
 	int tx_credits;
+	int tx_credit_size;
 	bool tx_credit_flow_enabled;
 };
 
@@ -365,7 +370,13 @@ struct ath10k_htc {
 
 	int total_transmit_credits;
 	int target_credit_size;
+	int target_alt_data_credit_size;
 	u8 max_msgs_per_htc_bundle;
+
+	struct ath10k_hif_sg_item *sg_items_bundle;
+	size_t n_sg_items_bundle;
+	/* protects sg_items_bundle */
+	spinlock_t sg_items_bundle_lock;
 };
 
 int ath10k_htc_init(struct ath10k *ar);
@@ -376,6 +387,8 @@ int ath10k_htc_connect_service(struct ath10k_htc *htc,
 			       struct ath10k_htc_svc_conn_resp *conn_resp);
 int ath10k_htc_send(struct ath10k_htc *htc, enum ath10k_htc_ep_id eid,
 		    struct sk_buff *packet);
+int ath10k_htc_send_bundle(struct ath10k_htc *htc, enum ath10k_htc_ep_id eid,
+			   struct sk_buff *skb, bool more_data);
 struct sk_buff *ath10k_htc_alloc_skb(struct ath10k *ar, int size);
 void ath10k_htc_tx_completion_handler(struct ath10k *ar, struct sk_buff *skb);
 void ath10k_htc_rx_completion_handler(struct ath10k *ar, struct sk_buff *skb);

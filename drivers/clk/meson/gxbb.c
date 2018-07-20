@@ -1,20 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
- * AmLogic S905 / GXBB Clock Controller Driver
- *
  * Copyright (c) 2016 AmLogic, Inc.
  * Michael Turquette <mturquette@baylibre.com>
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <linux/clk.h>
@@ -995,17 +982,15 @@ static struct clk_regmap gxbb_cts_amclk_sel = {
 };
 
 static struct clk_regmap gxbb_cts_amclk_div = {
-	.data = &(struct meson_clk_audio_div_data){
-		.div = {
-			.reg_off = HHI_AUD_CLK_CNTL,
-			.shift   = 0,
-			.width   = 8,
-		},
+	.data = &(struct clk_regmap_div_data) {
+		.offset = HHI_AUD_CLK_CNTL,
+		.shift = 0,
+		.width = 8,
 		.flags = CLK_DIVIDER_ROUND_CLOSEST,
 	},
 	.hw.init = &(struct clk_init_data){
 		.name = "cts_amclk_div",
-		.ops = &meson_clk_audio_divider_ops,
+		.ops = &clk_regmap_divider_ops,
 		.parent_names = (const char *[]){ "cts_amclk_sel" },
 		.num_parents = 1,
 		.flags = CLK_SET_RATE_PARENT,

@@ -107,8 +107,9 @@ static struct snd_pcm_hardware aiu_i2s_dma_hw = {
 static struct aiu_i2s_dma *aiu_i2s_dma_priv(struct snd_pcm_substream *s)
 {
 	struct snd_soc_pcm_runtime *rtd = s->private_data;
+	struct snd_soc_component *component = snd_soc_rtdcom_lookup(rtd, DRV_NAME);
 
-	return snd_soc_platform_get_drvdata(rtd->platform);
+	return snd_soc_component_get_drvdata(component);
 }
 
 static snd_pcm_uframes_t
@@ -312,9 +313,10 @@ static int aiu_i2s_dma_new(struct snd_soc_pcm_runtime *rtd)
 						     card->dev, size, size);
 }
 
-struct snd_soc_platform_driver aiu_i2s_platform = {
-	.ops		= &aiu_i2s_dma_ops,
-	.pcm_new	= aiu_i2s_dma_new,
+static const struct snd_soc_component_driver aiu_i2s_platform = {
+	.ops = &aiu_i2s_dma_ops,
+	.pcm_new = aiu_i2s_dma_new,
+	.name = DRV_NAME,
 };
 
 static int aiu_i2s_dma_probe(struct platform_device *pdev)
@@ -342,7 +344,8 @@ static int aiu_i2s_dma_probe(struct platform_device *pdev)
 		return priv->irq;
 	}
 
-	return snd_soc_register_platform(dev, &aiu_i2s_platform);
+	return devm_snd_soc_register_component(dev, &aiu_i2s_platform,
+					       NULL, 0);
 }
 
 static const struct of_device_id aiu_i2s_dma_of_match[] = {

@@ -86,15 +86,23 @@
 
 	sound {
 		compatible = "simple-audio-card";
-		simple-audio-card,name = "meson-gx-preview";
-		status = "okay";
+		simple-audio-card,name = "meson-gx-audio";
+
+		assigned-clocks = <&clkc CLKID_MPLL2>,
+				  <&clkc CLKID_MPLL0>,
+				  <&clkc CLKID_MPLL1>;
+		assigned-clock-parents = <0>, <0>, <0>;
+		assigned-clock-rates = <294912000>,
+				       <270950400>,
+				       <393216000>;
 
 		simple-audio-card,dai-link@0 {
 			/* HDMI Output */
 			format = "i2s";
 			mclk-fs = <256>;
-			bitclock-master =  <&i2s_dai>;
+			bitclock-master = <&i2s_dai>;
 			frame-master = <&i2s_dai>;
+
 			plat {
 				sound-dai = <&aiu_i2s_dma>;
 			};
@@ -163,10 +171,6 @@
 	status = "okay";
 };
 
-&i2s_dai {
-	status = "okay";
-};
-
 &cvbs_vdac_port {
 	cvbs_vdac_out: endpoint {
 		remote-endpoint = <&cvbs_connector_in>;
@@ -186,6 +190,10 @@
 	status = "okay";
 	pinctrl-0 = <&remote_input_ao_pins>;
 	pinctrl-names = "default";
+};
+
+&i2s_dai {
+	status = "okay";
 };
 
 &hdmi_tx {
@@ -271,9 +279,6 @@
 
 	bus-width = <4>;
 	cap-sd-highspeed;
-	sd-uhs-sdr12;
-	sd-uhs-sdr25;
-	sd-uhs-sdr50;
 	max-frequency = <100000000>;
 	disable-wp;
 

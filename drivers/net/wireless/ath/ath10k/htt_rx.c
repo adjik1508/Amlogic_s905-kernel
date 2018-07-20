@@ -25,6 +25,7 @@
 #include "mac.h"
 
 #include <linux/log2.h>
+#include <linux/bitfield.h>
 
 /* when under memory pressure rx ring refill may fail and needs a retry */
 #define HTT_RX_RING_REFILL_RETRY_MS 50
@@ -264,7 +265,7 @@ int ath10k_htt_rx_ring_refill(struct ath10k *ar)
 	struct ath10k_htt *htt = &ar->htt;
 	int ret;
 
-	if (ar->is_high_latency)
+	if (ar->dev_type == ATH10K_DEV_TYPE_HL)
 		return 0;
 
 	spin_lock_bh(&htt->rx_ring.lock);
@@ -280,7 +281,7 @@ int ath10k_htt_rx_ring_refill(struct ath10k *ar)
 
 void ath10k_htt_rx_free(struct ath10k_htt *htt)
 {
-	if (htt->ar->is_high_latency)
+	if (htt->ar->dev_type == ATH10K_DEV_TYPE_HL)
 		return;
 
 	del_timer_sync(&htt->rx_ring.refill_retry_timer);
@@ -572,7 +573,7 @@ int ath10k_htt_rx_alloc(struct ath10k_htt *htt)
 	size_t size;
 	struct timer_list *timer = &htt->rx_ring.refill_retry_timer;
 
-	if (ar->is_high_latency)
+	if (ar->dev_type == ATH10K_DEV_TYPE_HL)
 		return 0;
 
 	htt->rx_confused = false;
@@ -590,7 +591,7 @@ int ath10k_htt_rx_alloc(struct ath10k_htt *htt)
 	}
 
 	htt->rx_ring.netbufs_ring =
-		kzalloc(htt->rx_ring.size * sizeof(struct sk_buff *),
+		kcalloc(htt->rx_ring.size, sizeof(struct sk_buff *),
 			GFP_KERNEL);
 	if (!htt->rx_ring.netbufs_ring)
 		goto err_netbuf;
@@ -1869,7 +1870,9 @@ static bool ath10k_htt_rx_proc_rx_ind_hl(struct ath10k_htt *htt,
 
 	peer_id = __le16_to_cpu(rx->hdr.peer_id);
 
+	spin_lock_bh(&ar->data_lock);
 	peer = ath10k_peer_find_by_id(ar, peer_id);
+	spin_unlock_bh(&ar->data_lock);
 	if (!peer)
 		ath10k_warn(ar, "Got RX ind from invalid peer: %u\n", peer_id);
 
@@ -2434,7 +2437,7 @@ static void ath10k_htt_rx_tx_fetch_ind(struct ath10k *ar, struct sk_buff *skb)
 
 		while (num_msdus < max_num_msdus &&
 		       num_bytes < max_num_bytes) {
-			ret = ath10k_mac_tx_push_txq(hw, txq);
+			ret = ath10k_mac_tx_push_txq(hw, txq, false);
 			if (ret < 0)
 				break;
 
@@ -2822,7 +2825,7 @@ bool ath10k_htt_t2h_msg_handler(struct ath10k *ar, struct sk_buff *skb)
 		break;
 	}
 	case HTT_T2H_MSG_TYPE_RX_IND:
-		if (ar->is_high_latency)
+		if (ar->dev_type == ATH10K_DEV_TYPE_HL)
 			return ath10k_htt_rx_proc_rx_ind_hl(htt,
 							    &resp->rx_ind_hl,
 							    skb);
@@ -2848,12 +2851,21 @@ bool ath10k_htt_t2h_msg_handler(struct ath10k *ar, struct sk_buff *skb)
 	case HTT_T2H_MSG_TYPE_MGMT_TX_COMPLETION: {
 		struct htt_tx_done tx_done = {};
 		int status = __le32_to_cpu(resp->mgmt_tx_completion.status);
+		int info = __le32_to_cpu(resp->mgmt_tx_completion.info);
 
 		tx_done.msdu_id = __le32_to_cpu(resp->mgmt_tx_completion.desc_id);
 
 		switch (status) {
 		case HTT_MGMT_TX_STATUS_OK:
 			tx_done.status = HTT_TX_COMPL_STATE_ACK;
+			if (test_bit(WMI_SERVICE_HTT_MGMT_TX_COMP_VALID_FLAGS,
+				     ar->wmi.svc_map) &&
+			    (resp->mgmt_tx_completion.flags &
+			     HTT_MGMT_TX_CMPL_FLAG_ACK_RSSI)) {
+				tx_done.ack_rssi =
+				FIELD_GET(HTT_MGMT_TX_CMPL_INFO_ACK_RSSI_MASK,
+					  info);
+			}
 			break;
 		case HTT_MGMT_TX_STATUS_RETRY:
 			tx_done.status = HTT_TX_COMPL_STATE_NOACK;
@@ -2872,8 +2884,7 @@ bool ath10k_htt_t2h_msg_handler(struct ath10k *ar, struct sk_buff *skb)
 		break;
 	}
 	case HTT_T2H_MSG_TYPE_TX_COMPL_IND:
-		if (!(ar->hif.bus == ATH10K_BUS_USB))
-			ath10k_htt_rx_tx_compl_ind(htt->ar, skb);
+		ath10k_htt_rx_tx_compl_ind(htt->ar, skb);
 		break;
 	case HTT_T2H_MSG_TYPE_SEC_IND: {
 		struct ath10k *ar = htt->ar;
@@ -3110,7 +3121,7 @@ void ath10k_htt_set_rx_ops(struct ath10k_htt *htt)
 {
 	struct ath10k *ar = htt->ar;
 
-	if (ar->is_high_latency)
+	if (ar->dev_type == ATH10K_DEV_TYPE_HL)
 		htt->rx_ops = &htt_rx_ops_hl;
 	else if (ar->hw_params.target_64bit)
 		htt->rx_ops = &htt_rx_ops_64;

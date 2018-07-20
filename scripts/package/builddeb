@@ -52,69 +52,12 @@ create_package() {
 	fi
 	
 	# Create the package
-	dpkg-gencontrol $forcearch -Vkernel:debarch="${debarch}" -p$pname -P"$pdir"
+	dpkg-gencontrol -p$pname -P"$pdir"
 	dpkg --build "$pdir" ..
 }
 
-set_debarch() {
-	# Attempt to find the correct Debian architecture
-	case "$UTS_MACHINE" in
-	i386|ia64|alpha)
-		debarch="$UTS_MACHINE" ;;
-	x86_64)
-		debarch=amd64 ;;
-	sparc*)
-		debarch=sparc ;;
-	s390*)
-		debarch=s390$(grep -q CONFIG_64BIT=y $KCONFIG_CONFIG && echo x || true) ;;
-	ppc*)
-		debarch=$(grep -q CPU_LITTLE_ENDIAN=y $KCONFIG_CONFIG && echo ppc64el || echo powerpc) ;;
-	parisc*)
-		debarch=hppa ;;
-	mips*)
-		debarch=mips$(grep -q CPU_LITTLE_ENDIAN=y $KCONFIG_CONFIG && echo el || true) ;;
-	aarch64|arm64)
-		debarch=arm64 ;;
-	arm*)
-		if grep -q CONFIG_AEABI=y $KCONFIG_CONFIG; then
-		    if grep -q CONFIG_VFP=y $KCONFIG_CONFIG; then
-			debarch=armhf
-		    else
-			debarch=armel
-		    fi
-		else
-		    debarch=arm
-		fi
-		;;
-	*)
-		debarch=$(dpkg --print-architecture)
-		echo "" >&2
-		echo "** ** **  WARNING  ** ** **" >&2
-		echo "" >&2
-		echo "Your architecture doesn't have its equivalent" >&2
-		echo "Debian userspace architecture defined!" >&2
-		echo "Falling back to using your current userspace instead!" >&2
-		echo "Please add support for $UTS_MACHINE to ${0} ..." >&2
-		echo "" >&2
-	esac
-	if [ -n "$KBUILD_DEBARCH" ] ; then
-		debarch="$KBUILD_DEBARCH"
-	fi
-	forcearch="-DArchitecture=$debarch"
-
-}
-
-# Some variables and settings used throughout the script
 version=$KERNELRELEASE
-revision=$(cat .version)
-if [ -n "$KDEB_PKGVERSION" ]; then
-	packageversion=$KDEB_PKGVERSION
-else
-	packageversion=$version-$revision
-fi
-sourcename=$KDEB_SOURCENAME
 tmpdir="$objtree/debian/tmp"
-fwdir="$objtree/debian/fwtmp"
 kernel_headers_dir="$objtree/debian/hdrtmp"
 libc_headers_dir="$objtree/debian/headertmp"
 dtb_dir="$objtree/debian/dtbtmp"
@@ -125,9 +68,6 @@ kernel_headers_packagename=linux-headers"$LOCAL_VERSION"
 dtb_packagename=linux-dtb"$LOCAL_VERSION"
 libc_headers_packagename=linux-libc-dev"$LOCAL_VERSION"
 dbg_packagename=$packagename-dbg
-debarch=
-forcearch=
-set_debarch
 
 if [ "$ARCH" = "um" ] ; then
 	packagename=user-mode-linux-$version
@@ -155,7 +95,6 @@ mkdir -m 755 -p "$dtb_dir/DEBIAN"
 mkdir -p "$dtb_dir/boot/dtb-$version" "$dtb_dir/usr/share/doc/$dtb_packagename"
 mkdir -m 755 -p "$tmpdir/DEBIAN"
 mkdir -p "$tmpdir/lib" "$tmpdir/boot"
-mkdir -p "$fwdir/lib/firmware/$version/"
 mkdir -p "$kernel_headers_dir/lib/modules/$version/"
 
 # Build and install the kernel

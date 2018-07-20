@@ -10,7 +10,10 @@
 / {
 	aliases {
 		serial0 = &uart_AO;
+		serial1 = &uart_A;
 		ethernet0 = &ethmac;
+		mmc0 = &sd_emmc_b;
+		mmc1 = &sd_emmc_c;
 	};
 
 	chosen {
@@ -85,7 +88,7 @@
 		clock-names = "ext_clock";
 	};
 
-	cvbs_connector: cvbs-connector {
+	cvbs-connector {
 		compatible = "composite-video-connector";
 
 		port {
@@ -109,38 +112,22 @@
 	sound {
 		compatible = "simple-audio-card";
 		simple-audio-card,name = "HDMI";
-		status = "okay";
+
+		assigned-clocks = <&clkc CLKID_MPLL2>,
+				  <&clkc CLKID_MPLL0>,
+				  <&clkc CLKID_MPLL1>;
+		assigned-clock-parents = <0>, <0>, <0>;
+		assigned-clock-rates = <294912000>,
+				       <270950400>,
+				       <393216000>;
 
 		simple-audio-card,dai-link@0 {
 			/* HDMI Output */
 			format = "i2s";
 			mclk-fs = <128>;
-			bitclock-master =  <&i2s_dai>;
+			bitclock-master = <&i2s_dai>;
 			frame-master = <&i2s_dai>;
-			plat {
-				sound-dai = <&aiu_i2s_dma>;
-			};
 
-			cpu {
-				sound-dai = <&i2s_dai>;
-			};
-
-			codec {
-				sound-dai = <&hdmi_tx>;
-			};
-		};
-	};
-
-	sound {
-		compatible = "simple-audio-card";
-		simple-audio-card,name = "HDMI";
-
-		simple-audio-card,dai-link@0 {
-			/* HDMI Output */
-			format = "i2s";
-			mclk-fs = <128>;
-			bitclock-master =  <&i2s_dai>;
-			frame-master = <&i2s_dai>;
 			plat {
 				sound-dai = <&aiu_i2s_dma>;
 			};
@@ -161,10 +148,6 @@
 };
 
 &aiu_i2s_dma {
-	status = "okay";
-};
-
-&i2s_dai {
 	status = "okay";
 };
 
@@ -173,18 +156,6 @@
 	pinctrl-0 = <&ao_cec_pins>;
 	pinctrl-names = "default";
 	hdmi-phandle = <&hdmi_tx>;
-};
-
-&audio {
-	status = "okay";
-};
-
-&aiu_i2s_dma {
-	status = "okay";
-};
-
-&i2s_dai {
-	status = "okay";
 };
 
 &cvbs_vdac_port {
@@ -230,6 +201,10 @@
 	hdmi_tx_tmds_out: endpoint {
 		remote-endpoint = <&hdmi_connector_in>;
 	};
+};
+
+&i2s_dai {
+	status = "okay";
 };
 
 &ir {
@@ -310,6 +285,18 @@
 	mmc-pwrseq = <&emmc_pwrseq>;
 	vmmc-supply = <&vcc_3v3>;
 	vqmmc-supply = <&vddio_boot>;
+};
+
+/* This is connected to the Bluetooth module: */
+&uart_A {
+	status = "okay";
+	pinctrl-0 = <&uart_a_pins>, <&uart_a_cts_rts_pins>;
+	pinctrl-names = "default";
+
+	bluetooth {
+		compatible = "brcm,bcm43438-bt";
+		shutdown-gpios = <&gpio GPIOX_20 GPIO_ACTIVE_HIGH>;
+	};
 };
 
 /* This UART is brought out to the DB9 connector */
