@@ -10,7 +10,7 @@
 #include "codec_helpers.h"
 #include "canvas.h"
 
-#define SIZE_WORKSPACE		(1 * SZ_1M)
+#define SIZE_WORKSPACE		SZ_1M
 #define DCAC_BUFF_START_IP	0x02b00000
 
 /* DOS registers */
@@ -41,43 +41,19 @@
 #define DOS_SW_RESET0 0xfc00
 
 struct codec_mpeg4 {
-	/* Buffer for the MPEG1/2 Workspace */
+	/* Buffer for the MPEG4 Workspace */
 	void      *workspace_vaddr;
 	dma_addr_t workspace_paddr;
-
-	/* Housekeeping thread for marking buffers to DONE
-	 * and recycling them into the hardware
-	 */
-	struct task_struct *buffers_thread;
 };
 
-static int codec_mpeg4_buffers_thread(void *data)
+static int codec_mpeg4_can_recycle(struct vdec_core *core)
 {
-	struct vdec_buffer *tmp;
-	struct vdec_session *sess = data;
-	struct vdec_core *core = sess->core;;
+	return !readl_relaxed(core->dos_base + MREG_BUFFERIN);
+}
 
-	while (!kthread_should_stop()) {
-		mutex_lock(&sess->bufs_recycle_lock);
-		while (!list_empty(&sess->bufs_recycle) &&
-		       !readl_relaxed(core->dos_base + MREG_BUFFERIN))
-		{
-			tmp = list_first_entry(&sess->bufs_recycle, struct vdec_buffer, list);
-
-			/* Tell the decoder he can recycle this buffer */
-			writel_relaxed(~(1 << tmp->index), core->dos_base + MREG_BUFFERIN);
-
-			printk("Buffer %d recycled\n", tmp->index);
-
-			list_del(&tmp->list);
-			kfree(tmp);
-		}
-		mutex_unlock(&sess->bufs_recycle_lock);
-
-		usleep_range(5000, 10000);
-	}
-
-	return 0;
+static void codec_mpeg4_recycle(struct vdec_core *core, u32 buf_idx)
+{
+	writel_relaxed(~(1 << buf_idx), core->dos_base + MREG_BUFFERIN);
 }
 
 /* The MPEG4 canvas regs are not contiguous,
@@ -96,10 +72,12 @@ void codec_mpeg4_set_canvases(struct vdec_session *sess) {
 	 */
 	v4l2_m2m_for_each_dst_buf(sess->m2m_ctx, buf) {
 		u32 buf_idx    = buf->vb.vb2_buf.index;
-		u32 cnv_y_idx  = 128 + buf_idx * 2;
-		u32 cnv_uv_idx = 128 + buf_idx * 2 + 1;
-		dma_addr_t buf_y_paddr  = vb2_dma_contig_plane_dma_addr(&buf->vb.vb2_buf, 0);
-		dma_addr_t buf_uv_paddr = vb2_dma_contig_plane_dma_addr(&buf->vb.vb2_buf, 1);
+		u32 cnv_y_idx  = buf_idx * 2;
+		u32 cnv_uv_idx = buf_idx * 2 + 1;
+		dma_addr_t buf_y_paddr  =
+			vb2_dma_contig_plane_dma_addr(&buf->vb.vb2_buf, 0);
+		dma_addr_t buf_uv_paddr =
+			vb2_dma_contig_plane_dma_addr(&buf->vb.vb2_buf, 1);
 
 		/* Y plane */
 		vdec_canvas_setup(core->dmc_base, cnv_y_idx, buf_y_paddr, width, height, MESON_CANVAS_WRAP_NONE, MESON_CANVAS_BLKMODE_LINEAR);
@@ -122,8 +100,6 @@ static int codec_mpeg4_start(struct vdec_session *sess) {
 	struct codec_mpeg4 *mpeg4 = sess->priv;
 	int ret;
 
-	printk("codec_mpeg4_start\n");
-
 	mpeg4 = kzalloc(sizeof(*mpeg4), GFP_KERNEL);
 	if (!mpeg4)
 		return -ENOMEM;
@@ -133,11 +109,10 @@ static int codec_mpeg4_start(struct vdec_session *sess) {
 	/* Allocate some memory for the MPEG4 decoder's state */
 	mpeg4->workspace_vaddr = dma_alloc_coherent(core->dev, SIZE_WORKSPACE, &mpeg4->workspace_paddr, GFP_KERNEL);
 	if (!mpeg4->workspace_vaddr) {
-		printk("Failed to request MPEG4 Workspace\n");
+		dev_err(core->dev, "Failed to request MPEG4 Workspace\n");
 		ret = -ENOMEM;
 		goto free_mpeg4;
 	}
-	printk("Allocated Workspace: %08X - %08X\n", mpeg4->workspace_paddr, mpeg4->workspace_paddr + SIZE_WORKSPACE);
 
 	writel_relaxed((1<<7) | (1<<6), core->dos_base + DOS_SW_RESET0);
 	writel_relaxed(0, core->dos_base + DOS_SW_RESET0);
@@ -155,11 +130,6 @@ static int codec_mpeg4_start(struct vdec_session *sess) {
 	writel_relaxed(1, core->dos_base + ASSIST_MBOX1_MASK);
 	writel_relaxed(0x404038aa, core->dos_base + MDEC_PIC_DC_THRESH);
 
-	/* Enable NV21 */
-	writel_relaxed(readl_relaxed(core->dos_base + MDEC_PIC_DC_CTRL) | (1 << 17), core->dos_base + MDEC_PIC_DC_CTRL);
-
-	mpeg4->buffers_thread = kthread_run(codec_mpeg4_buffers_thread, sess, "buffers_done");
-
 	return 0;
 
 free_mpeg4:
@@ -172,17 +142,10 @@ static int codec_mpeg4_stop(struct vdec_session *sess)
 	struct codec_mpeg4 *mpeg4 = sess->priv;
 	struct vdec_core *core = sess->core;
 
-	printk("codec_mpeg4_stop\n");
-
-	kthread_stop(mpeg4->buffers_thread);
-
 	if (mpeg4->workspace_vaddr) {
 		dma_free_coherent(core->dev, SIZE_WORKSPACE, mpeg4->workspace_vaddr, mpeg4->workspace_paddr);
 		mpeg4->workspace_vaddr = 0;
 	}
-
-	kfree(mpeg4);
-	sess->priv = 0;
 
 	return 0;
 }
@@ -193,18 +156,20 @@ static irqreturn_t codec_mpeg4_isr(struct vdec_session *sess)
 	u32 buffer_index;
 	struct vdec_core *core = sess->core;
 
-	writel_relaxed(1, core->dos_base + ASSIST_MBOX1_CLR_REG);
-
 	reg = readl_relaxed(core->dos_base + MREG_FATAL_ERROR);
 	if (reg == 1)
-		printk("mpeg4 fatal error\n");
+		dev_err(core->dev, "mpeg4 fatal error\n");
 
 	reg = readl_relaxed(core->dos_base + MREG_BUFFEROUT);
 	if (reg) {
+		readl_relaxed(core->dos_base + MP4_NOT_CODED_CNT);
+		readl_relaxed(core->dos_base + MP4_VOP_TIME_INC);
 		buffer_index = reg & 0x7;
 		vdec_dst_buf_done_idx(sess, buffer_index);
 		writel_relaxed(0, core->dos_base + MREG_BUFFEROUT);
 	}
+
+	writel_relaxed(1, core->dos_base + ASSIST_MBOX1_CLR_REG);
 
 	return IRQ_HANDLED;
 }
@@ -213,6 +178,7 @@ struct vdec_codec_ops codec_mpeg4_ops = {
 	.start = codec_mpeg4_start,
 	.stop = codec_mpeg4_stop,
 	.isr = codec_mpeg4_isr,
-	.notify_dst_buffer = vdec_queue_recycle,
+	.can_recycle = codec_mpeg4_can_recycle,
+	.recycle = codec_mpeg4_recycle,
 };
 

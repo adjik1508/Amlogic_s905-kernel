@@ -489,8 +489,8 @@ config VIDEO_AML_MESON_VDEC
 	select VIDEOBUF2_DMA_CONTIG
 	select V4L2_MEM2MEM_DEV
 	---help---
-	Support for the video encoder/decoder found in Meson8b chips.
-	Only allows H.264 -> NV21 decoding at the moment.
+	Support for the video decoder found in gxbb/gxl/gxm chips.
+	Can decode MPEG 1/2/4, H.264, MJPEG, HEVC 8-bit.
 
 endif # V4L_MEM2MEM_DRIVERS
 

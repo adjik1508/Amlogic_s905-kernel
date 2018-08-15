@@ -14666,7 +14666,8 @@ static void quirk_increase_t12_delay(struct drm_device *dev)
 	DRM_INFO("Applying T12 delay quirk\n");
 }
 
-/* GeminiLake NUC HDMI outputs require additional off time
+/*
+ * GeminiLake NUC HDMI outputs require additional off time
  * this allows the onboard retimer to correctly sync to signal
  */
 static void quirk_increase_ddi_disabled_time(struct drm_device *dev)

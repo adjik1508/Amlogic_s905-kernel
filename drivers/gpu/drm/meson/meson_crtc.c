@@ -37,7 +37,6 @@
 #include "meson_venc.h"
 #include "meson_vpp.h"
 #include "meson_viu.h"
-#include "meson_canvas.h"
 #include "meson_registers.h"
 
 /* CRTC definition */
@@ -100,13 +99,8 @@ static void meson_crtc_atomic_enable(struct drm_crtc *crtc,
 	       priv->io_base + _REG(VPP_POSTBLEND_H_SIZE));
 
 	/* VD1 Preblend vertical start/end */
-	if (crtc_state->mode.hdisplay > 1080)
-		writel(FIELD_PREP(GENMASK(11, 0),
-				  crtc_state->mode.hdisplay - 1),
-		       priv->io_base + _REG(VPP_PREBLEND_VD1_V_START_END));
-	else
-		writel(FIELD_PREP(GENMASK(11, 0), 1080 - 1),
-		       priv->io_base + _REG(VPP_PREBLEND_VD1_V_START_END));
+	writel(FIELD_PREP(GENMASK(11, 0), 2303),
+			priv->io_base + _REG(VPP_PREBLEND_VD1_V_START_END));
 
 	writel_bits_relaxed(VPP_POSTBLEND_ENABLE, VPP_POSTBLEND_ENABLE,
 			    priv->io_base + _REG(VPP_MISC));
@@ -216,10 +210,10 @@ void meson_crtc_irq(struct meson_drm *priv)
 		} else
 			meson_vpp_disable_interlace_vscaler_osd1(priv);
 
-		meson_canvas_setup(priv, MESON_CANVAS_ID_OSD1,
+		priv->canvas_ops->setup(priv->canvas_id_osd1,
 			   priv->viu.osd1_addr, priv->viu.osd1_stride,
 			   priv->viu.osd1_height, MESON_CANVAS_WRAP_NONE,
-			   MESON_CANVAS_BLKMODE_LINEAR);
+			   MESON_CANVAS_BLKMODE_LINEAR, 0);
 
 		/* Enable OSD1 */
 		writel_bits_relaxed(VPP_OSD1_POSTBLEND, VPP_OSD1_POSTBLEND,
@@ -227,27 +221,34 @@ void meson_crtc_irq(struct meson_drm *priv)
 
 		priv->viu.osd1_commit = false;
 	}
-	
+
 	/* Update the VD1 registers */
 	if (priv->viu.vd1_enabled && priv->viu.vd1_commit) {
 
-		DRM_INFO("VD1 update\n");
+		switch (priv->viu.vd1_planes) {
+		case 3:
+			priv->canvas_ops->setup(priv->canvas_id_vd1_2,
+				   priv->viu.vd1_addr2, priv->viu.vd1_stride2,
+				   priv->viu.vd1_height2, MESON_CANVAS_WRAP_NONE,
+				   MESON_CANVAS_BLKMODE_LINEAR, 7);
+		case 2:
+			priv->canvas_ops->setup(priv->canvas_id_vd1_1,
+				   priv->viu.vd1_addr1, priv->viu.vd1_stride1,
+				   priv->viu.vd1_height1, MESON_CANVAS_WRAP_NONE,
+				   MESON_CANVAS_BLKMODE_LINEAR, 7);
+		case 1:
+			priv->canvas_ops->setup(priv->canvas_id_vd1_0,
+				   priv->viu.vd1_addr0, priv->viu.vd1_stride0,
+				   priv->viu.vd1_height0, MESON_CANVAS_WRAP_NONE,
+				   MESON_CANVAS_BLKMODE_LINEAR, 7);
+		};
 
-		/* di_mif0_en=0 mif0_to_vpp_en=0 di_mad_en=0 */
-		writel_bits_relaxed(0x7 << 16, 0,
-				    priv->io_base + _REG(VIU_MISC_CTRL0));
-		/* afbc vd1 set=0 */
-		writel_bits_relaxed(BIT(20), 0,
-				    priv->io_base + _REG(VIU_MISC_CTRL0));
-		writel_relaxed(0, priv->io_base + _REG(AFBC_ENABLE));
 		writel_relaxed(priv->viu.vd1_if0_gen_reg,
 				priv->io_base + _REG(VD1_IF0_GEN_REG));
 		writel_relaxed(priv->viu.vd1_if0_gen_reg,
 				priv->io_base + _REG(VD2_IF0_GEN_REG));
 		writel_relaxed(priv->viu.vd1_if0_gen_reg2,
 				priv->io_base + _REG(VD1_IF0_GEN_REG2));
-		writel_bits_relaxed(0x3 << 8, 0,
-				    priv->io_base + _REG(VD1_IF0_GEN_REG3));
 		writel_relaxed(priv->viu.viu_vd1_fmt_ctrl,
 				priv->io_base + _REG(VIU_VD1_FMT_CTRL));
 		writel_relaxed(priv->viu.viu_vd1_fmt_ctrl,
@@ -320,12 +321,14 @@ void meson_crtc_irq(struct meson_drm *priv)
 		writel_relaxed(0, priv->io_base + _REG(VD1_IF0_CHROMA_PSEL));
 		writel_relaxed(0, priv->io_base + _REG(VD2_IF0_LUMA_PSEL));
 		writel_relaxed(0, priv->io_base + _REG(VD2_IF0_CHROMA_PSEL));
-		/*writel_relaxed(priv->viu.vd1_range_map_y,
+		writel_relaxed(priv->viu.vd1_range_map_y,
 				priv->io_base + _REG(VD1_IF0_RANGE_MAP_Y));
 		writel_relaxed(priv->viu.vd1_range_map_cb,
 				priv->io_base + _REG(VD1_IF0_RANGE_MAP_CB));
 		writel_relaxed(priv->viu.vd1_range_map_cr,
-				priv->io_base + _REG(VD1_IF0_RANGE_MAP_CR));*/
+				priv->io_base + _REG(VD1_IF0_RANGE_MAP_CR));
+		writel_relaxed(0x78404,
+				priv->io_base + _REG(VPP_SC_MISC));
 		writel_relaxed(priv->viu.vpp_pic_in_height,
 				priv->io_base + _REG(VPP_PIC_IN_HEIGHT));
 		writel_relaxed(priv->viu.vpp_postblend_vd1_h_start_end,
@@ -366,35 +369,12 @@ void meson_crtc_irq(struct meson_drm *priv)
 				priv->io_base + _REG(VPP_VSC_PHASE_CTRL));
 		writel_relaxed(priv->viu.vpp_hsc_phase_ctrl,
 				priv->io_base + _REG(VPP_HSC_PHASE_CTRL));
-		writel_relaxed(0x78404,
-				priv->io_base + _REG(VPP_SC_MISC));
-		/*
-		writel_relaxed(priv->viu.,
-				priv->io_base + _REG());
-				*/
+		writel_relaxed(0x00000042,
+				priv->io_base + _REG(VPP_SCALE_COEF_IDX));
 
-		switch (priv->viu.vd1_planes) {
-		case 3:
-			meson_canvas_setup(priv, MESON_CANVAS_ID_VD1_2,
-				   priv->viu.vd1_addr2, priv->viu.vd1_stride2,
-				   priv->viu.vd1_height2, MESON_CANVAS_WRAP_NONE,
-				   MESON_CANVAS_BLKMODE_LINEAR);
-		case 2:
-			meson_canvas_setup(priv, MESON_CANVAS_ID_VD1_1,
-				   priv->viu.vd1_addr1, priv->viu.vd1_stride1,
-				   priv->viu.vd1_height1, MESON_CANVAS_WRAP_NONE,
-				   MESON_CANVAS_BLKMODE_LINEAR);
-		case 1:
-			meson_canvas_setup(priv, MESON_CANVAS_ID_VD1_0,
-				   priv->viu.vd1_addr0, priv->viu.vd1_stride0,
-				   priv->viu.vd1_height0, MESON_CANVAS_WRAP_NONE,
-				   MESON_CANVAS_BLKMODE_LINEAR);
-		};
-
-		/* TODO zorder */
 		/* Enable VD1 */
-		writel_bits_relaxed(VPP_VD1_PREBLEND | VPP_VD1_POSTBLEND,
-				    VPP_VD1_PREBLEND | VPP_VD1_POSTBLEND,
+		writel_bits_relaxed(VPP_VD1_PREBLEND | VPP_VD1_POSTBLEND | VPP_COLOR_MNG_ENABLE,
+				    VPP_VD1_PREBLEND | VPP_VD1_POSTBLEND | VPP_COLOR_MNG_ENABLE,
 				    priv->io_base + _REG(VPP_MISC));
 
 		priv->viu.vd1_commit = false;

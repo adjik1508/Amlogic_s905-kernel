@@ -44,6 +44,8 @@ struct vdec_core {
 	struct clk *vdec_1_clk;
 	struct clk *vdec_hevc_clk;
 
+	struct reset_control *esparser_reset;
+
 	struct video_device *vdev_dec;
 	struct v4l2_device v4l2_dev;
 	
@@ -65,6 +67,8 @@ struct vdec_codec_ops {
 	int (*stop)(struct vdec_session *sess);
 	int (*load_extended_firmware)(struct vdec_session *sess, const u8 *data, u32 len);
 	u32 (*num_pending_bufs)(struct vdec_session *sess);
+	int (*can_recycle)(struct vdec_core *core);
+	void (*recycle)(struct vdec_core *core, u32 buf_idx);
 	void (*notify_dst_buffer)(struct vdec_session *sess, struct vb2_buffer *vb);
 	irqreturn_t (*isr)(struct vdec_session *sess);
 	irqreturn_t (*threaded_isr)(struct vdec_session *sess);
@@ -130,10 +134,15 @@ struct vdec_session {
 	/* Buffers that need to be recycled by the HW */
 	struct list_head bufs_recycle;
 	struct mutex bufs_recycle_lock;
+	/* Thread for recycling buffers into the hardware */
+	struct task_struct *recycle_thread;
 	
 	/* Buffers queued into the HW */
 	struct list_head bufs;
 	spinlock_t bufs_spinlock;
+
+	/* Tracks last time we got a vdec IRQ */
+	u64 last_irq_jiffies;
 
 	/* Codec private data */
 	void *priv;
@@ -142,8 +151,8 @@ struct vdec_session {
 u32 vdec_get_output_size(struct vdec_session *sess);
 void vdec_dst_buf_done_idx(struct vdec_session *sess, u32 buf_idx);
 void vdec_dst_buf_done(struct vdec_session *sess, struct vb2_v4l2_buffer *vbuf);
-void vdec_add_buf_reorder(struct vdec_session *sess, u64 ts);
-void vdec_remove_buf(struct vdec_session *sess, u64 ts);
+void vdec_add_ts_reorder(struct vdec_session *sess, u64 ts);
+void vdec_remove_ts(struct vdec_session *sess, u64 ts);
 void vdec_queue_recycle(struct vdec_session *sess, struct vb2_buffer *vb);
 void vdec_abort(struct vdec_session *sess);
 

@@ -18,55 +18,55 @@
 #define DOS_SW_RESET3        0xfcd0
 
 /* HEVC reg mapping */
-#define HEVC_DEC_STATUS_REG       HEVC_ASSIST_SCRATCH_0
+#define HEVC_DEC_STATUS_REG	HEVC_ASSIST_SCRATCH_0
 	#define HEVC_ACTION_DONE	0xff
-#define HEVC_RPM_BUFFER           HEVC_ASSIST_SCRATCH_1
+#define HEVC_RPM_BUFFER		HEVC_ASSIST_SCRATCH_1
 #define HEVC_DECODE_INFO	HEVC_ASSIST_SCRATCH_1
-#define HEVC_SHORT_TERM_RPS       HEVC_ASSIST_SCRATCH_2
-#define HEVC_VPS_BUFFER           HEVC_ASSIST_SCRATCH_3
-#define HEVC_SPS_BUFFER           HEVC_ASSIST_SCRATCH_4
-#define HEVC_PPS_BUFFER           HEVC_ASSIST_SCRATCH_5
-#define HEVC_SAO_UP               HEVC_ASSIST_SCRATCH_6
-#define HEVC_STREAM_SWAP_BUFFER   HEVC_ASSIST_SCRATCH_7
-#define H265_MMU_MAP_BUFFER       HEVC_ASSIST_SCRATCH_7
-#define HEVC_STREAM_SWAP_BUFFER2  HEVC_ASSIST_SCRATCH_8
-#define HEVC_sao_mem_unit         HEVC_ASSIST_SCRATCH_9
-#define HEVC_SAO_ABV              HEVC_ASSIST_SCRATCH_A
-#define HEVC_sao_vb_size          HEVC_ASSIST_SCRATCH_B
-#define HEVC_SAO_VB               HEVC_ASSIST_SCRATCH_C
-#define HEVC_SCALELUT             HEVC_ASSIST_SCRATCH_D
-#define HEVC_WAIT_FLAG            HEVC_ASSIST_SCRATCH_E
-#define RPM_CMD_REG               HEVC_ASSIST_SCRATCH_F
-#define LMEM_DUMP_ADR             HEVC_ASSIST_SCRATCH_F
-#define DEBUG_REG1		  HEVC_ASSIST_SCRATCH_G
-#define HEVC_DECODE_MODE2	  HEVC_ASSIST_SCRATCH_H
-#define NAL_SEARCH_CTL            HEVC_ASSIST_SCRATCH_I
-#define HEVC_DECODE_MODE	  HEVC_ASSIST_SCRATCH_J
+#define HEVC_SHORT_TERM_RPS	HEVC_ASSIST_SCRATCH_2
+#define HEVC_VPS_BUFFER		HEVC_ASSIST_SCRATCH_3
+#define HEVC_SPS_BUFFER		HEVC_ASSIST_SCRATCH_4
+#define HEVC_PPS_BUFFER		HEVC_ASSIST_SCRATCH_5
+#define HEVC_SAO_UP		HEVC_ASSIST_SCRATCH_6
+#define HEVC_STREAM_SWAP_BUFFER HEVC_ASSIST_SCRATCH_7
+#define H265_MMU_MAP_BUFFER	HEVC_ASSIST_SCRATCH_7
+#define HEVC_STREAM_SWAP_BUFFER2 HEVC_ASSIST_SCRATCH_8
+#define HEVC_sao_mem_unit	HEVC_ASSIST_SCRATCH_9
+#define HEVC_SAO_ABV		HEVC_ASSIST_SCRATCH_A
+#define HEVC_sao_vb_size	HEVC_ASSIST_SCRATCH_B
+#define HEVC_SAO_VB		HEVC_ASSIST_SCRATCH_C
+#define HEVC_SCALELUT		HEVC_ASSIST_SCRATCH_D
+#define HEVC_WAIT_FLAG		HEVC_ASSIST_SCRATCH_E
+#define RPM_CMD_REG		HEVC_ASSIST_SCRATCH_F
+#define LMEM_DUMP_ADR		HEVC_ASSIST_SCRATCH_F
+#define DEBUG_REG1		HEVC_ASSIST_SCRATCH_G
+#define HEVC_DECODE_MODE2	HEVC_ASSIST_SCRATCH_H
+#define NAL_SEARCH_CTL		HEVC_ASSIST_SCRATCH_I
+#define HEVC_DECODE_MODE	HEVC_ASSIST_SCRATCH_J
 	#define DECODE_MODE_SINGLE 0
-#define DECODE_STOP_POS		  HEVC_ASSIST_SCRATCH_K
-#define HEVC_AUX_ADR		  HEVC_ASSIST_SCRATCH_L
-#define HEVC_AUX_DATA_SIZE	  HEVC_ASSIST_SCRATCH_M
-#define HEVC_DECODE_SIZE	  HEVC_ASSIST_SCRATCH_N
+#define DECODE_STOP_POS		HEVC_ASSIST_SCRATCH_K
+#define HEVC_AUX_ADR		HEVC_ASSIST_SCRATCH_L
+#define HEVC_AUX_DATA_SIZE	HEVC_ASSIST_SCRATCH_M
+#define HEVC_DECODE_SIZE	HEVC_ASSIST_SCRATCH_N
 
-#define HEVCD_MPP_ANC2AXI_TBL_DATA	(0x3464 * 4)
+#define HEVCD_MPP_ANC2AXI_TBL_DATA (0x3464 * 4)
 
 #define HEVC_CM_BODY_START_ADDR	(0x3626 * 4)
 #define HEVC_CM_BODY_LENGTH	(0x3627 * 4)
 #define HEVC_CM_HEADER_LENGTH	(0x3629 * 4)
 #define HEVC_CM_HEADER_OFFSET	(0x362b * 4)
 
-#define AMRISC_MAIN_REQ         0x04
+#define AMRISC_MAIN_REQ		 0x04
 
-/* HEVC Infos */
-#define MAX_REF_PIC_NUM	24
-#define MAX_REF_ACTIVE	16
+/* HEVC Constants */
+#define MAX_REF_PIC_NUM		24
+#define MAX_REF_ACTIVE		16
 #define MPRED_MV_BUF_SIZE	0x120000
-#define MAX_TILE_COL_NUM	5
-#define MAX_TILE_ROW_NUM	5
-#define MAX_SLICE_NUM	800
-#define INVALID_POC	0x80000000
+#define MAX_TILE_COL_NUM	10
+#define MAX_TILE_ROW_NUM	20
+#define MAX_SLICE_NUM		800
+#define INVALID_POC		0x80000000
 
-/* HEVC Workspace decomposition */
+/* HEVC Workspace layout */
 #define IPP_OFFSET       0x00
 #define SAO_ABV_OFFSET   (IPP_OFFSET + 0x4000)
 #define SAO_VB_OFFSET    (SAO_ABV_OFFSET + 0x30000)
@@ -119,7 +119,6 @@
 #define SIZE_WORKSPACE ALIGN(LMEM_OFFSET + 0xA00, 64 * SZ_1K)
 #define SIZE_AUX (SZ_1K * 16)
 #define SIZE_FRAME_MMU (0x1200 * 4)
-
 #define RPM_SIZE 0x80
 #define RPS_USED_BIT 14
 
@@ -139,12 +138,12 @@ static const uint16_t parser_cmd[] = {
 	0x7C00
 };
 
+/* Data received from the HW in this form, do not rearrange */
 union rpm_param {
 	struct {
 		uint16_t data[RPM_SIZE];
 	} l;
 	struct {
-		/* from ucode lmem, do not change this struct */
 		uint16_t CUR_RPS[MAX_REF_ACTIVE];
 		uint16_t num_ref_idx_l0_active;
 		uint16_t num_ref_idx_l1_active;
@@ -202,86 +201,12 @@ union rpm_param {
 	} p;
 };
 
-enum NalUnitType {
-	NAL_UNIT_CODED_SLICE_TRAIL_N = 0,	/* 0 */
-	NAL_UNIT_CODED_SLICE_TRAIL_R,	/* 1 */
-
-	NAL_UNIT_CODED_SLICE_TSA_N,	/* 2 */
-	/* Current name in the spec: TSA_R */
-	NAL_UNIT_CODED_SLICE_TLA,	/* 3 */
-
-	NAL_UNIT_CODED_SLICE_STSA_N,	/* 4 */
-	NAL_UNIT_CODED_SLICE_STSA_R,	/* 5 */
-
-	NAL_UNIT_CODED_SLICE_RADL_N,	/* 6 */
-	/* Current name in the spec: RADL_R */
-	NAL_UNIT_CODED_SLICE_DLP,	/* 7 */
-
-	NAL_UNIT_CODED_SLICE_RASL_N,	/* 8 */
-	/* Current name in the spec: RASL_R */
-	NAL_UNIT_CODED_SLICE_TFD,	/* 9 */
-
-	NAL_UNIT_RESERVED_10,
-	NAL_UNIT_RESERVED_11,
-	NAL_UNIT_RESERVED_12,
-	NAL_UNIT_RESERVED_13,
-	NAL_UNIT_RESERVED_14,
-	NAL_UNIT_RESERVED_15,
-
-	/* Current name in the spec: BLA_W_LP */
-	NAL_UNIT_CODED_SLICE_BLA,	/* 16 */
-	/* Current name in the spec: BLA_W_DLP */
-	NAL_UNIT_CODED_SLICE_BLANT,	/* 17 */
-	NAL_UNIT_CODED_SLICE_BLA_N_LP,	/* 18 */
-	/* Current name in the spec: IDR_W_DLP */
-	NAL_UNIT_CODED_SLICE_IDR,	/* 19 */
-	NAL_UNIT_CODED_SLICE_IDR_N_LP,	/* 20 */
-	NAL_UNIT_CODED_SLICE_CRA,	/* 21 */
-	NAL_UNIT_RESERVED_22,
-	NAL_UNIT_RESERVED_23,
-
-	NAL_UNIT_RESERVED_24,
-	NAL_UNIT_RESERVED_25,
-	NAL_UNIT_RESERVED_26,
-	NAL_UNIT_RESERVED_27,
-	NAL_UNIT_RESERVED_28,
-	NAL_UNIT_RESERVED_29,
-	NAL_UNIT_RESERVED_30,
-	NAL_UNIT_RESERVED_31,
-
-	NAL_UNIT_VPS,		/* 32 */
-	NAL_UNIT_SPS,		/* 33 */
-	NAL_UNIT_PPS,		/* 34 */
-	NAL_UNIT_ACCESS_UNIT_DELIMITER,	/* 35 */
-	NAL_UNIT_EOS,		/* 36 */
-	NAL_UNIT_EOB,		/* 37 */
-	NAL_UNIT_FILLER_DATA,	/* 38 */
-	NAL_UNIT_SEI,		/* 39 Prefix SEI */
-	NAL_UNIT_SEI_SUFFIX,	/* 40 Suffix SEI */
-	NAL_UNIT_RESERVED_41,
-	NAL_UNIT_RESERVED_42,
-	NAL_UNIT_RESERVED_43,
-	NAL_UNIT_RESERVED_44,
-	NAL_UNIT_RESERVED_45,
-	NAL_UNIT_RESERVED_46,
-	NAL_UNIT_RESERVED_47,
-	NAL_UNIT_UNSPECIFIED_48,
-	NAL_UNIT_UNSPECIFIED_49,
-	NAL_UNIT_UNSPECIFIED_50,
-	NAL_UNIT_UNSPECIFIED_51,
-	NAL_UNIT_UNSPECIFIED_52,
-	NAL_UNIT_UNSPECIFIED_53,
-	NAL_UNIT_UNSPECIFIED_54,
-	NAL_UNIT_UNSPECIFIED_55,
-	NAL_UNIT_UNSPECIFIED_56,
-	NAL_UNIT_UNSPECIFIED_57,
-	NAL_UNIT_UNSPECIFIED_58,
-	NAL_UNIT_UNSPECIFIED_59,
-	NAL_UNIT_UNSPECIFIED_60,
-	NAL_UNIT_UNSPECIFIED_61,
-	NAL_UNIT_UNSPECIFIED_62,
-	NAL_UNIT_UNSPECIFIED_63,
-	NAL_UNIT_INVALID,
+enum nal_unit_type {
+	NAL_UNIT_CODED_SLICE_BLA	= 16,
+	NAL_UNIT_CODED_SLICE_BLANT	= 17,
+	NAL_UNIT_CODED_SLICE_BLA_N_LP	= 18,
+	NAL_UNIT_CODED_SLICE_IDR	= 19,
+	NAL_UNIT_CODED_SLICE_IDR_N_LP	= 20,
 };
 
 enum slice_type {
@@ -302,12 +227,12 @@ struct hevc_frame {
 	u32 cur_slice_idx;
 	u32 cur_slice_type;
 
-	/* 2 lists (L0/L1) ; 5 slices ; 16 refs */
+	/* 2 lists (L0/L1) ; 800 slices ; 16 refs */
 	u32 ref_poc_list[2][MAX_SLICE_NUM][16];
 	u32 ref_num[2];
 };
 
-struct tile_s {
+struct hevc_tile {
 	int width;
 	int height;
 	int start_cu_x;
@@ -329,7 +254,7 @@ struct codec_hevc {
 	void      *aux_vaddr;
 	dma_addr_t aux_paddr;
 
-	/* Frame MMU buffer (>= GXL) */
+	/* Frame MMU buffer (>= GXL) ; unused for now */
 	void      *frame_mmu_vaddr;
 	dma_addr_t frame_mmu_paddr;
 
@@ -345,7 +270,7 @@ struct codec_hevc {
 	/* Current Frame being handled */
 	struct hevc_frame *cur_frame;
 	u32 curr_poc;
-	/* collocated reference picture */
+	/* Collocated Reference Picture */
 	struct hevc_frame *col_frame;
 	u32 col_poc;
 
@@ -357,9 +282,7 @@ struct codec_hevc {
 	u32 width;
 	u32 height;
 
-	/* ?? */
 	u32 iPrevTid0POC;
-	u32 iPrevPOC;
 	u32 slice_segment_addr;
 	u32 slice_addr;
 	u32 ldc_flag;
@@ -367,7 +290,7 @@ struct codec_hevc {
 	/* Tiles */
 	u32 num_tile_col;
 	u32 num_tile_row;
-	struct tile_s m_tile[MAX_TILE_ROW_NUM][MAX_TILE_COL_NUM];
+	struct hevc_tile m_tile[MAX_TILE_ROW_NUM][MAX_TILE_COL_NUM];
 	u32 tile_start_lcu_x;
 	u32 tile_start_lcu_y;
 	u32 tile_width_lcu;
@@ -397,24 +320,20 @@ static void codec_hevc_update_frame_refs(struct vdec_session *sess, struct hevc_
 {
 	struct codec_hevc *hevc = sess->priv;
 	union rpm_param *params = &hevc->rpm_param;
-	int i, rIdx;
+	int i;
 	int num_neg = 0;
 	int num_pos = 0;
 	int total_num;
 	int num_ref_idx_l0_active =
-		(params->p.num_ref_idx_l0_active >
-		 MAX_REF_ACTIVE) ? MAX_REF_ACTIVE :
-		params->p.num_ref_idx_l0_active;
+		(params->p.num_ref_idx_l0_active > MAX_REF_ACTIVE) ?
+		MAX_REF_ACTIVE : params->p.num_ref_idx_l0_active;
 	int num_ref_idx_l1_active =
-		(params->p.num_ref_idx_l1_active >
-		 MAX_REF_ACTIVE) ? MAX_REF_ACTIVE :
-		params->p.num_ref_idx_l1_active;
-	int RefPicSetStCurr0[16];
-	int RefPicSetStCurr1[16];
+		(params->p.num_ref_idx_l1_active > MAX_REF_ACTIVE) ?
+		MAX_REF_ACTIVE : params->p.num_ref_idx_l1_active;
+	int ref_picset0[16] = { 0 };
+	int ref_picset1[16] = { 0 };
 
 	for (i = 0; i < 16; i++) {
-		RefPicSetStCurr0[i] = 0;
-		RefPicSetStCurr1[i] = 0;
 		frame->ref_poc_list[0][frame->cur_slice_idx][i] = 0;
 		frame->ref_poc_list[1][frame->cur_slice_idx][i] = 0;
 	}
@@ -430,12 +349,11 @@ static void codec_hevc_update_frame_refs(struct vdec_session *sess, struct hevc_
 			continue;
 
 		if ((cur_rps >> (RPS_USED_BIT - 1)) & 1) {
-			RefPicSetStCurr0[num_neg] =
-				frame->poc - ((1 << (RPS_USED_BIT - 1)) -
-							delt);
+			ref_picset0[num_neg] =
+			       frame->poc - ((1 << (RPS_USED_BIT - 1)) - delt);
 			num_neg++;
 		} else {
-			RefPicSetStCurr1[num_pos] = frame->poc + delt;
+			ref_picset1[num_pos] = frame->poc + delt;
 			num_pos++;
 		}
 	}
@@ -445,50 +363,40 @@ static void codec_hevc_update_frame_refs(struct vdec_session *sess, struct hevc_
 	if (total_num <= 0)
 		goto end;
 
-	for (rIdx = 0; rIdx < num_ref_idx_l0_active; rIdx++) {
+	for (i = 0; i < num_ref_idx_l0_active; i++) {
 		int cIdx;
 		if (params->p.modification_flag & 0x1)
-			cIdx = params->p.modification_list[rIdx];
+			cIdx = params->p.modification_list[i];
 		else
-			cIdx = rIdx % total_num;
+			cIdx = i % total_num;
 
-		frame->ref_poc_list[0][frame->cur_slice_idx][rIdx] =
-			cIdx >= num_neg ? RefPicSetStCurr1[cIdx - num_neg] :
-			RefPicSetStCurr0[cIdx];
+		frame->ref_poc_list[0][frame->cur_slice_idx][i] =
+			cIdx >= num_neg ? ref_picset1[cIdx - num_neg] :
+			ref_picset0[cIdx];
 	}
 
 	if (params->p.slice_type != B_SLICE)
 		goto end;
 
 	if (params->p.modification_flag & 0x2) {
-		for (rIdx = 0; rIdx < num_ref_idx_l1_active;
-			 rIdx++) {
+		for (i = 0; i < num_ref_idx_l1_active; i++) {
 			int cIdx;
-			if (params->p.modification_flag & 0x1) {
+			if (params->p.modification_flag & 0x1)
 				cIdx =
-					params->p.
-					modification_list
-					[num_ref_idx_l0_active +
-					 rIdx];
-			} else {
-				cIdx =
-					params->p.
-					modification_list[rIdx];
-			}
-			frame->ref_poc_list[1][frame->
-				cur_slice_idx][rIdx] =
-				cIdx >=
-				num_pos ?
-				RefPicSetStCurr0[cIdx -	num_pos]
-				: RefPicSetStCurr1[cIdx];
+				params->p.modification_list[num_ref_idx_l0_active + i];
+			else
+				cIdx = params->p.modification_list[i];
+
+			frame->ref_poc_list[1][frame->cur_slice_idx][i] =
+				(cIdx >= num_pos) ? ref_picset0[cIdx - num_pos]
+				: ref_picset1[cIdx];
 		}
 	} else {
-		for (rIdx = 0; rIdx < num_ref_idx_l1_active; rIdx++) {
-			int cIdx = rIdx % total_num;
-			frame->ref_poc_list[1][frame->cur_slice_idx][rIdx] =
-				cIdx >= num_pos ?
-				RefPicSetStCurr0[cIdx - num_pos] :
-				RefPicSetStCurr1[cIdx];
+		for (i = 0; i < num_ref_idx_l1_active; i++) {
+			int cIdx = i % total_num;
+			frame->ref_poc_list[1][frame->cur_slice_idx][i] =
+				cIdx >= num_pos ? ref_picset0[cIdx - num_pos] :
+				ref_picset1[cIdx];
 		}
 	}
 
@@ -496,8 +404,10 @@ end:
 	frame->ref_num[0] = num_ref_idx_l0_active;
 	frame->ref_num[1] = num_ref_idx_l1_active;
 
-	printk("Update frame %u; slice %u; slice_type %u; num_l0 %u; num_l1 %u\n",
-		frame->poc, frame->cur_slice_idx, params->p.slice_type, frame->ref_num[0], frame->ref_num[1]);
+	dev_dbg(sess->core->dev,
+		"Frame %u; slice %u; slice_type %u; num_l0 %u; num_l1 %u\n",
+		frame->poc, frame->cur_slice_idx, params->p.slice_type,
+		frame->ref_num[0], frame->ref_num[1]);
 }
 
 static void codec_hevc_update_ldc_flag(struct codec_hevc *hevc)
@@ -527,35 +437,6 @@ static void codec_hevc_update_ldc_flag(struct codec_hevc *hevc)
 			hevc->ldc_flag = 0;
 			break;
 		}
-	}
-}
-
-/* Not needed on GXL, to test with other SoCs */
-static void codec_hevc_setup_canvas(struct vdec_session *sess)
-{
-	struct v4l2_m2m_buffer *buf;
-	struct vdec_core *core = sess->core;
-	u32 width = ALIGN(sess->width, 64);
-	u32 height = ALIGN(sess->height, 64);
-
-	v4l2_m2m_for_each_dst_buf(sess->m2m_ctx, buf) {
-		u32 buf_idx    = buf->vb.vb2_buf.index;
-		u32 cnv_y_idx  = 128 + buf_idx * 2;
-		u32 cnv_uv_idx = cnv_y_idx + 1;
-		dma_addr_t buf_y_paddr  =
-			vb2_dma_contig_plane_dma_addr(&buf->vb.vb2_buf, 0);
-		dma_addr_t buf_uv_paddr =
-			vb2_dma_contig_plane_dma_addr(&buf->vb.vb2_buf, 1);
-
-		/* Y plane */
-		vdec_canvas_setup(core->dmc_base, cnv_y_idx, buf_y_paddr,
-			width, height, MESON_CANVAS_WRAP_NONE,
-			MESON_CANVAS_BLKMODE_LINEAR);
-
-		/* U/V plane */
-		vdec_canvas_setup(core->dmc_base, cnv_uv_idx, buf_uv_paddr,
-			width, height / 2, MESON_CANVAS_WRAP_NONE,
-			MESON_CANVAS_BLKMODE_LINEAR);
 	}
 }
 
@@ -616,10 +497,12 @@ static void codec_hevc_output_frames(struct vdec_session *sess)
 	struct codec_hevc *hevc = sess->priv;
 
 	while ((tmp = codec_hevc_get_lowest_poc_frame(hevc))) {
-		if (tmp->referenced || tmp->num_reorder_pic >= hevc->frames_num)
+		if (hevc->curr_poc &&
+		 (tmp->referenced || tmp->num_reorder_pic >= hevc->frames_num))
 			break;
 
-		printk("DONE frame poc %u; vbuf %u\n", tmp->poc, tmp->vbuf->vb2_buf.index);
+		dev_dbg(sess->core->dev, "DONE frame poc %u; vbuf %u\n",
+			tmp->poc, tmp->vbuf->vb2_buf.index);
 		vdec_dst_buf_done(sess, tmp->vbuf);
 		list_del(&tmp->list);
 		kfree(tmp);
@@ -628,7 +511,7 @@ static void codec_hevc_output_frames(struct vdec_session *sess)
 }
 
 /* Configure part of the IP responsible for frame buffer decompression */
-static  void codec_hevc_setup_decode_head(struct vdec_session *sess)
+static void codec_hevc_setup_decode_head(struct vdec_session *sess)
 {
 	struct vdec_core *core = sess->core;
 
@@ -650,8 +533,6 @@ static void codec_hevc_setup_buffers_gxbb(struct vdec_session *sess)
 	u32 idx = 0;
 	u32 val;
 	int i;
-
-	codec_hevc_setup_canvas(sess);
 
 	writel_relaxed(0, core->dos_base + HEVCD_MPP_ANC2AXI_TBL_CONF_ADDR);
 
@@ -716,36 +597,39 @@ static int codec_hevc_setup_workspace(struct vdec_session *sess)
 	/* Allocate some memory for the HEVC decoder's state */
 	hevc->workspace_vaddr = dma_alloc_coherent(core->dev, SIZE_WORKSPACE, &hevc->workspace_paddr, GFP_KERNEL);
 	if (!hevc->workspace_vaddr) {
-		printk("Failed to allocate HEVC Workspace\n");
+		dev_err(core->dev, "Failed to allocate HEVC Workspace\n");
 		return -ENOMEM;
 	}
-	//printk("Allocated Workspace: %08X - %08X\n", hevc->workspace_paddr, hevc->workspace_paddr + SIZE_WORKSPACE);
 
-	/*hevc->frame_mmu_vaddr = dma_alloc_coherent(core->dev, SIZE_FRAME_MMU, &hevc->frame_mmu_paddr, GFP_KERNEL);
-	if (!hevc->frame_mmu_vaddr) {
-		//printk("Failed to request HEVC frame_mmu\n");
-		return -ENOMEM;
-	}
-	memset(hevc->frame_mmu_vaddr, 0, SIZE_FRAME_MMU);
-	//printk("Allocated frame_mmu: %08X - %08X\n", hevc->frame_mmu_paddr, hevc->frame_mmu_paddr + SIZE_FRAME_MMU);*/
-
-	writel_relaxed(hevc->workspace_paddr + IPP_OFFSET, core->dos_base + HEVCD_IPP_LINEBUFF_BASE);
-	writel_relaxed(hevc->workspace_paddr + RPM_OFFSET, core->dos_base + HEVC_RPM_BUFFER);
-	writel_relaxed(hevc->workspace_paddr + SH_TM_RPS_OFFSET, core->dos_base + HEVC_SHORT_TERM_RPS);
-	writel_relaxed(hevc->workspace_paddr + VPS_OFFSET, core->dos_base + HEVC_VPS_BUFFER);
-	writel_relaxed(hevc->workspace_paddr + SPS_OFFSET, core->dos_base + HEVC_SPS_BUFFER);
-	writel_relaxed(hevc->workspace_paddr + PPS_OFFSET, core->dos_base + HEVC_PPS_BUFFER);
-	writel_relaxed(hevc->workspace_paddr + SAO_UP_OFFSET, core->dos_base + HEVC_SAO_UP);
+	writel_relaxed(hevc->workspace_paddr + IPP_OFFSET,
+		core->dos_base + HEVCD_IPP_LINEBUFF_BASE);
+	writel_relaxed(hevc->workspace_paddr + RPM_OFFSET,
+		core->dos_base + HEVC_RPM_BUFFER);
+	writel_relaxed(hevc->workspace_paddr + SH_TM_RPS_OFFSET,
+		core->dos_base + HEVC_SHORT_TERM_RPS);
+	writel_relaxed(hevc->workspace_paddr + VPS_OFFSET,
+		core->dos_base + HEVC_VPS_BUFFER);
+	writel_relaxed(hevc->workspace_paddr + SPS_OFFSET,
+		core->dos_base + HEVC_SPS_BUFFER);
+	writel_relaxed(hevc->workspace_paddr + PPS_OFFSET,
+		core->dos_base + HEVC_PPS_BUFFER);
+	writel_relaxed(hevc->workspace_paddr + SAO_UP_OFFSET,
+		core->dos_base + HEVC_SAO_UP);
 
 	/* MMU */
 	//writel_relaxed(hevc->frame_mmu_paddr, core->dos_base + H265_MMU_MAP_BUFFER);
 	/* No MMU */
-	writel_relaxed(hevc->workspace_paddr + SWAP_BUF_OFFSET, core->dos_base + HEVC_STREAM_SWAP_BUFFER);
+	writel_relaxed(hevc->workspace_paddr + SWAP_BUF_OFFSET,
+		core->dos_base + HEVC_STREAM_SWAP_BUFFER);
 
-	writel_relaxed(hevc->workspace_paddr + SWAP_BUF2_OFFSET, core->dos_base + HEVC_STREAM_SWAP_BUFFER2);
-	writel_relaxed(hevc->workspace_paddr + SCALELUT_OFFSET, core->dos_base + HEVC_SCALELUT);
-	writel_relaxed(hevc->workspace_paddr + DBLK_PARA_OFFSET, core->dos_base + HEVC_DBLK_CFG4);
-	writel_relaxed(hevc->workspace_paddr + DBLK_DATA_OFFSET, core->dos_base + HEVC_DBLK_CFG5);
+	writel_relaxed(hevc->workspace_paddr + SWAP_BUF2_OFFSET,
+		core->dos_base + HEVC_STREAM_SWAP_BUFFER2);
+	writel_relaxed(hevc->workspace_paddr + SCALELUT_OFFSET,
+		core->dos_base + HEVC_SCALELUT);
+	writel_relaxed(hevc->workspace_paddr + DBLK_PARA_OFFSET,
+		core->dos_base + HEVC_DBLK_CFG4);
+	writel_relaxed(hevc->workspace_paddr + DBLK_DATA_OFFSET,
+		core->dos_base + HEVC_DBLK_CFG5);
 
 	return 0;
 }
@@ -814,13 +698,8 @@ static int codec_hevc_start(struct vdec_session *sess)
 	writel_relaxed(1, core->dos_base + HEVC_ASSIST_MBOX1_MASK);
 	/* disable PSCALE for hardware sharing */
 	writel_relaxed(0, core->dos_base + HEVC_PSCALE_CTRL);
-
 	/* Let the uCode do all the parsing */
 	writel_relaxed(0xc, core->dos_base + NAL_SEARCH_CTL);
-
-	/*WRITE_VREG(NAL_SEARCH_CTL,
-	READ_VREG(NAL_SEARCH_CTL)
-	| ((parser_sei_enable & 0x7) << 17));*/
 
 	writel_relaxed(0, core->dos_base + DECODE_STOP_POS);
 	writel_relaxed(DECODE_MODE_SINGLE, core->dos_base + HEVC_DECODE_MODE);
@@ -829,16 +708,13 @@ static int codec_hevc_start(struct vdec_session *sess)
 	/* AUX buffers */
 	hevc->aux_vaddr = dma_alloc_coherent(core->dev, SIZE_AUX, &hevc->aux_paddr, GFP_KERNEL);
 	if (!hevc->aux_vaddr) {
-		printk("Failed to request HEVC AUX\n");
+		dev_err(core->dev, "Failed to request HEVC AUX\n");
 		ret = -ENOMEM;
 		goto free_hevc;
 	}
-	//printk("Allocated AUX: %08X - %08X\n", hevc->aux_paddr, hevc->aux_paddr + SIZE_AUX);
 
 	writel_relaxed(hevc->aux_paddr, core->dos_base + HEVC_AUX_ADR);
 	writel_relaxed((((SIZE_AUX) >> 4) << 16) | 0, core->dos_base + HEVC_AUX_DATA_SIZE);
-
-	printk("HEVC_AUX_ADR = %08X ; HEVC_AUX_DATA_SIZE * %08X\n", readl_relaxed(core->dos_base + HEVC_AUX_ADR), readl_relaxed(core->dos_base + HEVC_AUX_DATA_SIZE));
 
 	if (core->platform->revision == VDEC_REVISION_GXBB)
 		codec_hevc_setup_buffers_gxbb(sess);
@@ -873,8 +749,6 @@ static int codec_hevc_stop(struct vdec_session *sess)
 	struct codec_hevc *hevc = sess->priv;
 	struct vdec_core *core = sess->core;
 
-	printk("codec_hevc_stop\n");
-
 	mutex_lock(&sess->codec_lock);
 	codec_hevc_flush_output(sess);
 
@@ -897,9 +771,6 @@ static int codec_hevc_stop(struct vdec_session *sess)
 				  hevc->aux_vaddr, hevc->aux_paddr);
 		hevc->aux_vaddr = 0;
 	}
-
-	kfree(hevc);
-	sess->priv = 0;
 	mutex_unlock(&sess->codec_lock);
 
 	return 0;
@@ -915,10 +786,8 @@ static void codec_hevc_update_tiles(struct vdec_session *sess)
 	u32 sao_vb_size = (sao_mem_unit + (2 << 4)) * pic_height_cu;
 	u32 tiles_flags = hevc->rpm_param.p.tiles_flags;
 
-	printk("tiles_flags = %08X\n", tiles_flags);
-
 	if (tiles_flags & 1) {
-		/* TODO; The sample I'm using has tiles_flags == 0 */
+		/* TODO; The samples I'm using have tiles_flags == 0 */
 		return;
 	}
 
@@ -936,7 +805,6 @@ static void codec_hevc_update_tiles(struct vdec_session *sess)
 	hevc->tile_width_lcu = pic_width_cu;
 	hevc->tile_height_lcu = pic_height_cu;
 
-	//printk("sao_mem_unit = %u; sao_vb_size = %u\n", sao_mem_unit, sao_vb_size);
 	writel_relaxed(sao_mem_unit, core->dos_base + HEVC_sao_mem_unit);
 	writel_relaxed(hevc->workspace_paddr + SAO_ABV_OFFSET, core->dos_base + HEVC_SAO_ABV);
 	writel_relaxed(sao_vb_size, core->dos_base + HEVC_sao_vb_size);
@@ -962,15 +830,15 @@ static struct hevc_frame * codec_hevc_prepare_new_frame(struct vdec_session *ses
 	struct codec_hevc *hevc = sess->priv;
 	union rpm_param *params = &hevc->rpm_param;
 
-	vbuf = v4l2_m2m_dst_buf_remove(sess->m2m_ctx);
-	if (!vbuf) {
-		printk("Couldn't remove dst buf\n");
-		return NULL;
-	}
-
 	new_frame = kzalloc(sizeof(*new_frame), GFP_KERNEL);
 	if (!new_frame)
 		return NULL;
+
+	vbuf = v4l2_m2m_dst_buf_remove(sess->m2m_ctx);
+	if (!vbuf) {
+		dev_err(sess->core->dev, "No dst buffer available\n");
+		return NULL;
+	}
 
 	new_frame->vbuf = vbuf;
 	new_frame->referenced = 1;
@@ -980,8 +848,6 @@ static struct hevc_frame * codec_hevc_prepare_new_frame(struct vdec_session *ses
 
 	list_add_tail(&new_frame->list, &hevc->ref_frames_list);
 	hevc->frames_num++;
-
-	printk("New frame, buf idx %u\n", vbuf->vb2_buf.index);
 
 	return new_frame;
 }
@@ -1050,16 +916,7 @@ static void codec_hevc_set_sao(struct vdec_session *sess, struct hevc_frame *fra
 	val_2 = readl_relaxed(core->dos_base + HEVC_SAO_CTRL0);
 	val_2 &= (~0x300);
 
-	/*if (hevc->tile_enabled) {
-		val |=
-			((misc_flag0 >>
-			  LOOP_FILER_ACROSS_TILES_ENABLED_FLAG_BIT) &
-			 0x1) << 0;
-		val_2 |=
-			((misc_flag0 >>
-			  LOOP_FILER_ACROSS_TILES_ENABLED_FLAG_BIT) &
-			 0x1) << 8;
-	}*/
+	/* TODO: handle tiles here if enabled */
 	slice_deblocking_filter_disabled_flag = (misc_flag0 >>
 			SLICE_DEBLOCKING_FILTER_DISABLED_FLAG_BIT) & 0x1;
 	if ((misc_flag0 & (1 << DEBLOCKING_FILTER_OVERRIDE_ENABLED_FLAG_BIT))
@@ -1271,16 +1128,15 @@ static void codec_hevc_set_ref_list(struct vdec_session *sess,
 	u32 ref_frame_id;
 
 	for (i = 0; i < ref_num; i++) {
-		ref_frame = codec_hevc_get_frame_by_poc(hevc,
-			ref_poc_list[i]);
+		ref_frame = codec_hevc_get_frame_by_poc(hevc, ref_poc_list[i]);
 
 		if (!ref_frame) {
-			printk("Couldn't find ref. frame %u\n", ref_poc_list[i]);
+			dev_warn(core->dev, "Couldn't find ref. frame %u\n",
+				ref_poc_list[i]);
 			continue;
 		}
 
 		ref_frame_id = ref_frame->vbuf->vb2_buf.index * 2;
-		printk("Programming ref poc %u\n", ref_poc_list[i]);
 
 		writel_relaxed(((ref_frame_id + 1) << 16) |
 				((ref_frame_id + 1) << 8) |
@@ -1316,10 +1172,8 @@ static void codec_hevc_update_col_frame(struct codec_hevc *hevc)
 	u32 col_ref = param->p.collocated_ref_idx;
 	u32 col_from_l0 = param->p.collocated_from_l0_flag;
 
-	if (cur_frame->cur_slice_type == B_SLICE) {
+	if (cur_frame->cur_slice_type == B_SLICE)
 		list_no = 1 - col_from_l0;
-		printk("list_no = %u; col_from_l0 = %u\n", list_no, col_from_l0);
-	}
 
 	if (col_ref >= cur_frame->ref_num[list_no])
 		hevc->col_poc = INVALID_POC;
@@ -1380,19 +1234,12 @@ static void codec_hevc_update_pocs(struct vdec_session *sess)
 		hevc->iPrevTid0POC = hevc->curr_poc;
 }
 
-static int codec_hevc_process_segment_header(struct vdec_session *sess)
+static void codec_hevc_process_segment_header(struct vdec_session *sess)
 {
 	struct codec_hevc *hevc = sess->priv;
 	union rpm_param *param = &hevc->rpm_param;
-	u32 nal_unit_type = param->p.m_nalUnitType;
-	u32 temporal_id = param->p.m_temporalId;
-	u32 slice_segment_address = param->p.slice_segment_address;
-
-	printk("nal_unit_type = %u ; temporal_id = %u ; slice_seg_addr = %u\n",
-		nal_unit_type, temporal_id, slice_segment_address);
 
 	if (param->p.first_slice_segment_in_pic_flag == 0) {
-		printk("dependent_slice_segment_flag = %08X\n", param->p.dependent_slice_segment_flag);
 		hevc->slice_segment_addr = param->p.slice_segment_address;
 		if (!param->p.dependent_slice_segment_flag)
 			hevc->slice_addr = hevc->slice_segment_addr;
@@ -1402,7 +1249,14 @@ static int codec_hevc_process_segment_header(struct vdec_session *sess)
 	}
 
 	codec_hevc_update_pocs(sess);
-	printk("curr_poc = %u; iPrevTid0POC = %u\n", hevc->curr_poc, hevc->iPrevTid0POC);
+}
+
+static int codec_hevc_process_segment(struct vdec_session *sess)
+{
+	struct codec_hevc *hevc = sess->priv;
+	struct vdec_core *core = sess->core;
+	union rpm_param *param = &hevc->rpm_param;
+	u32 slice_segment_address = param->p.slice_segment_address;
 
 	/* First slice: new frame */
 	if (slice_segment_address == 0) {
@@ -1410,22 +1264,34 @@ static int codec_hevc_process_segment_header(struct vdec_session *sess)
 		codec_hevc_output_frames(sess);
 
 		hevc->cur_frame = codec_hevc_prepare_new_frame(sess);
-		if (!hevc->cur_frame) {
-			dev_err(sess->core->dev_dec,
-				"No destination buffer available\n");
+		if (!hevc->cur_frame)
 			return -1;
-		}
 
 		codec_hevc_update_tiles(sess);
 	} else {
 		hevc->cur_frame->cur_slice_idx++;
 	}
 
+	codec_hevc_update_frame_refs(sess, hevc->cur_frame);
+	codec_hevc_update_col_frame(hevc);
+	codec_hevc_update_ldc_flag(hevc);
+	codec_hevc_set_mc(sess, hevc->cur_frame);
+	codec_hevc_set_mcrcc(sess);
+	codec_hevc_set_mpred(sess, hevc->cur_frame, hevc->col_frame);
+	codec_hevc_set_sao(sess, hevc->cur_frame);
+
+	writel_relaxed(readl_relaxed(core->dos_base + HEVC_WAIT_FLAG) | 2, core->dos_base + HEVC_WAIT_FLAG);
+	writel_relaxed(HEVC_CODED_SLICE_SEGMENT_DAT, core->dos_base + HEVC_DEC_STATUS_REG);
+
+	/* Interrupt the firmware's processor */
+	writel_relaxed(AMRISC_MAIN_REQ, core->dos_base + HEVC_MCPU_INTR_REQ);
+
 	return 0;
 }
 
 static int codec_hevc_process_rpm(struct vdec_session *sess)
 {
+	struct vdec_core *core = sess->core;
 	struct codec_hevc *hevc = sess->priv;
 	union rpm_param *rpm_param = &hevc->rpm_param;
 	u32 lcu_x_num_div, lcu_y_num_div;
@@ -1458,7 +1324,8 @@ static int codec_hevc_process_rpm(struct vdec_session *sess)
 	hevc->lcu_y_num = ((hevc->height % hevc->lcu_size) == 0) ? lcu_y_num_div : lcu_y_num_div + 1;
 	hevc->lcu_total = hevc->lcu_x_num * hevc->lcu_y_num;
 
-	printk("lcu_size = %u ; lcu_size_log2 = %u; lcu_x_num = %u; lcu_y_num = %u; lcu_total = %u\n", hevc->lcu_size, ilog2(hevc->lcu_size), hevc->lcu_x_num, hevc->lcu_y_num, hevc->lcu_total);
+	dev_dbg(core->dev, "lcu_size = %u ; lcu_x_num = %u; lcu_y_num = %u",
+		hevc->lcu_size, hevc->lcu_x_num, hevc->lcu_y_num);
 
 	return 0;
 }
@@ -1500,23 +1367,9 @@ static irqreturn_t codec_hevc_threaded_isr(struct vdec_session *sess)
 		goto unlock;
 	}
 
-	if (codec_hevc_process_segment_header(sess)) {
+	codec_hevc_process_segment_header(sess);
+	if (codec_hevc_process_segment(sess))
 		vdec_abort(sess);
-		goto unlock;
-	}
-
-	codec_hevc_update_frame_refs(sess, hevc->cur_frame);
-	codec_hevc_update_col_frame(hevc);
-	codec_hevc_update_ldc_flag(hevc);
-	codec_hevc_set_mc(sess, hevc->cur_frame);
-	codec_hevc_set_mcrcc(sess);
-	codec_hevc_set_mpred(sess, hevc->cur_frame, hevc->col_frame);
-	codec_hevc_set_sao(sess, hevc->cur_frame);
-
-	writel_relaxed(readl_relaxed(core->dos_base + HEVC_WAIT_FLAG) | 2, core->dos_base + HEVC_WAIT_FLAG);
-	writel_relaxed(HEVC_CODED_SLICE_SEGMENT_DAT, core->dos_base + HEVC_DEC_STATUS_REG);
-	/* Interrupt the firmware's processor */
-	writel_relaxed(AMRISC_MAIN_REQ, core->dos_base + HEVC_MCPU_INTR_REQ);
 
 unlock:
 	mutex_unlock(&sess->codec_lock);

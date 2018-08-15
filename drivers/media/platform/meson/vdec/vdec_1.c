@@ -105,7 +105,7 @@ static int vdec_1_load_firmware(struct vdec_session *sess, const char* fwname)
 	while (--i && readl(core->dos_base + IMEM_DMA_CTRL) & 0x8000) { }
 
 	if (i == 0) {
-		printk("Firmware load fail (DMA hang?)\n");
+		dev_err(dev, "Firmware load fail (DMA hang?)\n");
 		ret = -EINVAL;
 		goto free_mc;
 	}
@@ -168,8 +168,6 @@ static int vdec_1_start(struct vdec_session *sess)
 	struct vdec_core *core = sess->core;
 	struct vdec_codec_ops *codec_ops = sess->fmt_out->codec_ops;
 
-	printk("vdec_1_start\n");
-
 	clk_set_rate(core->vdec_1_clk, 666666666);
 	ret = clk_prepare_enable(core->vdec_1_clk);
 	if (ret)
@@ -207,8 +205,14 @@ static int vdec_1_start(struct vdec_session *sess)
 
 	codec_ops->start(sess);
 
+	/* Enable 2-plane output */
+	if (sess->fmt_cap->pixfmt == V4L2_PIX_FMT_NV12M)
+		writel_relaxed(readl_relaxed(core->dos_base + MDEC_PIC_DC_CTRL) | (1 << 17), core->dos_base + MDEC_PIC_DC_CTRL);
+
 	/* Enable firmware processor */
 	writel_relaxed(1, core->dos_base + MPSR);
+	/* Let the firmware settle */
+	udelay(10);
 
 	return 0;
 }
@@ -217,7 +221,6 @@ static int vdec_1_stop(struct vdec_session *sess)
 {
 	struct vdec_core *core = sess->core;
 	struct vdec_codec_ops *codec_ops = sess->fmt_out->codec_ops;
-	printk("vdec_1_stop\n");
 
 	writel_relaxed(0, core->dos_base + MPSR);
 	writel_relaxed(0, core->dos_base + CPSR);
@@ -228,7 +231,6 @@ static int vdec_1_stop(struct vdec_session *sess)
 
 	writel_relaxed((1<<12)|(1<<11), core->dos_base + DOS_SW_RESET0);
 	writel_relaxed(0, core->dos_base + DOS_SW_RESET0);
-
 	readl_relaxed(core->dos_base + DOS_SW_RESET0);
 
 	writel_relaxed(0, core->dos_base + ASSIST_MBOX1_MASK);
@@ -256,7 +258,6 @@ static int vdec_1_stop(struct vdec_session *sess)
 
 	clk_disable_unprepare(core->vdec_1_clk);
 
-	printk("vdec_poweroff end\n");
 	return 0;
 }
 

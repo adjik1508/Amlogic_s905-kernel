@@ -109,7 +109,6 @@ static int vdec_hevc_stop(struct vdec_session *sess)
 {
 	struct vdec_core *core = sess->core;
 	struct vdec_codec_ops *codec_ops = sess->fmt_out->codec_ops;
-	printk("vdec_hevc_stop\n");
 
 	/* Disable interrupt */
 	writel_relaxed(0, core->dos_base + HEVC_ASSIST_MBOX1_MASK);
@@ -137,8 +136,6 @@ static int vdec_hevc_start(struct vdec_session *sess)
 	int ret;
 	struct vdec_core *core = sess->core;
 	struct vdec_codec_ops *codec_ops = sess->fmt_out->codec_ops;
-
-	printk("vdec_hevc_start\n");
 
 	clk_set_rate(core->vdec_hevc_clk, 666666666);
 	ret = clk_prepare_enable(core->vdec_hevc_clk);
@@ -179,8 +176,6 @@ static int vdec_hevc_start(struct vdec_session *sess)
 	readl_relaxed(core->dos_base + DOS_SW_RESET3);
 
 	writel_relaxed(1, core->dos_base + HEVC_MPSR);
-
-	printk("vdec_hevc_start end\n");
 
 	return 0;
 }

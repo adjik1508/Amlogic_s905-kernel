@@ -9,6 +9,7 @@
 #include <linux/module.h>
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
+#include <linux/reset.h>
 #include <media/videobuf2-dma-contig.h>
 #include <media/v4l2-mem2mem.h>
 
@@ -20,34 +21,35 @@
 	#define ES_WRITE		BIT(5)
 	#define ES_SEARCH		BIT(1)
 	#define ES_PARSER_START		BIT(0)
-#define PARSER_FETCH_ADDR 0x4
-#define PARSER_FETCH_CMD  0x8
+#define PARSER_FETCH_ADDR	0x4
+#define PARSER_FETCH_CMD	0x8
 #define PARSER_CONFIG 0x14
-	#define PS_CFG_MAX_FETCH_CYCLE_BIT  0
-	#define PS_CFG_STARTCODE_WID_24_BIT 10
-	#define PS_CFG_MAX_ES_WR_CYCLE_BIT  12
-	#define PS_CFG_PFIFO_EMPTY_CNT_BIT  16
+	#define PS_CFG_MAX_FETCH_CYCLE_BIT	0
+	#define PS_CFG_STARTCODE_WID_24_BIT	10
+	#define PS_CFG_MAX_ES_WR_CYCLE_BIT	12
+	#define PS_CFG_PFIFO_EMPTY_CNT_BIT	16
 #define PFIFO_WR_PTR 0x18
 #define PFIFO_RD_PTR 0x1c
 #define PARSER_SEARCH_PATTERN 0x24
 	#define ES_START_CODE_PATTERN 0x00000100
 #define PARSER_SEARCH_MASK 0x28
 	#define ES_START_CODE_MASK	0xffffff00
-	#define FETCH_ENDIAN_BIT	  27
-#define PARSER_INT_ENABLE 0x2c
-	#define PARSER_INT_HOST_EN_BIT 8
-#define PARSER_INT_STATUS 0x30
-	#define PARSER_INTSTAT_SC_FOUND 1
-#define PARSER_ES_CONTROL 0x5c
-#define PARSER_VIDEO_START_PTR 0x80
-#define PARSER_VIDEO_END_PTR 0x84
-#define PARSER_VIDEO_HOLE 0x90
+	#define FETCH_ENDIAN_BIT	27
+#define PARSER_INT_ENABLE	0x2c
+	#define PARSER_INT_HOST_EN_BIT	8
+#define PARSER_INT_STATUS	0x30
+	#define PARSER_INTSTAT_SC_FOUND	1
+#define PARSER_ES_CONTROL	0x5c
+#define PARSER_VIDEO_START_PTR	0x80
+#define PARSER_VIDEO_END_PTR	0x84
+#define PARSER_VIDEO_HOLE	0x90
 
 /* STBUF regs */
 #define VLD_MEM_VIFIFO_BUF_CNTL 0x3120
 	#define MEM_BUFCTRL_MANUAL	BIT(1)
 
-#define SEARCH_PATTERN_LEN   512
+#define SEARCH_PATTERN_LEN	512
+#define MIN_PACKET_SIZE		(4 * SZ_1K)
 
 static DECLARE_WAIT_QUEUE_HEAD(wq);
 static int search_done;
@@ -56,7 +58,7 @@ static int search_done;
  * Credits to Endless Mobile.
  */
 #define EOS_TAIL_BUF_SIZE 1024
-static const u8 eos_tail_data[] = {
+static const u8 eos_tail_data[EOS_TAIL_BUF_SIZE] = {
 	0x00, 0x00, 0x00, 0x01, 0x06, 0x05, 0xff, 0xe4, 0xdc, 0x45, 0xe9, 0xbd, 0xe6, 0xd9, 0x48, 0xb7,
 	0x96, 0x2c, 0xd8, 0x20, 0xd9, 0x23, 0xee, 0xef, 0x78, 0x32, 0x36, 0x34, 0x20, 0x2d, 0x20, 0x63,
 	0x6f, 0x72, 0x65, 0x20, 0x36, 0x37, 0x20, 0x72, 0x31, 0x31, 0x33, 0x30, 0x20, 0x38, 0x34, 0x37,
@@ -105,8 +107,6 @@ static irqreturn_t esparser_isr(int irq, void *dev)
 	int_status = readl_relaxed(core->esparser_base + PARSER_INT_STATUS);
 	writel_relaxed(int_status, core->esparser_base + PARSER_INT_STATUS);
 
-	//printk("esparser_isr! status = %08X\n", int_status);
-
 	if (int_status & PARSER_INTSTAT_SC_FOUND) {
 		writel_relaxed(0, core->esparser_base + PFIFO_RD_PTR);
 		writel_relaxed(0, core->esparser_base + PFIFO_WR_PTR);
@@ -117,17 +117,29 @@ static irqreturn_t esparser_isr(int irq, void *dev)
 	return IRQ_HANDLED;
 }
 
-/* Add a start code at the end of the buffer
- * to trigger the esparser interrupt
+/* Pad the packet to at least 4KiB bytes otherwise the VDEC unit won't trigger
+ * ISRs.
+ * Also append a start code 000001ff at the end to trigger
+ * the ESPARSER interrupt.
  */
-static void esparser_append_start_code(struct vb2_buffer *vb)
+static u32 esparser_pad_start_code(struct vb2_buffer *vb)
 {
-	u8 *vaddr = vb2_plane_vaddr(vb, 0) + vb2_get_plane_payload(vb, 0);
+	u32 payload_size = vb2_get_plane_payload(vb, 0);
+	u32 pad_size = 0;
+	u8 *vaddr = vb2_plane_vaddr(vb, 0) + payload_size;
 
-	vaddr[0] = 0x00;
-	vaddr[1] = 0x00;
-	vaddr[2] = 0x01;
-	vaddr[3] = 0xff;
+	if (payload_size < MIN_PACKET_SIZE) {
+		pad_size = MIN_PACKET_SIZE - payload_size;
+		memset(vaddr, 0, pad_size);
+	}
+
+	memset(vaddr + pad_size + 4, 0, 508);
+	vaddr[pad_size]     = 0x00;
+	vaddr[pad_size + 1] = 0x00;
+	vaddr[pad_size + 2] = 0x01;
+	vaddr[pad_size + 3] = 0xff;
+
+	return pad_size;
 }
 
 static int
@@ -155,7 +167,7 @@ static u32 esparser_vififo_get_free_space(struct vdec_session *sess)
 	vififo_usage += (6 * SZ_1K);
 
 	if (vififo_usage > sess->vififo_size) {
-		dev_warn(sess->core->dev_dec,
+		dev_warn(sess->core->dev,
 			"VIFIFO usage (%u) > VIFIFO size (%u)\n",
 			vififo_usage, sess->vififo_size);
 		return 0;
@@ -176,8 +188,7 @@ int esparser_queue_eos(struct vdec_session *sess)
 	if (!eos_vaddr)
 		return -ENOMEM;
 
-	sess->should_stop = 1;
-
+	memset(eos_vaddr, 0, EOS_TAIL_BUF_SIZE + 512);
 	memcpy(eos_vaddr, eos_tail_data, sizeof(eos_tail_data));
 	ret = esparser_write_data(core, eos_paddr, EOS_TAIL_BUF_SIZE);
 	dma_free_coherent(dev, EOS_TAIL_BUF_SIZE + 512,
@@ -192,9 +203,10 @@ static int esparser_queue(struct vdec_session *sess, struct vb2_v4l2_buffer *vbu
 	struct vb2_buffer *vb = &vbuf->vb2_buf;
 	struct vdec_core *core = sess->core;
 	struct vdec_codec_ops *codec_ops = sess->fmt_out->codec_ops;
-	u32 num_dst_bufs = v4l2_m2m_num_dst_bufs_ready(sess->m2m_ctx);
+	u32 num_dst_bufs = 0;
 	u32 payload_size = vb2_get_plane_payload(vb, 0);
 	dma_addr_t phy = vb2_dma_contig_plane_dma_addr(vb, 0);
+	u32 pad_size;
 
 	if (!payload_size) {
 		esparser_queue_eos(sess);
@@ -202,25 +214,35 @@ static int esparser_queue(struct vdec_session *sess, struct vb2_v4l2_buffer *vbu
 	}
 
 	if (codec_ops->num_pending_bufs)
-		num_dst_bufs += codec_ops->num_pending_bufs(sess);
+		num_dst_bufs = codec_ops->num_pending_bufs(sess);
+
+	num_dst_bufs += v4l2_m2m_num_dst_bufs_ready(sess->m2m_ctx);
 
 	if (esparser_vififo_get_free_space(sess) < payload_size ||
 	    atomic_read(&sess->esparser_queued_bufs) >= num_dst_bufs)
 		return -EAGAIN;
 
 	v4l2_m2m_src_buf_remove_by_buf(sess->m2m_ctx, vbuf);
-	vdec_add_buf_reorder(sess, vb->timestamp);
+	vdec_add_ts_reorder(sess, vb->timestamp);
+	dev_dbg(core->dev, "esparser: Queuing ts = %llu ; pld_size = %u\n",
+		vb->timestamp, payload_size);
 
-	esparser_append_start_code(vb);
-	ret = esparser_write_data(core, phy, payload_size);
+	/* Queuing things too fast can unfortunately lead to HW lock
+	 * or buffer decoding errors, as it looks like the ESPARSER
+	 * gets confused with too much data thrown in too quickly.
+	 */
+	usleep_range(5000, 10000);
+
+	pad_size = esparser_pad_start_code(vb);
+	ret = esparser_write_data(core, phy, payload_size + pad_size);
 
 	if (ret > 0) {
 		vbuf->flags = 0;
 		vbuf->field = V4L2_FIELD_NONE;
 		v4l2_m2m_buf_done(vbuf, VB2_BUF_STATE_DONE);
 	} else if (ret <= 0) {
-		printk("ESPARSER input parsing error\n");
-		vdec_remove_buf(sess, vb->timestamp);
+		dev_warn(core->dev, "esparser: input parsing error\n");
+		vdec_remove_ts(sess, vb->timestamp);
 		v4l2_m2m_buf_done(vbuf, VB2_BUF_STATE_ERROR);
 		writel_relaxed(0, core->esparser_base + PARSER_FETCH_CMD);
 	}
@@ -237,12 +259,14 @@ void esparser_queue_all_src(struct work_struct *work)
 	struct vdec_session *sess =
 		container_of(work, struct vdec_session, esparser_queue_work);
 
+	mutex_lock(&sess->lock);
 	v4l2_m2m_for_each_src_buf_safe(sess->m2m_ctx, buf, n) {
 		if (esparser_queue(sess, &buf->vb) < 0)
 			break;
 
 		atomic_inc(&sess->esparser_queued_bufs);
 	}
+	mutex_unlock(&sess->lock);
 }
 
 int esparser_power_up(struct vdec_session *sess)
@@ -250,6 +274,7 @@ int esparser_power_up(struct vdec_session *sess)
 	struct vdec_core *core = sess->core;
 	struct vdec_ops *vdec_ops = sess->fmt_out->vdec_ops;
 
+	reset_control_reset(core->esparser_reset);
 	writel_relaxed((10 << PS_CFG_PFIFO_EMPTY_CNT_BIT) |
 				(1  << PS_CFG_MAX_ES_WR_CYCLE_BIT) |
 				(16 << PS_CFG_MAX_FETCH_CYCLE_BIT),
@@ -284,25 +309,30 @@ int esparser_power_up(struct vdec_session *sess)
 
 int esparser_init(struct platform_device *pdev, struct vdec_core *core)
 {
+	struct device *dev = &pdev->dev;
 	int ret;
 	int irq;
 
-	/* TODO: name the IRQs */
 	irq = platform_get_irq(pdev, 1);
 	if (irq < 0) {
-		printk("Failed getting IRQ\n");
+		dev_err(dev, "Failed getting ESPARSER IRQ from dtb\n");
 		return irq;
 	}
 
-	printk("Requesting IRQ %d\n", irq);
-
-	ret = devm_request_irq(&pdev->dev, irq, esparser_isr,
+	ret = devm_request_irq(dev, irq, esparser_isr,
 					IRQF_SHARED,
 					"esparserirq", core);
 	if (ret) {
-		printk("Failed requesting IRQ\n");
+		dev_err(dev, "Failed requesting ESPARSER IRQ\n");
 		return ret;
 	}
+
+	core->esparser_reset = devm_reset_control_get_exclusive(dev,
+                                                "esparser");
+        if (IS_ERR(core->esparser_reset)) {
+                dev_err(dev, "Failed to get esparser_reset\n");
+                return PTR_ERR(core->esparser_reset);
+        }
 
 	return 0;
 }

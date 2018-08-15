@@ -45,48 +45,22 @@ struct codec_mpeg12 {
 	/* Buffer for the MPEG1/2 Workspace */
 	void      *workspace_vaddr;
 	dma_addr_t workspace_paddr;
-
-	/* Housekeeping thread for marking buffers to DONE
-	 * and recycling them into the hardware
-	 */
-	struct task_struct *buffers_thread;
 };
 
-static int codec_mpeg12_buffers_thread(void *data)
+static int codec_mpeg12_can_recycle(struct vdec_core *core)
 {
-	struct vdec_buffer *tmp;
-	struct vdec_session *sess = data;
-	struct vdec_core *core = sess->core;;
+	return !readl_relaxed(core->dos_base + MREG_BUFFERIN);
+}
 
-	while (!kthread_should_stop()) {
-		mutex_lock(&sess->bufs_recycle_lock);
-		while (!list_empty(&sess->bufs_recycle) &&
-		       !readl_relaxed(core->dos_base + MREG_BUFFERIN))
-		{
-			tmp = list_first_entry(&sess->bufs_recycle, struct vdec_buffer, list);
-
-			/* Tell the decoder he can recycle this buffer */
-			writel_relaxed(tmp->index + 1, core->dos_base + MREG_BUFFERIN);
-
-			printk("Buffer %d recycled\n", tmp->index);
-
-			list_del(&tmp->list);
-			kfree(tmp);
-		}
-		mutex_unlock(&sess->bufs_recycle_lock);
-
-		usleep_range(5000, 10000);
-	}
-
-	return 0;
+static void codec_mpeg12_recycle(struct vdec_core *core, u32 buf_idx)
+{
+	writel_relaxed(buf_idx + 1, core->dos_base + MREG_BUFFERIN);
 }
 
 static int codec_mpeg12_start(struct vdec_session *sess) {
 	struct vdec_core *core = sess->core;
 	struct codec_mpeg12 *mpeg12 = sess->priv;
 	int ret;
-
-	printk("codec_mpeg12_start\n");
 
 	mpeg12 = kzalloc(sizeof(*mpeg12), GFP_KERNEL);
 	if (!mpeg12)
@@ -97,11 +71,10 @@ static int codec_mpeg12_start(struct vdec_session *sess) {
 	/* Allocate some memory for the MPEG1/2 decoder's state */
 	mpeg12->workspace_vaddr = dma_alloc_coherent(core->dev, SIZE_WORKSPACE, &mpeg12->workspace_paddr, GFP_KERNEL);
 	if (!mpeg12->workspace_vaddr) {
-		printk("Failed to request MPEG 1/2 Workspace\n");
+		dev_err(core->dev, "Failed to request MPEG 1/2 Workspace\n");
 		ret = -ENOMEM;
 		goto free_mpeg12;
 	}
-	printk("Allocated Workspace: %08X - %08X\n", mpeg12->workspace_paddr, mpeg12->workspace_paddr + SIZE_WORKSPACE);
 
 	writel_relaxed((1<<9) | (1<<8) | (1<<7) | (1<<6) | (1<<4), core->dos_base + DOS_SW_RESET0);
 	writel_relaxed(0, core->dos_base + DOS_SW_RESET0);
@@ -124,11 +97,6 @@ static int codec_mpeg12_start(struct vdec_session *sess) {
 	writel_relaxed(0, core->dos_base + MREG_FATAL_ERROR);
 	writel_relaxed(0, core->dos_base + MREG_WAIT_BUFFER);
 
-	/* Enable NV21 */
-	writel_relaxed(readl_relaxed(core->dos_base + MDEC_PIC_DC_CTRL) | (1 << 17), core->dos_base + MDEC_PIC_DC_CTRL);
-
-	mpeg12->buffers_thread = kthread_run(codec_mpeg12_buffers_thread, sess, "buffers_done");
-
 	return 0;
 
 free_mpeg12:
@@ -141,17 +109,10 @@ static int codec_mpeg12_stop(struct vdec_session *sess)
 	struct codec_mpeg12 *mpeg12 = sess->priv;
 	struct vdec_core *core = sess->core;
 
-	printk("codec_mpeg12_stop\n");
-
-	kthread_stop(mpeg12->buffers_thread);
-
 	if (mpeg12->workspace_vaddr) {
 		dma_free_coherent(core->dev, SIZE_WORKSPACE, mpeg12->workspace_vaddr, mpeg12->workspace_paddr);
 		mpeg12->workspace_vaddr = 0;
 	}
-
-	kfree(mpeg12);
-	sess->priv = 0;
 
 	return 0;
 }
@@ -166,10 +127,9 @@ static irqreturn_t codec_mpeg12_isr(struct vdec_session *sess)
 
 	reg = readl_relaxed(core->dos_base + MREG_FATAL_ERROR);
 	if (reg == 1)
-		printk("MPEG12 fatal error\n");
+		dev_err(core->dev, "MPEG12 fatal error\n");
 
 	reg = readl_relaxed(core->dos_base + MREG_BUFFEROUT);
-	//printk("codec_mpeg12_isr ; reg = %08X\n", reg);
 	if (!reg)
 		return IRQ_HANDLED;
 
@@ -188,6 +148,7 @@ struct vdec_codec_ops codec_mpeg12_ops = {
 	.start = codec_mpeg12_start,
 	.stop = codec_mpeg12_stop,
 	.isr = codec_mpeg12_isr,
-	.notify_dst_buffer = vdec_queue_recycle,
+	.can_recycle = codec_mpeg12_can_recycle,
+	.recycle = codec_mpeg12_recycle,
 };
 

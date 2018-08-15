@@ -21,7 +21,6 @@
 #include "meson_overlay.h"
 #include "meson_vpp.h"
 #include "meson_viu.h"
-#include "meson_canvas.h"
 #include "meson_registers.h"
 
 /* VD1_IF0_GEN_REG */
@@ -60,12 +59,16 @@
 #define VD_VERT_FMT_EN			BIT(0)
 
 /* VPP_POSTBLEND_VD1_H_START_END */
-#define VD_H_START(value)		FIELD_PREP(GENMASK(12, 0), value)
-#define VD_H_END(value)			FIELD_PREP(GENMASK(27, 16), value)
+#define VD_H_END(value)			FIELD_PREP(GENMASK(11, 0), value)
+#define VD_H_START(value)		FIELD_PREP(GENMASK(27, 16), value)
 
 /* VPP_POSTBLEND_VD1_V_START_END */
-#define VD_V_START(value)		FIELD_PREP(GENMASK(11, 0), value)
-#define VD_V_END(value)			FIELD_PREP(GENMASK(27, 16), value)
+#define VD_V_END(value)			FIELD_PREP(GENMASK(11, 0), value)
+#define VD_V_START(value)		FIELD_PREP(GENMASK(27, 16), value)
+
+/* VPP_BLEND_VD2_V_START_END */
+#define VD2_V_END(value)		FIELD_PREP(GENMASK(11, 0), value)
+#define VD2_V_START(value)		FIELD_PREP(GENMASK(27, 16), value)
 
 /* VIU_VD1_FMT_W */
 #define VD_V_WIDTH(value)		FIELD_PREP(GENMASK(11, 0), value)
@@ -81,29 +84,23 @@ struct meson_overlay {
 };
 #define to_meson_overlay(x) container_of(x, struct meson_overlay, base)
 
-/* TODO Scaling */
+#define FRAC_16_16(mult, div)    (((mult) << 16) / (div))
+
 static int meson_overlay_atomic_check(struct drm_plane *plane,
 				    struct drm_plane_state *state)
 {
 	struct drm_crtc_state *crtc_state;
 
-	DRM_DEBUG_DRIVER("\n");
-
 	if (!state->crtc)
 		return 0;
-
-	DRM_DEBUG_DRIVER("\n");
 
 	crtc_state = drm_atomic_get_crtc_state(state->state, state->crtc);
 	if (IS_ERR(crtc_state))
 		return PTR_ERR(crtc_state);
 
-	DRM_DEBUG_DRIVER("\n");
-
-
 	return drm_atomic_helper_check_plane_state(state, crtc_state,
-						   DRM_PLANE_HELPER_NO_SCALING,
-						   DRM_PLANE_HELPER_NO_SCALING,
+						   FRAC_16_16(1, 5),
+						   FRAC_16_16(5, 1),
 						   true, true);
 }
 
@@ -113,17 +110,18 @@ static inline int64_t fixed16_to_int(int64_t value)
 	return value >> 16;
 }
 
-static const uint8_t skip_tab[6] = { 0x24, 0x04, 0x68, 0x48, 0x28, 0x08 };
+static const uint8_t skip_tab[6] = {0x24, 0x04, 0x68, 0x48, 0x28, 0x08};
 
 static void meson_overlay_get_vertical_phase(unsigned ratio_y,
 					     int *phase,
-					     int *repeat)
+					     int *repeat,
+					     bool interlace)
 {
 	int offset_in = 0;
 	int offset_out = 0;
 	int repeat_skip = 0;
 
-	if (ratio_y > (1 << 18)) {
+	if (!interlace && ratio_y > (1 << 18)) {
 		offset_out = (1 * ratio_y) >> 10;
 	}
 
@@ -146,11 +144,13 @@ static void meson_overlay_get_vertical_phase(unsigned ratio_y,
 }
 
 static void meson_overlay_setup_scaler_params(struct meson_drm *priv,
-					     struct drm_plane *plane)
+					      struct drm_plane *plane,
+					      bool interlace_mode)
 {
 	struct drm_plane_state *state = plane->state;
 	struct drm_crtc_state *crtc_state = priv->crtc->state;
-	unsigned int video_top, video_left, video_width, video_height;
+	int video_top, video_left, video_width, video_height;
+	unsigned int crop_top, crop_left;
 	unsigned int crtc_height, crtc_width;
 	unsigned int vd_start_lines, vd_end_lines;
 	unsigned int hd_start_lines, hd_end_lines;
@@ -170,83 +170,112 @@ static void meson_overlay_setup_scaler_params(struct meson_drm *priv,
 	crtc_height = crtc_state->mode.vdisplay;
 	crtc_width = crtc_state->mode.hdisplay;
 
-	/* TODO Cropping using src_x and src_y */
 	w_in = fixed16_to_int(state->src_w);
 	h_in = fixed16_to_int(state->src_h);
+	crop_top = fixed16_to_int(state->src_x);
+	crop_left = fixed16_to_int(state->src_x);
 
-	video_top = state->crtc_x;
-	video_left = state->crtc_y;
+	video_top = state->crtc_y;
+	video_left = state->crtc_x;
 	video_width = state->crtc_w;
 	video_height = state->crtc_h;
+
+	DRM_DEBUG("crtc_width %d crtc_height %d interlace %d\n",
+	         crtc_width, crtc_height, interlace_mode);
+	DRM_DEBUG("w_in %d h_in %d crop_top %d crop_left %d\n",
+	         w_in, h_in, crop_top, crop_left);
+	DRM_DEBUG("video top %d left %d width %d height %d\n",
+		 video_top, video_left, video_width, video_height);
 
 	ratio_x = (w_in << 18) / video_width;
 	ratio_y = (h_in << 18) / video_height;
 
+	/* TOFIX Interlace output */
+	if (interlace_mode)
+		ratio_y <<= 1;
+
 	if (ratio_x * video_width < (w_in << 18))
 		ratio_x++;
 
-	DRM_INFO("w_in %d h_in %d\n", w_in, h_in);
-	DRM_INFO("video top %d left %d width %d height %d\n",
-		 video_top, video_left, video_width, video_height);
-	DRM_INFO("ratio x 0x%x y 0x%x\n", ratio_x, ratio_y);
+	DRM_DEBUG("ratio x 0x%x y 0x%x\n", ratio_x, ratio_y);
 
+	meson_overlay_get_vertical_phase(ratio_y, &vphase, &vphase_repeat_skip,
+					 interlace_mode);
 
-	/* TODO Interlace output */
-
-	meson_overlay_get_vertical_phase(ratio_y, &vphase, &vphase_repeat_skip);
-
-	DRM_INFO("vphase 0x%x skip %d\n", vphase, vphase_repeat_skip);
+	DRM_DEBUG("vphase 0x%x skip %d\n", vphase, vphase_repeat_skip);
 
 	/* Vertical */
 
 	start = video_top + video_height / 2 - ((h_in << 17) / ratio_x);
 	end = (h_in << 18) / ratio_y + start - 1;
 
-	if (start < video_top) {
+	if (video_top < 0 && start < 0)
+		vd_start_lines = (-(start) * ratio_y) >> 18;
+	else if (start < video_top)
 		vd_start_lines = ((video_top - start) * ratio_y) >> 18;
-	} else	{
+	else
 		vd_start_lines = 0;
-	}
 
-	temp_height = min_t(unsigned int, (video_top + video_height - 1),
-			    (crtc_height - 1)) - video_top + 1;
+	if (video_top < 0)
+		temp_height = min_t(unsigned int, (video_top + video_height - 1),
+				    (crtc_height - 1));
+	else
+		temp_height = min_t(unsigned int, (video_top + video_height - 1),
+				    (crtc_height - 1)) - video_top + 1;
+
 	temp = vd_start_lines + (temp_height * ratio_y >> 18);
 	vd_end_lines = (temp <= (h_in - 1)) ? temp : (h_in - 1);
 
-	vsc_startp = max_t(unsigned int, start,
-			   max_t(unsigned int, 0, video_top));
-	vsc_endp = min_t(unsigned int, end,
+	vd_start_lines += crop_left;
+	vd_end_lines += crop_left;
+
+	if (interlace_mode) {
+		start >>= 1;
+		end >>= 1;
+	}
+
+	vsc_startp = max_t(int, start,
+			   max_t(int, 0, video_top));
+	vsc_endp = min_t(int, end,
 			 min_t(int, crtc_height - 1,
 			       video_top + video_height - 1));
 
-	DRM_INFO("vsc startp %d endp %d start_lines %d end_lines %d\n",
+	DRM_DEBUG("vsc startp %d endp %d start_lines %d end_lines %d\n",
 		 vsc_startp, vsc_endp, vd_start_lines, vd_end_lines);
-
 
 	/* Horizontal */
 
 	start = video_left + video_width / 2 - ((w_in << 17) / ratio_x);
 	end = (w_in << 18) / ratio_x + start - 1;
 
-	if (start < video_left) {
+	if (video_left < 0 && start < 0)
+		hd_start_lines = (-(start) * ratio_x) >> 18;
+	else if (start < video_left)
 		hd_start_lines = ((video_left - start) * ratio_x) >> 18;
-	} else {
+	else
 		hd_start_lines = 0;
-	}
 
-	temp_width = min_t(unsigned int, (video_left + video_width - 1),
-			   (crtc_width - 1)) - video_left + 1;
+	if (video_left < 0)
+		temp_width = min_t(unsigned int, (video_left + video_width - 1),
+				   (crtc_width - 1));
+	else
+		temp_width = min_t(unsigned int, (video_left + video_width - 1),
+				   (crtc_width - 1)) - video_left + 1;
+
 	temp = hd_start_lines + (temp_width * ratio_x >> 18);
 	hd_end_lines = (temp <= (w_in - 1)) ? temp : (w_in - 1);
 
 	priv->viu.vpp_line_in_length = hd_end_lines - hd_start_lines + 1;
-	hsc_startp = max_t(unsigned int, start,
-			   max_t(unsigned int, 0, video_left));
-	hsc_endp = min_t(unsigned int, end,
+	hsc_startp = max_t(int, start,
+			   max_t(int, 0, video_left));
+	hsc_endp = min_t(int, end,
 			 min_t(int, crtc_width - 1,
 			       video_left + video_width - 1));
 
-	DRM_INFO("hsc startp %d endp %d start_lines %d end_lines %d\n",
+	hd_start_lines += crop_top;
+	hd_end_lines += crop_top;
+
+	DRM_DEBUG("hsc startp %d endp %d start_lines %d end_lines %d\n",
 		 hsc_startp, hsc_endp, hd_start_lines, hd_end_lines);
 
 	priv->viu.vpp_vsc_start_phase_step = ratio_y << 6;
@@ -260,12 +289,12 @@ static void meson_overlay_setup_scaler_params(struct meson_drm *priv,
 	priv->viu.vd1_if0_chroma_x0 = VD_X_START(hd_start_lines >> 1) |
 				      VD_X_END(hd_end_lines >> 1);
 
-	priv->viu.viu_vd1_fmt_w = VD_H_WIDTH(hd_end_lines - hd_start_lines) |
-				  VD_V_WIDTH(hd_end_lines/2 - hd_start_lines/2);
+	priv->viu.viu_vd1_fmt_w = VD_H_WIDTH(hd_end_lines - hd_start_lines + 1) |
+				  VD_V_WIDTH(hd_end_lines/2 - hd_start_lines/2 + 1);
 
 	priv->viu.vd1_if0_luma_y0 = VD_Y_START(vd_start_lines) |
 				    VD_Y_END(vd_end_lines);
-	
+
 	priv->viu.vd1_if0_chroma_y0 = VD_Y_START(vd_start_lines >> 1) |
 				      VD_Y_END(vd_end_lines >> 1);
 
@@ -291,8 +320,8 @@ static void meson_overlay_setup_scaler_params(struct meson_drm *priv,
 	priv->viu.vpp_postblend_vd1_v_start_end = VD_V_START(vsc_startp) |
 						  VD_V_END(vsc_endp);
 	priv->viu.vpp_blend_vd2_v_start_end =
-				VD_V_START((vd_end_lines + 1) >> 2) |
-				VD_V_END(vd_end_lines);
+				VD2_V_START((vd_end_lines + 1) >> 1) |
+				VD2_V_END(vd_end_lines);
 
 	priv->viu.vpp_vsc_region12_startp = 0;
 	priv->viu.vpp_vsc_region34_startp =
@@ -303,7 +332,7 @@ static void meson_overlay_setup_scaler_params(struct meson_drm *priv,
 }
 
 static void meson_overlay_atomic_update(struct drm_plane *plane,
-				 	struct drm_plane_state *old_state)
+					struct drm_plane_state *old_state)
 {
 	struct meson_overlay *meson_overlay = to_meson_overlay(plane);
 	struct drm_plane_state *state = plane->state;
@@ -311,8 +340,11 @@ static void meson_overlay_atomic_update(struct drm_plane *plane,
 	struct meson_drm *priv = meson_overlay->priv;
 	struct drm_gem_cma_object *gem;
 	unsigned long flags;
+	bool interlace_mode;
 
 	DRM_DEBUG_DRIVER("\n");
+
+	interlace_mode = state->crtc->mode.flags & DRM_MODE_FLAG_INTERLACE;
 
 	/*
 	 * Update Coordinates
@@ -324,20 +356,19 @@ static void meson_overlay_atomic_update(struct drm_plane *plane,
 
 	priv->viu.vd1_if0_gen_reg = VD_URGENT_CHROMA |
 				    VD_URGENT_LUMA |
-				    VD_HOLD_LINES(17) |
+				    VD_HOLD_LINES(9) |
 				    VD_CHRO_RPT_LASTL_CTRL |
-				    VD_LITTLE_ENDIAN |
 				    VD_ENABLE;
 
-	/* Setup scaler params */ 
-	meson_overlay_setup_scaler_params(priv, plane);
+	/* Setup scaler params */
+	meson_overlay_setup_scaler_params(priv, plane, interlace_mode);
 
 	//VD1_IF0_CANVAS1=0
 	//VD1_IF0_CHROMA_X1=0
 	//VD1_IF0_CHROMA_Y1=0
 	priv->viu.vd1_if0_repeat_loop = 0;
-	priv->viu.vd1_if0_luma0_rpt_pat = 0;
-	priv->viu.vd1_if0_chroma0_rpt_pat = 0;
+	priv->viu.vd1_if0_luma0_rpt_pat = interlace_mode ? 8 : 0;
+	priv->viu.vd1_if0_chroma0_rpt_pat = interlace_mode ? 8 : 0;
 	//VD1_IF0_LUMA1_RPT_PAT=0
 	//VD1_IF0_CHROMA1_RPT_PAT=0
 	//VD1_IF0_LUMA_PSEL=0
@@ -347,18 +378,26 @@ static void meson_overlay_atomic_update(struct drm_plane *plane,
 	priv->viu.vd1_range_map_cb = 0;
 	priv->viu.vd1_range_map_cr = 0;
 
+	/* Default values for RGB888/YUV444 */
+	priv->viu.vd1_if0_gen_reg2 = 0;
+	priv->viu.viu_vd1_fmt_ctrl = 0;
+
 	switch (fb->format->format) {
 	case DRM_FORMAT_RGB888:
+		/* TOFIX enable RGB2YUV somewhere ! */
 		priv->viu.vd1_if0_gen_reg |= VD_DEMUX_MODE_RGB |
 					     VD_BYTES_PER_PIXEL(2);
-		priv->viu.vd1_if0_canvas0 = CANVAS_ADDR0(MESON_CANVAS_ID_VD1_0);
-		priv->viu.vd1_if0_gen_reg2 = 0;
-		priv->viu.viu_vd1_fmt_ctrl = 0;
+		priv->viu.vd1_if0_canvas0 =
+					CANVAS_ADDR2(priv->canvas_id_vd1_0) |
+					CANVAS_ADDR1(priv->canvas_id_vd1_0) |
+					CANVAS_ADDR0(priv->canvas_id_vd1_0);
 		break;
 	case DRM_FORMAT_YUYV:
 		priv->viu.vd1_if0_gen_reg |= VD_BYTES_PER_PIXEL(1);
-		priv->viu.vd1_if0_canvas0 = CANVAS_ADDR0(MESON_CANVAS_ID_VD1_0);
-		priv->viu.vd1_if0_gen_reg2 = 0;
+		priv->viu.vd1_if0_canvas0 =
+					CANVAS_ADDR2(priv->canvas_id_vd1_0) |
+					CANVAS_ADDR1(priv->canvas_id_vd1_0) |
+					CANVAS_ADDR0(priv->canvas_id_vd1_0);
 		priv->viu.viu_vd1_fmt_ctrl = VD_HORZ_Y_C_RATIO(1) | /* /2 */
 					     VD_HORZ_FMT_EN |
 					     VD_VERT_RPT_LINE0 |
@@ -369,8 +408,10 @@ static void meson_overlay_atomic_update(struct drm_plane *plane,
 	case DRM_FORMAT_NV12:
 	case DRM_FORMAT_NV21:
 		priv->viu.vd1_if0_gen_reg |= VD_SEPARATE_EN;
-		priv->viu.vd1_if0_canvas0 = CANVAS_ADDR1(MESON_CANVAS_ID_VD1_1) |
-					    CANVAS_ADDR0(MESON_CANVAS_ID_VD1_0);
+		priv->viu.vd1_if0_canvas0 =
+					CANVAS_ADDR2(priv->canvas_id_vd1_1) |
+					CANVAS_ADDR1(priv->canvas_id_vd1_1) |
+					CANVAS_ADDR0(priv->canvas_id_vd1_0);
 		if (fb->format->format == DRM_FORMAT_NV12)
 			priv->viu.vd1_if0_gen_reg2 = VD_COLOR_MAP(1);
 		else
@@ -388,58 +429,63 @@ static void meson_overlay_atomic_update(struct drm_plane *plane,
 	case DRM_FORMAT_YUV411:
 	case DRM_FORMAT_YUV410:
 		priv->viu.vd1_if0_gen_reg |= VD_SEPARATE_EN;
-		priv->viu.vd1_if0_canvas0 = CANVAS_ADDR2(MESON_CANVAS_ID_VD1_2) |
-					    CANVAS_ADDR1(MESON_CANVAS_ID_VD1_1) |
-					    CANVAS_ADDR0(MESON_CANVAS_ID_VD1_0);
-		priv->viu.vd1_if0_gen_reg2 = 0;
-		if (fb->format->format == DRM_FORMAT_YUV444)
-			priv->viu.viu_vd1_fmt_ctrl = 0;
-		else if (fb->format->format == DRM_FORMAT_YUV422) {
-			priv->viu.viu_vd1_fmt_ctrl = VD_HORZ_Y_C_RATIO(1) | /* /2 */
-						     VD_HORZ_FMT_EN |
-						     VD_VERT_RPT_LINE0 |
-						     VD_VERT_INITIAL_PHASE(12) |
-						     VD_VERT_PHASE_STEP(16) | /* /2 */
-						     VD_VERT_FMT_EN;
-		} else if (fb->format->format == DRM_FORMAT_YUV420) {
-			priv->viu.viu_vd1_fmt_ctrl = VD_HORZ_Y_C_RATIO(1) | /* /2 */
-						     VD_HORZ_FMT_EN |
-						     VD_VERT_RPT_LINE0 |
-						     VD_VERT_INITIAL_PHASE(12) |
-						     VD_VERT_PHASE_STEP(8) | /* /4 */
-						     VD_VERT_FMT_EN;
-		} else if (fb->format->format == DRM_FORMAT_YUV411) {
-			priv->viu.viu_vd1_fmt_ctrl = VD_HORZ_Y_C_RATIO(2) | /* /4 */
-						     VD_HORZ_FMT_EN |
-						     VD_VERT_RPT_LINE0 |
-						     VD_VERT_INITIAL_PHASE(12) |
-						     VD_VERT_PHASE_STEP(16) | /* /2 */
-						     VD_VERT_FMT_EN;
-		} else if (fb->format->format == DRM_FORMAT_YUV410) {
-			priv->viu.viu_vd1_fmt_ctrl = VD_HORZ_Y_C_RATIO(2) | /* /4 */
-						     VD_HORZ_FMT_EN |
-						     VD_VERT_RPT_LINE0 |
-						     VD_VERT_INITIAL_PHASE(12) |
-						     VD_VERT_PHASE_STEP(8) | /* /4 */
-						     VD_VERT_FMT_EN;
+		priv->viu.vd1_if0_canvas0 =
+					CANVAS_ADDR2(priv->canvas_id_vd1_2) |
+					CANVAS_ADDR1(priv->canvas_id_vd1_1) |
+					CANVAS_ADDR0(priv->canvas_id_vd1_0);
+		switch (fb->format->format) {
+		case DRM_FORMAT_YUV422:
+			priv->viu.viu_vd1_fmt_ctrl =
+					VD_HORZ_Y_C_RATIO(1) | /* /2 */
+					VD_HORZ_FMT_EN |
+					VD_VERT_RPT_LINE0 |
+					VD_VERT_INITIAL_PHASE(12) |
+					VD_VERT_PHASE_STEP(16) | /* /2 */
+					VD_VERT_FMT_EN;
+			break;
+		case DRM_FORMAT_YUV420:
+			priv->viu.viu_vd1_fmt_ctrl =
+					VD_HORZ_Y_C_RATIO(1) | /* /2 */
+					VD_HORZ_FMT_EN |
+					VD_VERT_RPT_LINE0 |
+					VD_VERT_INITIAL_PHASE(12) |
+					VD_VERT_PHASE_STEP(8) | /* /4 */
+					VD_VERT_FMT_EN;
+			break;
+		case DRM_FORMAT_YUV411:
+			priv->viu.viu_vd1_fmt_ctrl =
+					VD_HORZ_Y_C_RATIO(2) | /* /4 */
+					VD_HORZ_FMT_EN |
+					VD_VERT_RPT_LINE0 |
+					VD_VERT_INITIAL_PHASE(12) |
+					VD_VERT_PHASE_STEP(16) | /* /2 */
+					VD_VERT_FMT_EN;
+			break;
+		case DRM_FORMAT_YUV410:
+			priv->viu.viu_vd1_fmt_ctrl =
+					VD_HORZ_Y_C_RATIO(2) | /* /4 */
+					VD_HORZ_FMT_EN |
+					VD_VERT_RPT_LINE0 |
+					VD_VERT_INITIAL_PHASE(12) |
+					VD_VERT_PHASE_STEP(8) | /* /4 */
+					VD_VERT_FMT_EN;
+			break;
 		}
 		break;
 	}
 
-	/* TODO Interlace  */
-
 	/* Update Canvas with buffer address */
-	switch (drm_format_num_planes(fb->format->format)) {
+	priv->viu.vd1_planes = drm_format_num_planes(fb->format->format);
+
+	switch (priv->viu.vd1_planes) {
 	case 3:
 		gem = drm_fb_cma_get_gem_obj(fb, 2);
 		priv->viu.vd1_addr2 = gem->paddr + fb->offsets[2];
 		priv->viu.vd1_stride2 = fb->pitches[2];
-			/*drm_format_plane_width(fb->pitches[2],
-					       fb->format->format, 2);*/
 		priv->viu.vd1_height2 =
 			drm_format_plane_height(fb->height,
 						fb->format->format, 2);
-		DRM_INFO("plane 2 addr 0x%x stride %d height %d\n",
+		DRM_DEBUG("plane 2 addr 0x%x stride %d height %d\n",
 			 priv->viu.vd1_addr2,
 			 priv->viu.vd1_stride2,
 			 priv->viu.vd1_height2);
@@ -447,12 +493,10 @@ static void meson_overlay_atomic_update(struct drm_plane *plane,
 		gem = drm_fb_cma_get_gem_obj(fb, 1);
 		priv->viu.vd1_addr1 = gem->paddr + fb->offsets[1];
 		priv->viu.vd1_stride1 = fb->pitches[1];
-			/*drm_format_plane_width(fb->pitches[1],
-					       fb->format->format, 1);*/
 		priv->viu.vd1_height1 =
 			drm_format_plane_height(fb->height,
 						fb->format->format, 1);
-		DRM_INFO("plane 1 addr 0x%x stride %d height %d\n",
+		DRM_DEBUG("plane 1 addr 0x%x stride %d height %d\n",
 			 priv->viu.vd1_addr1,
 			 priv->viu.vd1_stride1,
 			 priv->viu.vd1_height1);
@@ -463,7 +507,7 @@ static void meson_overlay_atomic_update(struct drm_plane *plane,
 		priv->viu.vd1_height0 =
 			drm_format_plane_height(fb->height,
 						fb->format->format, 0);
-		DRM_INFO("plane 0 addr 0x%x stride %d height %d\n",
+		DRM_DEBUG("plane 0 addr 0x%x stride %d height %d\n",
 			 priv->viu.vd1_addr0,
 			 priv->viu.vd1_stride0,
 			 priv->viu.vd1_height0);
@@ -483,12 +527,11 @@ static void meson_overlay_atomic_disable(struct drm_plane *plane,
 	struct meson_drm *priv = meson_overlay->priv;
 
 	DRM_DEBUG_DRIVER("\n");
-	
+
 	priv->viu.vd1_enabled = false;
 
-	/* TODO zorder */
 	/* Disable VD1 */
-	writel_bits_relaxed(VPP_VD1_PREBLEND, 0,
+	writel_bits_relaxed(VPP_VD1_POSTBLEND | VPP_VD1_PREBLEND, 0,
 			    priv->io_base + _REG(VPP_MISC));
 
 }

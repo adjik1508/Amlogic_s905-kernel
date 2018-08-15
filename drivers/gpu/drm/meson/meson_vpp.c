@@ -192,6 +192,8 @@ void meson_vpp_init(struct meson_drm *priv)
 	writel_relaxed(4 | (4 << 8) | BIT(15),
 		       priv->io_base + _REG(VPP_SC_MISC));
 
+	writel_relaxed(1, priv->io_base + _REG(VPP_VADJ_CTRL));
+
 	/* Write in the proper filter coefficients. */
 	meson_vpp_write_scaling_filter_coefs(priv,
 				vpp_filter_coefs_4point_bspline, false);
