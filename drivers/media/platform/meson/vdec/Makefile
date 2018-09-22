@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0
-# Makefile for AMLogic meson video decoder driver
+# Makefile for Amlogic meson video decoder driver
 
-meson-vdec-objs += vdec.o vdec_1.o vdec_hevc.o esparser.o canvas.o codec_helpers.o codec_mpeg12.o codec_h264.o codec_hevc.o vdec_platform.o codec_mpeg4.o codec_mjpeg.o
+meson-vdec-objs = esparser.o vdec.o vdec_helpers.o vdec_platform.o
+meson-vdec-objs += vdec_1.o vdec_hevc.o
+meson-vdec-objs += codec_mpeg12.o codec_h264.o codec_mpeg4.o codec_mjpeg.o codec_hevc.o
 
-obj-$(CONFIG_VIDEO_AML_MESON_VDEC) += meson-vdec.o
-
+obj-$(CONFIG_VIDEO_MESON_VDEC) += meson-vdec.o

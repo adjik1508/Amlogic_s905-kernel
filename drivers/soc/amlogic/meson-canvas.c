@@ -1,182 +1,185 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
- * Copyright (C) 2018 Maxime Jourdan
- * Copyright (C) 2016 BayLibre, SAS
- * Author: Neil Armstrong <narmstrong@baylibre.com>
+ * Copyright (C) 2018 BayLibre, SAS
  * Copyright (C) 2015 Amlogic, Inc. All rights reserved.
  * Copyright (C) 2014 Endless Mobile
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation; either version 2 of the
- * License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <linux/of_address.h>
-#include <linux/platform_device.h>
 #include <linux/kernel.h>
+#include <linux/mfd/syscon.h>
 #include <linux/module.h>
 #include <linux/regmap.h>
-#include <linux/mfd/syscon.h>
 #include <linux/soc/amlogic/meson-canvas.h>
-#include <asm/io.h>
+#include <linux/of_address.h>
+#include <linux/of_platform.h>
+#include <linux/io.h>
 
 #define NUM_CANVAS 256
 
 /* DMC Registers */
-#define DMC_CAV_LUT_DATAL	0x48 /* 0x12 offset in data sheet */
+#define DMC_CAV_LUT_DATAL	0x00
 	#define CANVAS_WIDTH_LBIT	29
-	#define CANVAS_WIDTH_LWID       3
-#define DMC_CAV_LUT_DATAH	0x4c /* 0x13 offset in data sheet */
-	#define CANVAS_WIDTH_HBIT       0
-	#define CANVAS_HEIGHT_BIT       9
-	#define CANVAS_BLKMODE_BIT      24
-#define DMC_CAV_LUT_ADDR	0x50 /* 0x14 offset in data sheet */
-	#define CANVAS_LUT_WR_EN        (0x2 << 8)
-	#define CANVAS_LUT_RD_EN        (0x1 << 8)
+	#define CANVAS_WIDTH_LWID	3
+#define DMC_CAV_LUT_DATAH	0x04
+	#define CANVAS_WIDTH_HBIT	0
+	#define CANVAS_HEIGHT_BIT	9
+	#define CANVAS_WRAP_BIT		22
+	#define CANVAS_BLKMODE_BIT	24
+	#define CANVAS_ENDIAN_BIT	26
+#define DMC_CAV_LUT_ADDR	0x08
+	#define CANVAS_LUT_WR_EN	BIT(9)
+	#define CANVAS_LUT_RD_EN	BIT(8)
 
 struct meson_canvas {
 	struct device *dev;
-	struct regmap *regmap_dmc;
-	struct mutex lock;
+	void __iomem *reg_base;
+	spinlock_t lock; /* canvas device lock */
 	u8 used[NUM_CANVAS];
 };
 
-static struct meson_canvas canvas = { 0 };
+static void canvas_write(struct meson_canvas *canvas, u32 reg, u32 val)
+{
+	writel_relaxed(val, canvas->reg_base + reg);
+}
 
-static int meson_canvas_setup(uint8_t canvas_index, uint32_t addr,
-			uint32_t stride, uint32_t height,
+static u32 canvas_read(struct meson_canvas *canvas, u32 reg)
+{
+	return readl_relaxed(canvas->reg_base + reg);
+}
+
+struct meson_canvas *meson_canvas_get(struct device *dev)
+{
+	struct device_node *canvas_node;
+	struct platform_device *canvas_pdev;
+
+	canvas_node = of_parse_phandle(dev->of_node, "amlogic,canvas", 0);
+	if (!canvas_node)
+		return ERR_PTR(-ENODEV);
+
+	canvas_pdev = of_find_device_by_node(canvas_node);
+	if (!canvas_pdev)
+		return ERR_PTR(-EPROBE_DEFER);
+
+	return dev_get_drvdata(&canvas_pdev->dev);
+}
+EXPORT_SYMBOL_GPL(meson_canvas_get);
+
+int meson_canvas_config(struct meson_canvas *canvas, u8 canvas_index,
+			u32 addr, u32 stride, u32 height,
 			unsigned int wrap,
 			unsigned int blkmode,
 			unsigned int endian)
 {
-	struct regmap *regmap = canvas.regmap_dmc;
-	u32 val;
+	unsigned long flags;
 
-	mutex_lock(&canvas.lock);
-
-	if (!canvas.used[canvas_index]) {
-		dev_err(canvas.dev,
+	spin_lock_irqsave(&canvas->lock, flags);
+	if (!canvas->used[canvas_index]) {
+		dev_err(canvas->dev,
 			"Trying to setup non allocated canvas %u\n",
 			canvas_index);
-		mutex_unlock(&canvas.lock);
+		spin_unlock_irqrestore(&canvas->lock, flags);
 		return -EINVAL;
 	}
 
-	regmap_write(regmap, DMC_CAV_LUT_DATAL,
-		((addr + 7) >> 3) |
-		(((stride + 7) >> 3) << CANVAS_WIDTH_LBIT));
+	canvas_write(canvas, DMC_CAV_LUT_DATAL,
+		     ((addr + 7) >> 3) |
+		     (((stride + 7) >> 3) << CANVAS_WIDTH_LBIT));
 
-	regmap_write(regmap, DMC_CAV_LUT_DATAH,
-		((((stride + 7) >> 3) >> CANVAS_WIDTH_LWID) <<
+	canvas_write(canvas, DMC_CAV_LUT_DATAH,
+		     ((((stride + 7) >> 3) >> CANVAS_WIDTH_LWID) <<
 						CANVAS_WIDTH_HBIT) |
-		(height << CANVAS_HEIGHT_BIT) |
-		(wrap << 22) |
-		(blkmode << CANVAS_BLKMODE_BIT) |
-		(endian << 26));
+		     (height << CANVAS_HEIGHT_BIT) |
+		     (wrap << CANVAS_WRAP_BIT) |
+		     (blkmode << CANVAS_BLKMODE_BIT) |
+		     (endian << CANVAS_ENDIAN_BIT));
 
-	regmap_write(regmap, DMC_CAV_LUT_ADDR,
-		CANVAS_LUT_WR_EN | canvas_index);
+	canvas_write(canvas, DMC_CAV_LUT_ADDR,
+		     CANVAS_LUT_WR_EN | canvas_index);
 
 	/* Force a read-back to make sure everything is flushed. */
-	regmap_read(regmap, DMC_CAV_LUT_DATAH, &val);
-	mutex_unlock(&canvas.lock);
+	canvas_read(canvas, DMC_CAV_LUT_DATAH);
+	spin_unlock_irqrestore(&canvas->lock, flags);
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(meson_canvas_config);
 
-static int meson_canvas_alloc(uint8_t *canvas_index)
+int meson_canvas_alloc(struct meson_canvas *canvas, u8 *canvas_index)
 {
 	int i;
+	unsigned long flags;
 
-	mutex_lock(&canvas.lock);
+	spin_lock_irqsave(&canvas->lock, flags);
 	for (i = 0; i < NUM_CANVAS; ++i) {
-		if (!canvas.used[i]) {
-			canvas.used[i] = 1;
-			mutex_unlock(&canvas.lock);
+		if (!canvas->used[i]) {
+			canvas->used[i] = 1;
+			spin_unlock_irqrestore(&canvas->lock, flags);
 			*canvas_index = i;
 			return 0;
 		}
 	}
-	mutex_unlock(&canvas.lock);
-	dev_err(canvas.dev, "No more canvas available\n");
+	spin_unlock_irqrestore(&canvas->lock, flags);
 
+	dev_err(canvas->dev, "No more canvas available\n");
 	return -ENODEV;
 }
+EXPORT_SYMBOL_GPL(meson_canvas_alloc);
 
-static int meson_canvas_free(uint8_t canvas_index)
+int meson_canvas_free(struct meson_canvas *canvas, u8 canvas_index)
 {
-	mutex_lock(&canvas.lock);
-	if (!canvas.used[canvas_index]) {
-		dev_err(canvas.dev,
+	unsigned long flags;
+
+	spin_lock_irqsave(&canvas->lock, flags);
+	if (!canvas->used[canvas_index]) {
+		dev_err(canvas->dev,
 			"Trying to free unused canvas %u\n", canvas_index);
-		mutex_unlock(&canvas.lock);
+		spin_unlock_irqrestore(&canvas->lock, flags);
 		return -EINVAL;
 	}
-	canvas.used[canvas_index] = 0;
-	mutex_unlock(&canvas.lock);
+	canvas->used[canvas_index] = 0;
+	spin_unlock_irqrestore(&canvas->lock, flags);
 
 	return 0;
 }
-
-static struct meson_canvas_platform_data canvas_platform_data = {
-	.alloc = meson_canvas_alloc,
-	.free = meson_canvas_free,
-	.setup = meson_canvas_setup,
-};
+EXPORT_SYMBOL_GPL(meson_canvas_free);
 
 static int meson_canvas_probe(struct platform_device *pdev)
 {
-	struct regmap *regmap_dmc;
-	struct device *dev;
+	struct resource *res;
+	struct meson_canvas *canvas;
+	struct device *dev = &pdev->dev;
 
-	dev = &pdev->dev;
+	canvas = devm_kzalloc(dev, sizeof(*canvas), GFP_KERNEL);
+	if (!canvas)
+		return -ENOMEM;
 
-	regmap_dmc = syscon_node_to_regmap(of_get_parent(dev->of_node));
-	if (IS_ERR(regmap_dmc)) {
-		dev_err(&pdev->dev, "failed to get DMC regmap\n");
-		return PTR_ERR(regmap_dmc);
-	}
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	canvas->reg_base = devm_ioremap_resource(dev, res);
+	if (IS_ERR(canvas->reg_base))
+		return PTR_ERR(canvas->reg_base);
 
-	canvas.dev = dev;
-	canvas.regmap_dmc = regmap_dmc;
-	mutex_init(&canvas.lock);
+	canvas->dev = dev;
+	spin_lock_init(&canvas->lock);
+	dev_set_drvdata(dev, canvas);
 
-	dev->platform_data = &canvas_platform_data;
-
-	return 0;
-}
-
-static int meson_canvas_remove(struct platform_device *pdev)
-{
-	mutex_destroy(&canvas.lock);
 	return 0;
 }
 
 static const struct of_device_id canvas_dt_match[] = {
-	{ .compatible = "amlogic,meson-canvas" },
+	{ .compatible = "amlogic,canvas" },
 	{}
 };
 MODULE_DEVICE_TABLE(of, canvas_dt_match);
 
 static struct platform_driver meson_canvas_driver = {
 	.probe = meson_canvas_probe,
-	.remove = meson_canvas_remove,
 	.driver = {
-		.name = "meson-canvas",
+		.name = "amlogic-canvas",
 		.of_match_table = canvas_dt_match,
 	},
 };
 module_platform_driver(meson_canvas_driver);
 
-MODULE_ALIAS("platform:meson-canvas");
-MODULE_DESCRIPTION("AMLogic Meson Canvas driver");
-MODULE_AUTHOR("Maxime Jourdan <maxi.jourdan@wanadoo.fr>");
-MODULE_LICENSE("GPL v2");
+MODULE_DESCRIPTION("Amlogic Canvas driver");
+MODULE_AUTHOR("Maxime Jourdan <mjourdan@baylibre.com>");
+MODULE_LICENSE("GPL");

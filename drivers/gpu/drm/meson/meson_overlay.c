@@ -206,7 +206,7 @@ static void meson_overlay_setup_scaler_params(struct meson_drm *priv,
 
 	/* Vertical */
 
-	start = video_top + video_height / 2 - ((h_in << 17) / ratio_x);
+	start = video_top + video_height / 2 - ((h_in << 17) / ratio_y);
 	end = (h_in << 18) / ratio_y + start - 1;
 
 	if (video_top < 0 && start < 0)

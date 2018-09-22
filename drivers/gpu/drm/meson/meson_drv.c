@@ -26,7 +26,6 @@
 #include <linux/platform_device.h>
 #include <linux/component.h>
 #include <linux/of_graph.h>
-#include <linux/of_platform.h>
 
 #include <drm/drmP.h>
 #include <drm/drm_atomic.h>
@@ -166,8 +165,6 @@ static int meson_drv_bind_master(struct device *dev, bool has_components)
 	struct meson_drm *priv;
 	struct drm_device *drm;
 	struct resource *res;
-	struct device_node *canvas;
-	struct platform_device *canvas_pdev;
 	void __iomem *regs;
 	int ret;
 
@@ -214,41 +211,27 @@ static int meson_drv_bind_master(struct device *dev, bool has_components)
 	priv->hhi = devm_regmap_init_mmio(dev, regs,
 					  &meson_regmap_config);
 	if (IS_ERR(priv->hhi)) {
-		dev_err(dev, "Couldn't create the HHI regmap\n");
+		dev_err(&pdev->dev, "Couldn't create the HHI regmap\n");
 		ret = PTR_ERR(priv->hhi);
 		goto free_drm;
 	}
 
-	canvas = of_parse_phandle(dev->of_node, "amlogic,canvas", 0);
-	if (!canvas) {
-		ret = -ENODEV;
+	priv->canvas = meson_canvas_get(dev);
+	if (IS_ERR(priv->canvas)) {
+		ret = PTR_ERR(priv->canvas);
 		goto free_drm;
 	}
 
-	canvas_pdev = of_find_device_by_node(canvas);
-	if (!canvas_pdev) {
-		dev_err(dev, "Unable to find canvas pdev\n");
-		ret = -ENODEV;
-		goto free_drm;
-	}
-
-	priv->canvas_ops = dev_get_platdata(&canvas_pdev->dev);
-	if (!priv->canvas_ops) {
-		dev_err(dev, "canvas pdata structure NULL\n");
-		ret = -EINVAL;
-		goto free_drm;
-	}
-
-	ret = priv->canvas_ops->alloc(&priv->canvas_id_osd1);
+	ret = meson_canvas_alloc(priv->canvas, &priv->canvas_id_osd1);
 	if (ret)
 		goto free_drm;
-	ret = priv->canvas_ops->alloc(&priv->canvas_id_vd1_0);
+	ret = meson_canvas_alloc(priv->canvas, &priv->canvas_id_vd1_0);
 	if (ret)
 		goto free_drm;
-	ret = priv->canvas_ops->alloc(&priv->canvas_id_vd1_1);
+	ret = meson_canvas_alloc(priv->canvas, &priv->canvas_id_vd1_1);
 	if (ret)
 		goto free_drm;
-	ret = priv->canvas_ops->alloc(&priv->canvas_id_vd1_2);
+	ret = meson_canvas_alloc(priv->canvas, &priv->canvas_id_vd1_2);
 	if (ret)
 		goto free_drm;
 
@@ -335,7 +318,7 @@ static void meson_drv_unbind(struct device *dev)
 	struct drm_device *drm = dev_get_drvdata(dev);
 	struct meson_drm *priv = drm->dev_private;
 
-	priv->canvas_ops->free(priv->canvas_id_osd1);
+	meson_canvas_free(priv->canvas, priv->canvas_id_osd1);
 	drm_dev_unregister(drm);
 	drm_kms_helper_poll_fini(drm);
 	drm_fbdev_cma_fini(priv->fbdev);

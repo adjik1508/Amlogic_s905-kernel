@@ -39,6 +39,8 @@
 #define RC6_STARTBIT_MASK	0x08	/* for the header bits */
 #define RC6_6A_MCE_TOGGLE_MASK	0x8000	/* for the body bits */
 #define RC6_6A_LCC_MASK		0xffff0000 /* RC6-6A-32 long customer code mask */
+#define RC6_6A_MCE_CC		0x800f0000 /* MCE customer code */
+#define RC6_6A_KATHREIN_CC	0x80460000 /* Kathrein RCU-676 customer code */
 #ifndef CHAR_BIT
 #define CHAR_BIT 8	/* Normally in <limits.h> */
 #endif
@@ -241,9 +243,18 @@ again:
 				toggle = 0;
 				break;
 			case 32:
-				protocol = RC_PROTO_RC6_MCE;
-				toggle = !!(scancode & RC6_6A_MCE_TOGGLE_MASK);
-				scancode &= ~RC6_6A_MCE_TOGGLE_MASK;
+				switch (scancode & RC6_6A_LCC_MASK) {
+				case RC6_6A_MCE_CC:
+				case RC6_6A_KATHREIN_CC:
+					protocol = RC_PROTO_RC6_MCE;
+					toggle = !!(scancode & RC6_6A_MCE_TOGGLE_MASK);
+					scancode &= ~RC6_6A_MCE_TOGGLE_MASK;
+					break;
+				default:
+					protocol = RC_PROTO_RC6_6A_32;
+					toggle = 0;
+					break;
+				}
 				break;
 			default:
 				dev_dbg(&dev->dev, "RC6(6A) unsupported length\n");

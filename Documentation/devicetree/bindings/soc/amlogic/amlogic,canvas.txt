@@ -1,4 +1,4 @@
-Amlogic Meson Canvas
+Amlogic Canvas
 ================================
 
 A canvas is a collection of metadata that describes a pixel buffer.
@@ -14,23 +14,16 @@ Amlogic SoCs have 256 canvas.
 Device Tree Bindings:
 ---------------------
 
-Canvas Provider
+Video Lookup Table
 --------------------------
 
 Required properties:
-- compatible: "amlogic,meson-canvas"
-
-Parent node should have the following properties :
-- compatible: "amlogic,meson-gx-dmc-sysctrl", "syscon", "simple-mfd"
-- reg: base address and size of the DMC system control register space.
+- compatible: "amlogic,canvas"
+- reg: Base physical address and size of the canvas registers.
 
 Example:
 
-sysctrl_DMC: system-controller@0 {
-	compatible = "amlogic,meson-gx-dmc-sysctrl", "syscon", "simple-mfd";
-	reg = <0x0 0x0 0x0 0x1000>;
-
-	canvas: canvas-provider@0 {
-		compatible = "amlogic,meson-canvas";
-	};
+canvas: video-lut@48 {
+	compatible = "amlogic,canvas";
+	reg = <0x0 0x48 0x0 0x14>;
 };

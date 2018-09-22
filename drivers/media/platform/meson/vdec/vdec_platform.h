@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0+ */
 /*
- * Copyright (C) 2018 Maxime Jourdan <maxi.jourdan@wanadoo.fr>
+ * Copyright (C) 2018 BayLibre, SAS
+ * Author: Maxime Jourdan <mjourdan@baylibre.com>
  */
 
 #ifndef __MESON_VDEC_PLATFORM_H_
@@ -8,7 +9,7 @@
 
 #include "vdec.h"
 
-struct vdec_format;
+struct amvdec_format;
 
 enum vdec_revision {
 	VDEC_REVISION_GXBB,
@@ -17,7 +18,7 @@ enum vdec_revision {
 };
 
 struct vdec_platform {
-	const struct vdec_format *formats;
+	const struct amvdec_format *formats;
 	const u32 num_formats;
 	enum vdec_revision revision;
 };

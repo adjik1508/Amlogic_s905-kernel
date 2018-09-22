@@ -210,10 +210,10 @@ void meson_crtc_irq(struct meson_drm *priv)
 		} else
 			meson_vpp_disable_interlace_vscaler_osd1(priv);
 
-		priv->canvas_ops->setup(priv->canvas_id_osd1,
-			   priv->viu.osd1_addr, priv->viu.osd1_stride,
-			   priv->viu.osd1_height, MESON_CANVAS_WRAP_NONE,
-			   MESON_CANVAS_BLKMODE_LINEAR, 0);
+		meson_canvas_config(priv->canvas, priv->canvas_id_osd1,
+				priv->viu.osd1_addr, priv->viu.osd1_stride,
+				priv->viu.osd1_height, MESON_CANVAS_WRAP_NONE,
+				MESON_CANVAS_BLKMODE_LINEAR, 0);
 
 		/* Enable OSD1 */
 		writel_bits_relaxed(VPP_OSD1_POSTBLEND, VPP_OSD1_POSTBLEND,
@@ -227,20 +227,20 @@ void meson_crtc_irq(struct meson_drm *priv)
 
 		switch (priv->viu.vd1_planes) {
 		case 3:
-			priv->canvas_ops->setup(priv->canvas_id_vd1_2,
+			meson_canvas_config(priv->canvas, priv->canvas_id_vd1_2,
 				   priv->viu.vd1_addr2, priv->viu.vd1_stride2,
 				   priv->viu.vd1_height2, MESON_CANVAS_WRAP_NONE,
-				   MESON_CANVAS_BLKMODE_LINEAR, 7);
+				   MESON_CANVAS_BLKMODE_LINEAR, MESON_CANVAS_ENDIAN_SWAP64);
 		case 2:
-			priv->canvas_ops->setup(priv->canvas_id_vd1_1,
+			meson_canvas_config(priv->canvas, priv->canvas_id_vd1_1,
 				   priv->viu.vd1_addr1, priv->viu.vd1_stride1,
 				   priv->viu.vd1_height1, MESON_CANVAS_WRAP_NONE,
-				   MESON_CANVAS_BLKMODE_LINEAR, 7);
+				   MESON_CANVAS_BLKMODE_LINEAR, MESON_CANVAS_ENDIAN_SWAP64);
 		case 1:
-			priv->canvas_ops->setup(priv->canvas_id_vd1_0,
+			meson_canvas_config(priv->canvas, priv->canvas_id_vd1_0,
 				   priv->viu.vd1_addr0, priv->viu.vd1_stride0,
 				   priv->viu.vd1_height0, MESON_CANVAS_WRAP_NONE,
-				   MESON_CANVAS_BLKMODE_LINEAR, 7);
+				   MESON_CANVAS_BLKMODE_LINEAR, MESON_CANVAS_ENDIAN_SWAP64);
 		};
 
 		writel_relaxed(priv->viu.vd1_if0_gen_reg,

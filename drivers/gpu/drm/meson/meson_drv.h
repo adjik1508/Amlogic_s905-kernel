@@ -31,11 +31,11 @@ struct meson_drm {
 	struct regmap *hhi;
 	int vsync_irq;
 
-	struct meson_canvas_platform_data *canvas_ops;
-	uint8_t canvas_id_osd1;
-	uint8_t canvas_id_vd1_0;
-	uint8_t canvas_id_vd1_1;
-	uint8_t canvas_id_vd1_2;
+	struct meson_canvas *canvas;
+	u8 canvas_id_osd1;
+	u8 canvas_id_vd1_0;
+	u8 canvas_id_vd1_1;
+	u8 canvas_id_vd1_2;
 
 	struct drm_device *drm;
 	struct drm_crtc *crtc;

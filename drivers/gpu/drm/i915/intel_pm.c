@@ -6350,7 +6350,6 @@ static void gen6_set_rps_thresholds(struct drm_i915_private *dev_priv, u8 val)
 
 	new_power = rps->power;
 	switch (rps->power) {
-	case AUTO_POWER:
 	case LOW_POWER:
 		if (val > rps->efficient_freq + 1 &&
 		    val > rps->cur_freq)
@@ -6379,22 +6378,27 @@ static void gen6_set_rps_thresholds(struct drm_i915_private *dev_priv, u8 val)
 		new_power = HIGH_POWER;
 
 	mutex_lock(&rps->power_lock);
-	if (!rps->power_override)
-		rps_set_power(dev_priv, new_power);
+	if (rps->interactive)
+		new_power = HIGH_POWER;
+	rps_set_power(dev_priv, new_power);
 	mutex_unlock(&rps->power_lock);
 	rps->last_adj = 0;
 }
 
-void intel_rps_set_power(struct drm_i915_private *dev_priv, int power)
+void intel_rps_set_interactive(struct drm_i915_private *dev_priv, bool state)
 {
 	struct intel_rps *rps = &dev_priv->gt_pm.rps;
 
+	if (INTEL_GEN(dev_priv) < 6)
+		return;
+
 	mutex_lock(&rps->power_lock);
-	if (power != AUTO_POWER) {
-		rps->power_override++;
-		rps_set_power(dev_priv, power);
+	if (state) {
+		if (!rps->interactive++ && READ_ONCE(dev_priv->gt.awake))
+			rps_set_power(dev_priv, HIGH_POWER);
 	} else {
-		rps->power_override--;
+		GEM_BUG_ON(!rps->interactive);
+		rps->interactive--;
 	}
 	mutex_unlock(&rps->power_lock);
 }

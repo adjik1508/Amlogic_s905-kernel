@@ -1,11 +1,11 @@
 menu "Amlogic SoC drivers"
 
 config MESON_CANVAS
-	bool "Amlogic Meson Canvas driver"
+	tristate "Amlogic Meson Canvas driver"
 	depends on ARCH_MESON || COMPILE_TEST
-	default ARCH_MESON
+	default n
 	help
-	  Say yes to support the canvas IP within Amlogic Meson Soc family.
+	  Say yes to support the canvas IP for Amlogic SoCs.
 
 config MESON_GX_SOCINFO
 	bool "Amlogic Meson GX SoC Information driver"

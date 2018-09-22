@@ -1,33 +1,29 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2018 Maxime Jourdan <maxi.jourdan@wanadoo.fr>
+ *
+ * VDEC_HEVC is a video decoding block that allows decoding of
+ * HEVC, VP9
  */
 
 #include <linux/firmware.h>
 #include <linux/clk.h>
 
 #include "vdec_1.h"
+#include "vdec_helpers.h"
 #include "hevc_regs.h"
+#include "dos_regs.h"
 
 /* AO Registers */
 #define AO_RTI_GEN_PWR_SLEEP0	0xe8
 #define AO_RTI_GEN_PWR_ISO0	0xec
 	#define GEN_PWR_VDEC_HEVC (BIT(7) | BIT(6))
 
-/* DOS Registers */
-#define ASSIST_MBOX1_CLR_REG 0x01d4
-#define ASSIST_MBOX1_MASK    0x01d8
-
-#define DOS_GEN_CTRL0	     0xfc08
-#define DOS_SW_RESET3        0xfcd0
-#define DOS_MEM_PD_HEVC      0xfccc
-#define DOS_GCLK_EN3	     0xfcd4
-
 #define MC_SIZE	(4096 * 4)
 
-static int vdec_hevc_load_firmware(struct vdec_session *sess, const char* fwname)
+static int vdec_hevc_load_firmware(struct amvdec_session *sess, const char* fwname)
 {
-	struct vdec_core *core = sess->core;
+	struct amvdec_core *core = sess->core;
 	struct device *dev = core->dev_dec;
 	const struct firmware *fw;
 	static void *mc_addr;
@@ -57,12 +53,12 @@ static int vdec_hevc_load_firmware(struct vdec_session *sess, const char* fwname
 
 	memcpy(mc_addr, fw->data, MC_SIZE);
 
-	writel_relaxed(0, core->dos_base + HEVC_MPSR);
-	writel_relaxed(0, core->dos_base + HEVC_CPSR);
+	amvdec_write_dos(core, HEVC_MPSR, 0);
+	amvdec_write_dos(core, HEVC_CPSR, 0);
 
-	writel_relaxed(mc_addr_map, core->dos_base + HEVC_IMEM_DMA_ADR);
-	writel_relaxed(MC_SIZE / 4, core->dos_base + HEVC_IMEM_DMA_COUNT);
-	writel_relaxed((0x8000 | (7 << 16)), core->dos_base + HEVC_IMEM_DMA_CTRL);
+	amvdec_write_dos(core, HEVC_IMEM_DMA_ADR, mc_addr_map);
+	amvdec_write_dos(core, HEVC_IMEM_DMA_COUNT, MC_SIZE / 4);
+	amvdec_write_dos(core, HEVC_IMEM_DMA_CTRL, (0x8000 | (7 << 16)));
 
 	while (--i && readl(core->dos_base + HEVC_IMEM_DMA_CTRL) & 0x8000) { }
 
@@ -77,51 +73,52 @@ release_firmware:
 	return ret;
 }
 
-static void vdec_hevc_stbuf_init(struct vdec_session *sess)
+static void vdec_hevc_stbuf_init(struct amvdec_session *sess)
 {
-	struct vdec_core *core = sess->core;
+	struct amvdec_core *core = sess->core;
 
-	writel_relaxed(readl_relaxed(core->dos_base + HEVC_STREAM_CONTROL) & ~1, core->dos_base + HEVC_STREAM_CONTROL);
-	writel_relaxed(sess->vififo_paddr, core->dos_base + HEVC_STREAM_START_ADDR);
-	writel_relaxed(sess->vififo_paddr + sess->vififo_size, core->dos_base + HEVC_STREAM_END_ADDR);
-	writel_relaxed(sess->vififo_paddr, core->dos_base + HEVC_STREAM_RD_PTR);
-	writel_relaxed(sess->vififo_paddr, core->dos_base + HEVC_STREAM_WR_PTR);
+	amvdec_write_dos(core, HEVC_STREAM_CONTROL, amvdec_read_dos(core, HEVC_STREAM_CONTROL) & ~1);
+	amvdec_write_dos(core, HEVC_STREAM_START_ADDR, sess->vififo_paddr);
+	amvdec_write_dos(core, HEVC_STREAM_END_ADDR, sess->vififo_paddr + sess->vififo_size);
+	amvdec_write_dos(core, HEVC_STREAM_RD_PTR, sess->vififo_paddr);
+	amvdec_write_dos(core, HEVC_STREAM_WR_PTR, sess->vififo_paddr);
 }
 
 /* VDEC_HEVC specific ESPARSER configuration */
-static void vdec_hevc_conf_esparser(struct vdec_session *sess)
+static void vdec_hevc_conf_esparser(struct amvdec_session *sess)
 {
-	struct vdec_core *core = sess->core;
+	struct amvdec_core *core = sess->core;
 
 	/* set vififo_vbuf_rp_sel=>vdec_hevc */
-	writel_relaxed(3 << 1, core->dos_base + DOS_GEN_CTRL0);
-	writel_relaxed(readl_relaxed(core->dos_base + HEVC_STREAM_CONTROL) | (1 << 3), core->dos_base + HEVC_STREAM_CONTROL);
-	writel_relaxed(readl_relaxed(core->dos_base + HEVC_STREAM_CONTROL) | 1, core->dos_base + HEVC_STREAM_CONTROL);
-	writel_relaxed(readl_relaxed(core->dos_base + HEVC_STREAM_FIFO_CTL) | (1 << 29), core->dos_base + HEVC_STREAM_FIFO_CTL);
+	amvdec_write_dos(core, DOS_GEN_CTRL0, 3 << 1);
+	amvdec_write_dos(core, HEVC_STREAM_CONTROL, amvdec_read_dos(core, HEVC_STREAM_CONTROL) | BIT(3));
+	amvdec_write_dos(core, HEVC_STREAM_CONTROL, amvdec_read_dos(core, HEVC_STREAM_CONTROL) | 1);
+	amvdec_write_dos(core, HEVC_STREAM_FIFO_CTL, amvdec_read_dos(core, HEVC_STREAM_FIFO_CTL) | BIT(29));
 }
 
-static u32 vdec_hevc_vififo_level(struct vdec_session *sess)
+static u32 vdec_hevc_vififo_level(struct amvdec_session *sess)
 {
 	return readl_relaxed(sess->core->dos_base + HEVC_STREAM_LEVEL);
 }
 
-static int vdec_hevc_stop(struct vdec_session *sess)
+static int vdec_hevc_stop(struct amvdec_session *sess)
 {
-	struct vdec_core *core = sess->core;
-	struct vdec_codec_ops *codec_ops = sess->fmt_out->codec_ops;
+	struct amvdec_core *core = sess->core;
+	struct amvdec_codec_ops *codec_ops = sess->fmt_out->codec_ops;
 
 	/* Disable interrupt */
-	writel_relaxed(0, core->dos_base + HEVC_ASSIST_MBOX1_MASK);
+	amvdec_write_dos(core, HEVC_ASSIST_MBOX1_MASK, 0);
 	/* Disable firmware processor */
-	writel_relaxed(0, core->dos_base + HEVC_MPSR);
+	amvdec_write_dos(core, HEVC_MPSR, 0);
 
-	codec_ops->stop(sess);
+	if (sess->priv)
+		codec_ops->stop(sess);
 
 	/* Enable VDEC_HEVC Isolation */
 	regmap_update_bits(core->regmap_ao, AO_RTI_GEN_PWR_ISO0, 0xc00, 0xc00);
 
 	/* VDEC_HEVC Memories */
-	writel_relaxed(0xffffffffUL, core->dos_base + DOS_MEM_PD_HEVC);
+	amvdec_write_dos(core, DOS_MEM_PD_HEVC, 0xffffffffUL);
 
 	regmap_update_bits(core->regmap_ao, AO_RTI_GEN_PWR_SLEEP0,
 		GEN_PWR_VDEC_HEVC, GEN_PWR_VDEC_HEVC);
@@ -131,11 +128,11 @@ static int vdec_hevc_stop(struct vdec_session *sess)
 	return 0;
 }
 
-static int vdec_hevc_start(struct vdec_session *sess)
+static int vdec_hevc_start(struct amvdec_session *sess)
 {
 	int ret;
-	struct vdec_core *core = sess->core;
-	struct vdec_codec_ops *codec_ops = sess->fmt_out->codec_ops;
+	struct amvdec_core *core = sess->core;
+	struct amvdec_codec_ops *codec_ops = sess->fmt_out->codec_ops;
 
 	clk_set_rate(core->vdec_hevc_clk, 666666666);
 	ret = clk_prepare_enable(core->vdec_hevc_clk);
@@ -147,42 +144,54 @@ static int vdec_hevc_start(struct vdec_session *sess)
 	udelay(10);
 
 	/* Reset VDEC_HEVC*/
-	writel_relaxed(0xffffffff, core->dos_base + DOS_SW_RESET3);
-	writel_relaxed(0x00000000, core->dos_base + DOS_SW_RESET3);
+	amvdec_write_dos(core, DOS_SW_RESET3, 0xffffffff);
+	amvdec_write_dos(core, DOS_SW_RESET3, 0x00000000);
 
-	writel_relaxed(0xffffffff, core->dos_base + DOS_GCLK_EN3);
+	amvdec_write_dos(core, DOS_GCLK_EN3, 0xffffffff);
 
 	/* VDEC_HEVC Memories */
-	writel_relaxed(0x00000000, core->dos_base + DOS_MEM_PD_HEVC);
+	amvdec_write_dos(core, DOS_MEM_PD_HEVC, 0x00000000);
 
 	/* Remove VDEC_HEVC Isolation */
 	regmap_update_bits(core->regmap_ao, AO_RTI_GEN_PWR_ISO0, 0xc00, 0);
 
-	writel_relaxed(0xffffffff, core->dos_base + DOS_SW_RESET3);
-	writel_relaxed(0x00000000, core->dos_base + DOS_SW_RESET3);
+	amvdec_write_dos(core, DOS_SW_RESET3, 0xffffffff);
+	amvdec_write_dos(core, DOS_SW_RESET3, 0x00000000);
 
 	vdec_hevc_stbuf_init(sess);
 
 	ret = vdec_hevc_load_firmware(sess, sess->fmt_out->firmware_path);
-	if (ret) {
-		vdec_hevc_stop(sess);
-		return ret;
-	}
+	if (ret)
+		goto stop;
 
-	codec_ops->start(sess);
+	ret = codec_ops->start(sess);
+	if (ret)
+		goto stop;
 
-	writel_relaxed((1<<12)|(1<<11), core->dos_base + DOS_SW_RESET3);
-	writel_relaxed(0, core->dos_base + DOS_SW_RESET3);
-	readl_relaxed(core->dos_base + DOS_SW_RESET3);
+	amvdec_write_dos(core, DOS_SW_RESET3, BIT(12)|BIT(11));
+	amvdec_write_dos(core, DOS_SW_RESET3, 0);
+	amvdec_read_dos(core, DOS_SW_RESET3);
 
-	writel_relaxed(1, core->dos_base + HEVC_MPSR);
+	amvdec_write_dos(core, HEVC_MPSR, 1);
+	/* Let the firmware settle */
+	udelay(10);
 
+	return 0;
+
+stop:
+	vdec_hevc_stop(sess);
+	return ret;
+}
+
+static int vdec_hevc_use_offsets(void)
+{
 	return 0;
 }
 
-struct vdec_ops vdec_hevc_ops = {
+struct amvdec_ops vdec_hevc_ops = {
 	.start = vdec_hevc_start,
 	.stop = vdec_hevc_stop,
 	.conf_esparser = vdec_hevc_conf_esparser,
 	.vififo_level = vdec_hevc_vififo_level,
+	.use_offsets = vdec_hevc_use_offsets,
 };

@@ -12989,9 +12989,9 @@ intel_prepare_plane_fb(struct drm_plane *plane,
 	 * that are not quite steady state without resorting to forcing
 	 * maximum clocks following a vblank miss (see do_rps_boost()).
 	 */
-	if (!intel_state->rps_override) {
-		intel_rps_set_power(dev_priv, HIGH_POWER);
-		intel_state->rps_override = true;
+	if (!intel_state->rps_interactive) {
+		intel_rps_set_interactive(dev_priv, true);
+		intel_state->rps_interactive = true;
 	}
 
 	return 0;
@@ -13014,9 +13014,9 @@ intel_cleanup_plane_fb(struct drm_plane *plane,
 		to_intel_atomic_state(old_state->state);
 	struct drm_i915_private *dev_priv = to_i915(plane->dev);
 
-	if (intel_state->rps_override) {
-		intel_rps_set_power(dev_priv, AUTO_POWER);
-		intel_state->rps_override = false;
+	if (intel_state->rps_interactive) {
+		intel_rps_set_interactive(dev_priv, false);
+		intel_state->rps_interactive = false;
 	}
 
 	/* Should only be called after a successful intel_prepare_plane_fb()! */

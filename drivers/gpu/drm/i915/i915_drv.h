@@ -786,8 +786,8 @@ struct intel_rps {
 	u8 down_threshold; /* Current %busy required to downclock */
 
 	int last_adj;
-	enum { LOW_POWER, BETWEEN, HIGH_POWER, AUTO_POWER } power;
-	unsigned int power_override;
+	enum { LOW_POWER, BETWEEN, HIGH_POWER } power;
+	unsigned int interactive;
 	struct mutex power_lock;
 
 	bool enabled;
@@ -3447,8 +3447,8 @@ extern void i915_redisable_vga_power_on(struct drm_i915_private *dev_priv);
 extern bool ironlake_set_drps(struct drm_i915_private *dev_priv, u8 val);
 extern void intel_init_pch_refclk(struct drm_i915_private *dev_priv);
 extern int intel_set_rps(struct drm_i915_private *dev_priv, u8 val);
-extern void intel_rps_set_power(struct drm_i915_private *dev_priv,
-				int new_power);
+extern void intel_rps_set_interactive(struct drm_i915_private *dev_priv,
+				      bool state);
 extern bool intel_set_memory_cxsr(struct drm_i915_private *dev_priv,
 				  bool enable);
 
