@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 /*
- * Copyright (c) 2017 BayLibre SAS
- * Author: Neil Armstrong <narmstrong@baylibre.com>
+ * Author: Christian Hewitt <christianshewitt@gmail.com>
  */
 
 &apb {
 	mali: gpu@c0000 {
 		compatible = "amlogic,meson-gxm-mali", "arm,mali-t820", "arm,mali-midgard";
-               reg = <0x0 0xc0000 0x0 0x40000>;
+		reg = <0x0 0xc0000 0x0 0x40000>;
 		interrupt-parent = <&gic>;
 		interrupts = <0 160 4>, <0 161 4>, <0 162 4>;
 		interrupt-names = "gpu", "mmu", "job";

@@ -48,7 +48,8 @@
 #define WMI_READY_TIMEOUT (5 * HZ)
 #define ATH10K_FLUSH_TIMEOUT_HZ (5 * HZ)
 #define ATH10K_CONNECTION_LOSS_HZ (3 * HZ)
-#define ATH10K_NUM_CHANS 40
+#define ATH10K_NUM_CHANS 41
+#define ATH10K_MAX_5G_CHAN 173
 
 /* Antenna noise floor */
 #define ATH10K_DEFAULT_NOISE_FLOOR -95
@@ -90,6 +91,14 @@
 #define ATH10K_SMBIOS_BDF_EXT_MAGIC "BDF_"
 
 struct ath10k;
+
+enum ath10k_bus {
+	ATH10K_BUS_PCI,
+	ATH10K_BUS_AHB,
+	ATH10K_BUS_SDIO,
+	ATH10K_BUS_USB,
+	ATH10K_BUS_SNOC,
+};
 
 static inline const char *ath10k_bus_str(enum ath10k_bus bus)
 {
@@ -176,6 +185,11 @@ struct ath10k_wmi {
 	struct wmi_pdev_param_map *pdev_param;
 	const struct wmi_ops *ops;
 	const struct wmi_peer_flags_map *peer_flags;
+
+	u32 mgmt_max_num_pending_tx;
+
+	/* Protected by data_lock */
+	struct idr mgmt_pending_tx;
 
 	u32 num_mem_chunks;
 	u32 rx_decap_mode;
@@ -866,16 +880,6 @@ struct ath10k_per_peer_tx_stats {
 	u32	reserved2;
 };
 
-enum ath10k_dev_type {
-	ATH10K_DEV_TYPE_LL,
-	ATH10K_DEV_TYPE_HL,
-};
-
-struct ath10k_bus_params {
-	u32 chip_id;
-	enum ath10k_dev_type dev_type;
-};
-
 struct ath10k {
 	struct ath_common ath_common;
 	struct ieee80211_hw *hw;
@@ -886,7 +890,6 @@ struct ath10k {
 	enum ath10k_hw_rev hw_rev;
 	u16 dev_id;
 	u32 chip_id;
-	enum ath10k_dev_type dev_type;
 	u32 target_version;
 	u8 fw_version_major;
 	u32 fw_version_minor;
@@ -1164,8 +1167,7 @@ int ath10k_core_start(struct ath10k *ar, enum ath10k_firmware_mode mode,
 		      const struct ath10k_fw_components *fw_components);
 int ath10k_wait_for_suspend(struct ath10k *ar, u32 suspend_opt);
 void ath10k_core_stop(struct ath10k *ar);
-int ath10k_core_register(struct ath10k *ar,
-			 const struct ath10k_bus_params *bus_params);
+int ath10k_core_register(struct ath10k *ar, u32 chip_id);
 void ath10k_core_unregister(struct ath10k *ar);
 
 #endif /* _CORE_H_ */

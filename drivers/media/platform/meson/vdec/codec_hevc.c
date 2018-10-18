@@ -48,31 +48,51 @@
 /* HEVC Constants */
 #define MAX_REF_PIC_NUM		24
 #define MAX_REF_ACTIVE		16
-#define MPRED_MV_BUF_SIZE	0x120000
 #define MAX_TILE_COL_NUM	10
 #define MAX_TILE_ROW_NUM	20
 #define MAX_SLICE_NUM		800
 #define INVALID_POC		0x80000000
 
 /* HEVC Workspace layout */
+#define MPRED_MV_BUF_SIZE 0x120000
+
+#define IPP_SIZE	0x4000
+#define SAO_ABV_SIZE	0x30000
+#define SAO_VB_SIZE	0x30000
+#define SH_TM_RPS_SIZE	0x800
+#define VPS_SIZE	0x800
+#define SPS_SIZE	0x800
+#define PPS_SIZE	0x2000
+#define SAO_UP_SIZE	0x800
+#define SWAP_BUF_SIZE	0x800
+#define SWAP_BUF2_SIZE	0x800
+#define SCALELUT_SIZE	0x8000
+#define DBLK_PARA_SIZE	0x20000
+#define DBLK_DATA_SIZE	0x40000
+#define MMU_VBH_SIZE	0x5000
+#define MPRED_ABV_SIZE	0x8000
+#define MPRED_MV_SIZE	(MPRED_MV_BUF_SIZE * MAX_REF_PIC_NUM)
+#define RPM_BUF_SIZE	0x100
+#define LMEM_SIZE	0xA00
+
 #define IPP_OFFSET       0x00
-#define SAO_ABV_OFFSET   (IPP_OFFSET + 0x4000)
-#define SAO_VB_OFFSET    (SAO_ABV_OFFSET + 0x30000)
-#define SH_TM_RPS_OFFSET (SAO_VB_OFFSET + 0x30000)
-#define VPS_OFFSET       (SH_TM_RPS_OFFSET + 0x800)
-#define SPS_OFFSET       (VPS_OFFSET + 0x800)
-#define PPS_OFFSET       (SPS_OFFSET + 0x800)
-#define SAO_UP_OFFSET    (PPS_OFFSET + 0x2000)
-#define SWAP_BUF_OFFSET  (SAO_UP_OFFSET + 0x800)
-#define SWAP_BUF2_OFFSET (SWAP_BUF_OFFSET + 0x800)
-#define SCALELUT_OFFSET  (SWAP_BUF2_OFFSET + 0x800)
-#define DBLK_PARA_OFFSET (SCALELUT_OFFSET + 0x8000)
-#define DBLK_DATA_OFFSET (DBLK_PARA_OFFSET + 0x20000)
-#define MMU_VBH_OFFSET   (DBLK_DATA_OFFSET + 0x40000)
-#define MPRED_ABV_OFFSET (MMU_VBH_OFFSET + 0x5000)
-#define MPRED_MV_OFFSET  (MPRED_ABV_OFFSET + 0x8000)
-#define RPM_OFFSET       (MPRED_MV_OFFSET + MPRED_MV_BUF_SIZE * MAX_REF_PIC_NUM)
-#define LMEM_OFFSET      (RPM_OFFSET + 0x100)
+#define SAO_ABV_OFFSET   (IPP_OFFSET + IPP_SIZE)
+#define SAO_VB_OFFSET    (SAO_ABV_OFFSET + SAO_ABV_SIZE)
+#define SH_TM_RPS_OFFSET (SAO_VB_OFFSET + SAO_VB_SIZE)
+#define VPS_OFFSET       (SH_TM_RPS_OFFSET + SH_TM_RPS_SIZE)
+#define SPS_OFFSET       (VPS_OFFSET + VPS_SIZE)
+#define PPS_OFFSET       (SPS_OFFSET + SPS_SIZE)
+#define SAO_UP_OFFSET    (PPS_OFFSET + PPS_SIZE)
+#define SWAP_BUF_OFFSET  (SAO_UP_OFFSET + SAO_UP_SIZE)
+#define SWAP_BUF2_OFFSET (SWAP_BUF_OFFSET + SWAP_BUF_SIZE)
+#define SCALELUT_OFFSET  (SWAP_BUF2_OFFSET + SWAP_BUF2_SIZE)
+#define DBLK_PARA_OFFSET (SCALELUT_OFFSET + SCALELUT_SIZE)
+#define DBLK_DATA_OFFSET (DBLK_PARA_OFFSET + DBLK_PARA_SIZE)
+#define MMU_VBH_OFFSET   (DBLK_DATA_OFFSET + DBLK_DATA_SIZE)
+#define MPRED_ABV_OFFSET (MMU_VBH_OFFSET + MMU_VBH_SIZE)
+#define MPRED_MV_OFFSET  (MPRED_ABV_OFFSET + MPRED_ABV_SIZE)
+#define RPM_OFFSET       (MPRED_MV_OFFSET + MPRED_MV_SIZE)
+#define LMEM_OFFSET      (RPM_OFFSET + RPM_BUF_SIZE)
 
 /* ISR decode status */
 #define HEVC_DEC_IDLE                        0x0
@@ -110,7 +130,7 @@
 #define DM_CHROMA_IDX		36
 
 /* Buffer sizes */
-#define SIZE_WORKSPACE ALIGN(LMEM_OFFSET + 0xA00, 64 * SZ_1K)
+#define SIZE_WORKSPACE ALIGN(LMEM_OFFSET + LMEM_SIZE, 64 * SZ_1K)
 #define SIZE_AUX (SZ_1K * 16)
 #define SIZE_FRAME_MMU (0x1200 * 4)
 #define RPM_SIZE 0x80
@@ -226,20 +246,7 @@ struct hevc_frame {
 	u32 ref_num[2];
 };
 
-struct hevc_tile {
-	int width;
-	int height;
-	int start_cu_x;
-	int start_cu_y;
-
-	dma_addr_t sao_vb_start_addr;
-	dma_addr_t sao_abv_start_addr;
-};
-
 struct codec_hevc {
-	/* Current decoding status provided by the ISR */
-	u32 dec_status;
-
 	struct mutex lock;
 
 	/* Buffer for the HEVC Workspace */
@@ -283,15 +290,6 @@ struct codec_hevc {
 	u32 slice_addr;
 	u32 ldc_flag;
 
-	/* Tiles */
-	u32 num_tile_col;
-	u32 num_tile_row;
-	struct hevc_tile m_tile[MAX_TILE_ROW_NUM][MAX_TILE_COL_NUM];
-	u32 tile_start_lcu_x;
-	u32 tile_start_lcu_y;
-	u32 tile_width_lcu;
-	u32 tile_height_lcu;
-
 	/* Whether we detected the bitstream as 10-bit */
 	int is_10bit;
 
@@ -301,8 +299,8 @@ struct codec_hevc {
 	/* In case of downsampling (decoding with FBC but outputting in NV12M),
 	 * we need to allocate additional buffers for FBC.
 	 */
-	 void      *fbc_buffer_vaddr[24];
-	 dma_addr_t fbc_buffer_paddr[24];
+	void      *fbc_buffer_vaddr[MAX_REF_PIC_NUM];
+	dma_addr_t fbc_buffer_paddr[MAX_REF_PIC_NUM];
 };
 
 /* Returns 1 if we must use framebuffer compression */
@@ -576,7 +574,7 @@ static void codec_hevc_setup_buffers_gxbb(struct amvdec_session *sess)
 		if (codec_hevc_use_fbc(sess)) {
 			val = buf_y_paddr | (idx << 8) | 1;
 			amvdec_write_dos(core, HEVCD_MPP_ANC2AXI_TBL_CMD_ADDR, val);
-		} else if (sess->pixfmt_cap == V4L2_PIX_FMT_NV12M) {
+		} else {
 			buf_uv_paddr = vb2_dma_contig_plane_dma_addr(&buf->vb.vb2_buf, 1);
 			val = buf_y_paddr | ((idx * 2) << 8) | 1;
 			amvdec_write_dos(core, HEVCD_MPP_ANC2AXI_TBL_CMD_ADDR, val);
@@ -622,8 +620,9 @@ static void codec_hevc_setup_buffers_gxl(struct amvdec_session *sess)
 
 		amvdec_write_dos(core, HEVCD_MPP_ANC2AXI_TBL_DATA, buf_y_paddr >> 5);
 		if (!codec_hevc_use_fbc(sess)) {
-			buf_uv_paddr = vb2_dma_contig_plane_dma_addr(&buf->vb.vb2_buf, 1);
-			amvdec_write_dos(core, HEVCD_MPP_ANC2AXI_TBL_DATA, buf_uv_paddr >> 5);
+			buf_uv_paddr =vb2_dma_contig_plane_dma_addr(&buf->vb.vb2_buf, 1);
+			amvdec_write_dos(core, HEVCD_MPP_ANC2AXI_TBL_DATA,
+					 buf_uv_paddr >> 5);
 		}
 	}
 
@@ -631,7 +630,8 @@ static void codec_hevc_setup_buffers_gxl(struct amvdec_session *sess)
 	for (i = buf_num; i < MAX_REF_PIC_NUM; ++i) {
 		amvdec_write_dos(core, HEVCD_MPP_ANC2AXI_TBL_DATA, buf_y_paddr >> 5);
 		if (!codec_hevc_use_fbc(sess))
-			amvdec_write_dos(core, HEVCD_MPP_ANC2AXI_TBL_DATA, buf_uv_paddr >> 5);
+			amvdec_write_dos(core, HEVCD_MPP_ANC2AXI_TBL_DATA,
+					 buf_uv_paddr >> 5);
 	}
 
 	amvdec_write_dos(core, HEVCD_MPP_ANC2AXI_TBL_CONF_ADDR, 1);
@@ -644,13 +644,17 @@ static void codec_hevc_free_fbc_buffers(struct amvdec_session *sess)
 {
 	struct codec_hevc *hevc = sess->priv;
 	struct device *dev = sess->core->dev;
+	u32 am21_size = amvdec_am21c_size(sess->width, sess->height);
 	int i;
 
-	for (i = 0; i < 24; ++i)
+	for (i = 0; i < MAX_REF_PIC_NUM; ++i) {
 		if (hevc->fbc_buffer_vaddr[i]) {
-			dma_free_coherent(dev, amvdec_am21c_size(sess->width, sess->height), hevc->fbc_buffer_vaddr[i], hevc->fbc_buffer_paddr[i]);
+			dma_free_coherent(dev, am21_size,
+					  hevc->fbc_buffer_vaddr[i],
+					  hevc->fbc_buffer_paddr[i]);
 			hevc->fbc_buffer_vaddr[i] = NULL;
 		}
+	}
 }
 
 static int codec_hevc_alloc_fbc_buffers(struct amvdec_session *sess)
@@ -658,15 +662,21 @@ static int codec_hevc_alloc_fbc_buffers(struct amvdec_session *sess)
 	struct codec_hevc *hevc = sess->priv;
 	struct device *dev = sess->core->dev;
 	struct v4l2_m2m_buffer *buf;
+	u32 am21_size = amvdec_am21c_size(sess->width, sess->height);
 
 	v4l2_m2m_for_each_dst_buf(sess->m2m_ctx, buf) {
 		u32 idx = buf->vb.vb2_buf.index;
-		hevc->fbc_buffer_vaddr[idx] = dma_alloc_coherent(dev, amvdec_am21c_size(sess->width, sess->height), &hevc->fbc_buffer_paddr[idx], GFP_KERNEL);
-		if (!hevc->fbc_buffer_vaddr[idx]) {
+		dma_addr_t paddr;
+		void *vaddr = dma_alloc_coherent(dev, am21_size, &paddr,
+						 GFP_KERNEL);
+		if (!vaddr) {
 			dev_err(dev, "Couldn't allocate FBC buffer %u\n", idx);
 			codec_hevc_free_fbc_buffers(sess);
 			return -ENOMEM;
 		}
+
+		hevc->fbc_buffer_vaddr[idx] = vaddr;
+		hevc->fbc_buffer_paddr[idx] = paddr;
 	}
 
 	return 0;
@@ -697,7 +707,8 @@ codec_hevc_setup_workspace(struct amvdec_core *core, struct codec_hevc *hevc)
 	dma_addr_t wkaddr;
 
 	/* Allocate some memory for the HEVC decoder's state */
-	hevc->workspace_vaddr = dma_alloc_coherent(core->dev, SIZE_WORKSPACE, &wkaddr, GFP_KERNEL);
+	hevc->workspace_vaddr = dma_alloc_coherent(core->dev, SIZE_WORKSPACE,
+						   &wkaddr, GFP_KERNEL);
 	if (!hevc->workspace_vaddr) {
 		dev_err(core->dev, "Failed to allocate HEVC Workspace\n");
 		return -ENOMEM;
@@ -750,7 +761,8 @@ static int codec_hevc_start(struct amvdec_session *sess)
 	val |= (3 << 29) | BIT(27) | BIT(24) | BIT(22) | BIT(7) | BIT(4) | BIT(0);
 	amvdec_write_dos(core, HEVC_PARSER_INT_CONTROL, val);
 	amvdec_write_dos_bits(core, HEVC_SHIFT_STATUS, BIT(1) | BIT(0));
-	amvdec_write_dos(core, HEVC_SHIFT_CONTROL, (3 << 6) | BIT(5) | BIT(2) | BIT(0));
+	amvdec_write_dos(core, HEVC_SHIFT_CONTROL,
+			 (3 << 6) | BIT(5) | BIT(2) | BIT(0));
 	amvdec_write_dos(core, HEVC_CABAC_CONTROL, 1);
 	amvdec_write_dos(core, HEVC_PARSER_CORE_CONTROL, 1);
 	amvdec_write_dos(core, HEVC_DEC_STATUS_REG, 0);
@@ -768,7 +780,8 @@ static int codec_hevc_start(struct amvdec_session *sess)
 	amvdec_write_dos(core, HEVC_PARSER_CMD_SKIP_0, PARSER_CMD_SKIP_CFG_0);
 	amvdec_write_dos(core, HEVC_PARSER_CMD_SKIP_1, PARSER_CMD_SKIP_CFG_1);
 	amvdec_write_dos(core, HEVC_PARSER_CMD_SKIP_2, PARSER_CMD_SKIP_CFG_2);
-	amvdec_write_dos(core, HEVC_PARSER_IF_CONTROL, BIT(5) | BIT(2) | BIT(0));
+	amvdec_write_dos(core, HEVC_PARSER_IF_CONTROL,
+			 BIT(5) | BIT(2) | BIT(0));
 
 	amvdec_write_dos(core, HEVCD_IPP_TOP_CNTL, BIT(0));
 	amvdec_write_dos(core, HEVCD_IPP_TOP_CNTL, BIT(1));
@@ -789,7 +802,8 @@ static int codec_hevc_start(struct amvdec_session *sess)
 	amvdec_write_dos(core, HEVC_DECODE_MODE2, 0);
 
 	/* AUX buffers */
-	hevc->aux_vaddr = dma_alloc_coherent(core->dev, SIZE_AUX, &hevc->aux_paddr, GFP_KERNEL);
+	hevc->aux_vaddr = dma_alloc_coherent(core->dev, SIZE_AUX,
+					     &hevc->aux_paddr, GFP_KERNEL);
 	if (!hevc->aux_vaddr) {
 		dev_err(core->dev, "Failed to request HEVC AUX\n");
 		ret = -ENOMEM;
@@ -797,7 +811,8 @@ static int codec_hevc_start(struct amvdec_session *sess)
 	}
 
 	amvdec_write_dos(core, HEVC_AUX_ADR, hevc->aux_paddr);
-	amvdec_write_dos(core, HEVC_AUX_DATA_SIZE, (((SIZE_AUX) >> 4) << 16) | 0);
+	amvdec_write_dos(core, HEVC_AUX_DATA_SIZE,
+			 (((SIZE_AUX) >> 4) << 16) | 0);
 	mutex_init(&hevc->lock);
 	sess->priv = hevc;
 
@@ -851,43 +866,8 @@ static int codec_hevc_stop(struct amvdec_session *sess)
 	return 0;
 }
 
-static void codec_hevc_update_tiles(struct amvdec_session *sess)
-{
-	struct codec_hevc *hevc = sess->priv;
-	struct amvdec_core *core = sess->core;
-	u32 sao_mem_unit = (hevc->lcu_size == 16 ? 9 : hevc->lcu_size == 32 ? 14 : 24) << 4;
-	u32 pic_height_cu = (hevc->height + hevc->lcu_size - 1) / hevc->lcu_size;
-	u32 pic_width_cu = (hevc->width + hevc->lcu_size - 1) / hevc->lcu_size;
-	u32 sao_vb_size = (sao_mem_unit + (2 << 4)) * pic_height_cu;
-	u32 tiles_flags = hevc->rpm_param.p.tiles_flags;
-
-	if (tiles_flags & 1) {
-		/* TODO; */
-		dev_err(core->dev, "Bitstream uses tiles, NotImplemented!\n");
-		return;
-	}
-
-	hevc->num_tile_col = 1;
-	hevc->num_tile_row = 1;
-	hevc->m_tile[0][0].width = pic_width_cu;
-	hevc->m_tile[0][0].height = pic_height_cu;
-	hevc->m_tile[0][0].start_cu_x = 0;
-	hevc->m_tile[0][0].start_cu_y = 0;
-	hevc->m_tile[0][0].sao_vb_start_addr = hevc->workspace_paddr + SAO_VB_OFFSET;
-	hevc->m_tile[0][0].sao_abv_start_addr = hevc->workspace_paddr + SAO_ABV_OFFSET;
-	
-	hevc->tile_start_lcu_x = 0;
-	hevc->tile_start_lcu_y = 0;
-	hevc->tile_width_lcu = pic_width_cu;
-	hevc->tile_height_lcu = pic_height_cu;
-
-	amvdec_write_dos(core, HEVC_sao_mem_unit, sao_mem_unit);
-	amvdec_write_dos(core, HEVC_SAO_ABV, hevc->workspace_paddr + SAO_ABV_OFFSET);
-	amvdec_write_dos(core, HEVC_sao_vb_size, sao_vb_size);
-	amvdec_write_dos(core, HEVC_SAO_VB, hevc->workspace_paddr + SAO_VB_OFFSET);
-}
-
-static struct hevc_frame * codec_hevc_get_frame_by_poc(struct codec_hevc *hevc, u32 poc)
+static struct hevc_frame *
+codec_hevc_get_frame_by_poc(struct codec_hevc *hevc, u32 poc)
 {
 	struct hevc_frame *tmp;
 
@@ -899,7 +879,8 @@ static struct hevc_frame * codec_hevc_get_frame_by_poc(struct codec_hevc *hevc, 
 	return NULL;
 }
 
-static struct hevc_frame * codec_hevc_prepare_new_frame(struct amvdec_session *sess)
+static struct hevc_frame *
+codec_hevc_prepare_new_frame(struct amvdec_session *sess)
 {
 	struct vb2_v4l2_buffer *vbuf;
 	struct hevc_frame *new_frame = NULL;
@@ -928,14 +909,20 @@ static struct hevc_frame * codec_hevc_prepare_new_frame(struct amvdec_session *s
 	return new_frame;
 }
 
-static void codec_hevc_set_sao(struct amvdec_session *sess, struct hevc_frame *frame)
+static void
+codec_hevc_set_sao(struct amvdec_session *sess, struct hevc_frame *frame)
 {
 	struct amvdec_core *core = sess->core;
 	struct codec_hevc *hevc = sess->priv;
 	union rpm_param *param = &hevc->rpm_param;
+	u32 pic_height_cu =
+		(hevc->height + hevc->lcu_size - 1) / hevc->lcu_size;
+	u32 sao_mem_unit = (hevc->lcu_size == 16 ? 9 :
+			   hevc->lcu_size == 32 ? 14 : 24) << 4;
+	u32 sao_vb_size = (sao_mem_unit + (2 << 4)) * pic_height_cu;
+	u32 misc_flag0 = param->p.misc_flag0;
 	dma_addr_t buf_y_paddr;
 	dma_addr_t buf_u_v_paddr;
-	u32 misc_flag0 = param->p.misc_flag0;
 	u32 slice_deblocking_filter_disabled_flag;
 	u32 val, val_2;
 
@@ -977,7 +964,8 @@ static void codec_hevc_set_sao(struct amvdec_session *sess, struct hevc_frame *f
 			 (amvdec_get_output_size(sess) / 2));
 
 	if (frame->cur_slice_idx == 0) {
-		amvdec_write_dos(core, HEVC_DBLK_CFG2, hevc->width | (hevc->height << 16));
+		amvdec_write_dos(core, HEVC_DBLK_CFG2,
+				 hevc->width | (hevc->height << 16));
 
 		val = 0;
 		if ((misc_flag0 >> PCM_ENABLE_FLAG_BIT) & 0x1)
@@ -1012,7 +1000,6 @@ static void codec_hevc_set_sao(struct amvdec_session *sess, struct hevc_frame *f
 	val_2 = amvdec_read_dos(core, HEVC_SAO_CTRL0);
 	val_2 &= (~0x300);
 
-	/* TODO: handle tiles here if enabled */
 	slice_deblocking_filter_disabled_flag = (misc_flag0 >>
 			SLICE_DEBLOCKING_FILTER_DISABLED_FLAG_BIT) & 0x1;
 	if ((misc_flag0 & (1 << DEBLOCKING_FILTER_OVERRIDE_ENABLED_FLAG_BIT))
@@ -1059,9 +1046,17 @@ static void codec_hevc_set_sao(struct amvdec_session *sess, struct hevc_frame *f
 
 	amvdec_write_dos(core, HEVC_DBLK_CFG9, val);
 	amvdec_write_dos(core, HEVC_SAO_CTRL0, val_2);
+
+	amvdec_write_dos(core, HEVC_sao_mem_unit, sao_mem_unit);
+	amvdec_write_dos(core, HEVC_SAO_ABV,
+			 hevc->workspace_paddr + SAO_ABV_OFFSET);
+	amvdec_write_dos(core, HEVC_sao_vb_size, sao_vb_size);
+	amvdec_write_dos(core, HEVC_SAO_VB,
+			 hevc->workspace_paddr + SAO_VB_OFFSET);
 }
 
-static dma_addr_t codec_hevc_get_frame_mv_paddr(struct codec_hevc *hevc, struct hevc_frame *frame)
+static dma_addr_t codec_hevc_get_frame_mv_paddr(struct codec_hevc *hevc,
+						struct hevc_frame *frame)
 {
 	return hevc->workspace_paddr + MPRED_MV_OFFSET +
 		(frame->vbuf->vb2_buf.index * MPRED_MV_BUF_SIZE);
@@ -1079,9 +1074,9 @@ codec_hevc_set_mpred_ctrl(struct amvdec_core *core, struct codec_hevc *hevc)
 	      MPRED_CTRL0_ABOVE_EN |
 	      MPRED_CTRL0_MV_WR_EN |
 	      MPRED_CTRL0_BUF_LINEAR |
-	      lcu_size_log2 << 16 |
-	      3 << 20 | /* cu_size_log2 */
-	      param->p.log2_parallel_merge_level << 24;
+	      (lcu_size_log2 << 16) |
+	      (3 << 20) | /* cu_size_log2 */
+	      (param->p.log2_parallel_merge_level << 24);
 
 	if (slice_type != I_SLICE)
 		val |= MPRED_CTRL0_MV_RD_EN;
@@ -1120,7 +1115,6 @@ static void codec_hevc_set_mpred_mv(struct amvdec_core *core,
 	union rpm_param *param = &hevc->rpm_param;
 	u32 lcu_size_log2 = ilog2(hevc->lcu_size);
 	u32 mv_mem_unit = lcu_size_log2 == 6 ? 0x200 : lcu_size_log2 == 5 ? 0x80 : 0x20;
-	u32 slice_segment_address = param->p.slice_segment_address;
 	dma_addr_t col_mv_rd_start_addr, col_mv_rd_ptr, col_mv_rd_end_addr;
 	dma_addr_t mpred_mv_wr_ptr;
 	u32 val;
@@ -1132,14 +1126,11 @@ static void codec_hevc_set_mpred_mv(struct amvdec_core *core,
 	col_mv_rd_ptr = col_mv_rd_start_addr + (hevc->slice_addr * mv_mem_unit);
 	col_mv_rd_end_addr = col_mv_rd_start_addr + ((hevc->lcu_x_num * hevc->lcu_y_num) * mv_mem_unit);
 
-	amvdec_write_dos(core, HEVC_MPRED_MV_WR_START_ADDR, codec_hevc_get_frame_mv_paddr(hevc, frame));
+	amvdec_write_dos(core, HEVC_MPRED_MV_WR_START_ADDR,
+			 codec_hevc_get_frame_mv_paddr(hevc, frame));
 	amvdec_write_dos(core, HEVC_MPRED_MV_RD_START_ADDR, col_mv_rd_start_addr);
 
-	val = ((hevc->lcu_x_num - hevc->tile_width_lcu) * mv_mem_unit);
-	amvdec_write_dos(core, HEVC_MPRED_MV_WR_ROW_JUMP, val);
-	amvdec_write_dos(core, HEVC_MPRED_MV_RD_ROW_JUMP, val);
-
-	if (slice_segment_address == 0) {
+	if (param->p.slice_segment_address == 0) {
 		amvdec_write_dos(core, HEVC_MPRED_ABV_START_ADDR,
 				 hevc->workspace_paddr + MPRED_ABV_OFFSET);
 		amvdec_write_dos(core, HEVC_MPRED_MV_WPTR, mpred_mv_wr_ptr);
@@ -1167,16 +1158,14 @@ static void codec_hevc_set_mpred(struct amvdec_session *sess,
 	codec_hevc_set_mpred_ctrl(core, hevc);
 	codec_hevc_set_mpred_mv(core, hevc, frame, col_frame);
 
-	amvdec_write_dos(core, HEVC_MPRED_PIC_SIZE, hevc->width | (hevc->height << 16));
+	amvdec_write_dos(core, HEVC_MPRED_PIC_SIZE,
+			 hevc->width | (hevc->height << 16));
 
 	val = ((hevc->lcu_x_num - 1) | (hevc->lcu_y_num - 1) << 16);
 	amvdec_write_dos(core, HEVC_MPRED_PIC_SIZE_LCU, val);
-	val = (hevc->tile_start_lcu_x | hevc->tile_start_lcu_y << 16);
-	amvdec_write_dos(core, HEVC_MPRED_TILE_START, val);
-	val = (hevc->tile_width_lcu | hevc->tile_height_lcu << 16);
-	amvdec_write_dos(core, HEVC_MPRED_TILE_SIZE_LCU, val);
 
-	amvdec_write_dos(core, HEVC_MPRED_REF_NUM, (ref_num[1] << 8) | ref_num[0]);
+	amvdec_write_dos(core, HEVC_MPRED_REF_NUM,
+			 (ref_num[1] << 8) | ref_num[0]);
 	amvdec_write_dos(core, HEVC_MPRED_REF_EN_L0, (1 << ref_num[0]) - 1);
 	amvdec_write_dos(core, HEVC_MPRED_REF_EN_L1, (1 << ref_num[1]) - 1);
 
@@ -1184,8 +1173,10 @@ static void codec_hevc_set_mpred(struct amvdec_session *sess,
 	amvdec_write_dos(core, HEVC_MPRED_COL_POC, hevc->col_poc);
 
 	for (i = 0; i < MAX_REF_ACTIVE; ++i) {
-		amvdec_write_dos(core, HEVC_MPRED_L0_REF00_POC + i * 4, ref_poc_l0[i]);
-		amvdec_write_dos(core, HEVC_MPRED_L1_REF00_POC + i * 4, ref_poc_l1[i]);
+		amvdec_write_dos(core, HEVC_MPRED_L0_REF00_POC + i * 4,
+				 ref_poc_l0[i]);
+		amvdec_write_dos(core, HEVC_MPRED_L1_REF00_POC + i * 4,
+				 ref_poc_l1[i]);
 	}
 }
 
@@ -1209,7 +1200,8 @@ static void codec_hevc_set_mcrcc(struct amvdec_session *sess)
 	}
 
 	if (hevc->cur_frame->cur_slice_type == P_SLICE) {
-		amvdec_write_dos(core, HEVCD_MPP_ANC_CANVAS_ACCCONFIG_ADDR, BIT(1));
+		amvdec_write_dos(core, HEVCD_MPP_ANC_CANVAS_ACCCONFIG_ADDR,
+				 BIT(1));
 		val = amvdec_read_dos(core, HEVCD_MPP_ANC_CANVAS_DATA_ADDR);
 		val &= 0xffff;
 		val |= (val << 16);
@@ -1218,7 +1210,8 @@ static void codec_hevc_set_mcrcc(struct amvdec_session *sess)
 		if (l0_cnt == 1) {
 			amvdec_write_dos(core, HEVCD_MCRCC_CTL3, val);
 		} else {
-			val = amvdec_read_dos(core, HEVCD_MPP_ANC_CANVAS_DATA_ADDR);
+			val = amvdec_read_dos(core,
+					      HEVCD_MPP_ANC_CANVAS_DATA_ADDR);
 			val &= 0xffff;
 			val |= (val << 16);
 			amvdec_write_dos(core, HEVCD_MCRCC_CTL3, val);
@@ -1230,12 +1223,14 @@ static void codec_hevc_set_mcrcc(struct amvdec_session *sess)
 		val |= (val << 16);
 		amvdec_write_dos(core, HEVCD_MCRCC_CTL2, val);
 
-		amvdec_write_dos(core, HEVCD_MPP_ANC_CANVAS_ACCCONFIG_ADDR, (16 << 8) | BIT(1));
+		amvdec_write_dos(core, HEVCD_MPP_ANC_CANVAS_ACCCONFIG_ADDR,
+				 BIT(12) | BIT(1));
 		val_2 = amvdec_read_dos(core, HEVCD_MPP_ANC_CANVAS_DATA_ADDR);
 		val_2 &= 0xffff;
 		val_2 |= (val_2 << 16);
 		if (val == val_2 && l1_cnt > 1) {
-			val_2 = amvdec_read_dos(core, HEVCD_MPP_ANC_CANVAS_DATA_ADDR);
+			val_2 = amvdec_read_dos(core,
+						HEVCD_MPP_ANC_CANVAS_DATA_ADDR);
 			val_2 &= 0xffff;
 			val_2 |= (val_2 << 16);
 		}
@@ -1272,10 +1267,10 @@ static void codec_hevc_set_ref_list(struct amvdec_session *sess,
 			buf_id_uv = buf_id_y + 1;
 		}
 
-		writel_relaxed((buf_id_uv << 16) |
-			       (buf_id_uv << 8) |
-			       buf_id_y,
-			       core->dos_base + HEVCD_MPP_ANC_CANVAS_DATA_ADDR);
+		amvdec_write_dos(core, HEVCD_MPP_ANC_CANVAS_DATA_ADDR,
+				 (buf_id_uv << 16) |
+				 (buf_id_uv << 8) |
+				 buf_id_y);
 	}
 }
 
@@ -1293,7 +1288,8 @@ static void codec_hevc_set_mc(struct amvdec_session *sess, struct hevc_frame *fr
 	if (frame->cur_slice_type == P_SLICE)
 		return;
 
-	amvdec_write_dos(core, HEVCD_MPP_ANC_CANVAS_ACCCONFIG_ADDR, (16 << 8) | 1);
+	amvdec_write_dos(core, HEVCD_MPP_ANC_CANVAS_ACCCONFIG_ADDR,
+			 BIT(12) | BIT(0));
 	codec_hevc_set_ref_list(sess, frame->ref_num[1],
 		frame->ref_poc_list[1][frame->cur_slice_idx]);
 }
@@ -1333,7 +1329,8 @@ static void codec_hevc_update_pocs(struct amvdec_session *sess)
 	union rpm_param *param = &hevc->rpm_param;
 	u32 nal_unit_type = param->p.m_nalUnitType;
 	u32 temporal_id = param->p.m_temporalId & 0x7;
-	int max_poc_lsb = 1 << (param->p.log2_max_pic_order_cnt_lsb_minus4 + 4);
+	int max_poc_lsb =
+		1 << (param->p.log2_max_pic_order_cnt_lsb_minus4 + 4);
 	int prev_poc_lsb;
 	int prev_poc_msb;
 	int poc_msb;
@@ -1351,9 +1348,11 @@ static void codec_hevc_update_pocs(struct amvdec_session *sess)
 	prev_poc_lsb = hevc->prev_tid0_poc % max_poc_lsb;
 	prev_poc_msb = hevc->prev_tid0_poc - prev_poc_lsb;
 
-	if ((poc_lsb < prev_poc_lsb) && ((prev_poc_lsb - poc_lsb) >= (max_poc_lsb / 2)))
+	if ((poc_lsb < prev_poc_lsb) &&
+	    ((prev_poc_lsb - poc_lsb) >= (max_poc_lsb / 2)))
 		poc_msb = prev_poc_msb + max_poc_lsb;
-	else if ((poc_lsb > prev_poc_lsb) && ((poc_lsb - prev_poc_lsb) > (max_poc_lsb / 2)))
+	else if ((poc_lsb > prev_poc_lsb) &&
+		 ((poc_lsb - prev_poc_lsb) > (max_poc_lsb / 2)))
 		poc_msb = prev_poc_msb - max_poc_lsb;
 	else
 		poc_msb = prev_poc_msb;
@@ -1400,8 +1399,6 @@ static int codec_hevc_process_segment(struct amvdec_session *sess)
 		hevc->cur_frame = codec_hevc_prepare_new_frame(sess);
 		if (!hevc->cur_frame)
 			return -1;
-
-		codec_hevc_update_tiles(sess);
 	} else {
 		hevc->cur_frame->cur_slice_idx++;
 	}
@@ -1415,7 +1412,8 @@ static int codec_hevc_process_segment(struct amvdec_session *sess)
 	codec_hevc_set_sao(sess, hevc->cur_frame);
 
 	amvdec_write_dos_bits(core, HEVC_WAIT_FLAG, BIT(1));
-	amvdec_write_dos(core, HEVC_DEC_STATUS_REG, HEVC_CODED_SLICE_SEGMENT_DAT);
+	amvdec_write_dos(core, HEVC_DEC_STATUS_REG,
+			 HEVC_CODED_SLICE_SEGMENT_DAT);
 
 	/* Interrupt the firmware's processor */
 	amvdec_write_dos(core, HEVC_MCPU_INTR_REQ, AMRISC_MAIN_REQ);
@@ -1423,10 +1421,8 @@ static int codec_hevc_process_segment(struct amvdec_session *sess)
 	return 0;
 }
 
-static int codec_hevc_process_rpm(struct amvdec_session *sess)
+static void codec_hevc_process_rpm(struct codec_hevc *hevc)
 {
-	struct amvdec_core *core = sess->core;
-	struct codec_hevc *hevc = sess->priv;
 	union rpm_param *rpm_param = &hevc->rpm_param;
 	u32 lcu_x_num_div, lcu_y_num_div;
 
@@ -1436,15 +1432,6 @@ static int codec_hevc_process_rpm(struct amvdec_session *sess)
 	hevc->width = rpm_param->p.pic_width_in_luma_samples;
 	hevc->height = rpm_param->p.pic_height_in_luma_samples;
 
-	/*if (hevc->width  != sess->width ||
-	    hevc->height != sess->height) {
-		dev_err(sess->core->dev_dec,
-			"Size mismatch: bitstream %ux%u ; driver %ux%u\n",
-			hevc->width, hevc->height,
-			sess->width, sess->height);
-		return -EINVAL;
-	}*/
-
 	hevc->lcu_size = 1 << (rpm_param->p.log2_min_coding_block_size_minus3 +
 		3 + rpm_param->p.log2_diff_max_min_coding_block_size);
 
@@ -1453,11 +1440,6 @@ static int codec_hevc_process_rpm(struct amvdec_session *sess)
 	hevc->lcu_x_num = ((hevc->width % hevc->lcu_size) == 0) ? lcu_x_num_div : lcu_x_num_div + 1;
 	hevc->lcu_y_num = ((hevc->height % hevc->lcu_size) == 0) ? lcu_y_num_div : lcu_y_num_div + 1;
 	hevc->lcu_total = hevc->lcu_x_num * hevc->lcu_y_num;
-
-	dev_dbg(core->dev, "lcu_size = %u ; lcu_x_num = %u; lcu_y_num = %u",
-		hevc->lcu_size, hevc->lcu_x_num, hevc->lcu_y_num);
-
-	return 0;
 }
 
 /* The RPM section within the workspace contains
@@ -1478,25 +1460,23 @@ static irqreturn_t codec_hevc_threaded_isr(struct amvdec_session *sess)
 {
 	struct amvdec_core *core = sess->core;
 	struct codec_hevc *hevc;
+	u32 dec_status = amvdec_read_dos(core, HEVC_DEC_STATUS_REG);
 
 	hevc = sess->priv;
 	if (!hevc)
 		return IRQ_HANDLED;
 
 	mutex_lock(&hevc->lock);
-	if (hevc->dec_status != HEVC_SLICE_SEGMENT_DONE) {
+	if (dec_status != HEVC_SLICE_SEGMENT_DONE) {
 		dev_err(core->dev_dec, "Unrecognized dec_status: %08X\n",
-			hevc->dec_status);
+			dec_status);
 		amvdec_abort(sess);
 		goto unlock;
 	}
 
 	sess->keyframe_found = 1;
 	codec_hevc_fetch_rpm(sess);
-	if (codec_hevc_process_rpm(sess)) {
-		amvdec_abort(sess);
-		goto unlock;
-	}
+	codec_hevc_process_rpm(hevc);
 
 	if (!hevc->is_buflist_init) {
 		if (codec_hevc_setup_buffers(sess)) {
@@ -1519,11 +1499,6 @@ unlock:
 
 static irqreturn_t codec_hevc_isr(struct amvdec_session *sess)
 {
-	struct amvdec_core *core = sess->core;
-	struct codec_hevc *hevc = sess->priv;
-
-	hevc->dec_status = amvdec_read_dos(core, HEVC_DEC_STATUS_REG);
-
 	return IRQ_WAKE_THREAD;
 }
 

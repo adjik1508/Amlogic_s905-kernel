@@ -3970,6 +3970,7 @@ int sata_link_scr_lpm(struct ata_link *link, enum ata_lpm_policy policy,
 		scontrol |= (0x6 << 8);
 		break;
 	case ATA_LPM_MED_POWER_WITH_DIPM:
+	case ATA_LPM_MIN_POWER_WITH_PARTIAL:
 	case ATA_LPM_MIN_POWER:
 		if (ata_link_nr_enabled(link) > 0)
 			/* no restrictions on LPM transitions */
@@ -5066,7 +5067,7 @@ static int ata_sg_setup(struct ata_queued_cmd *qc)
 	if (n_elem < 1)
 		return -1;
 
-	DPRINTK("%d sg elements mapped\n", n_elem);
+	VPRINTK("%d sg elements mapped\n", n_elem);
 	qc->orig_n_elem = qc->n_elem;
 	qc->n_elem = n_elem;
 	qc->flags |= ATA_QCFLAG_DMAMAP;
@@ -5358,10 +5359,20 @@ void ata_qc_complete(struct ata_queued_cmd *qc)
  */
 int ata_qc_complete_multiple(struct ata_port *ap, u64 qc_active)
 {
+	u64 done_mask, ap_qc_active = ap->qc_active;
 	int nr_done = 0;
-	u64 done_mask;
 
-	done_mask = ap->qc_active ^ qc_active;
+	/*
+	 * If the internal tag is set on ap->qc_active, then we care about
+	 * bit0 on the passed in qc_active mask. Move that bit up to match
+	 * the internal tag.
+	 */
+	if (ap_qc_active & (1ULL << ATA_TAG_INTERNAL)) {
+		qc_active |= (qc_active & 0x01) << ATA_TAG_INTERNAL;
+		qc_active ^= qc_active & 0x01;
+	}
+
+	done_mask = ap_qc_active ^ qc_active;
 
 	if (unlikely(done_mask & qc_active)) {
 		ata_port_err(ap, "illegal qc_active transition (%08llx->%08llx)\n",

@@ -25,7 +25,6 @@
 #include <linux/timer.h>
 
 struct ath10k;
-struct ath10k_hif_sg_item;
 
 /****************/
 /* HTC protocol */
@@ -77,7 +76,8 @@ struct ath10k_htc_hdr {
 		u8 seq_no; /* for tx */
 		u8 control_byte1;
 	} __packed;
-	__le16 credit_pad; /* used by bundle processing in SDIO systems */
+	u8 pad0;
+	u8 pad1;
 } __packed __aligned(4);
 
 enum ath10k_ath10k_htc_msg_id {
@@ -138,7 +138,8 @@ struct ath10k_htc_ready_extended {
 	struct ath10k_htc_ready base;
 	u8 htc_version; /* @enum ath10k_htc_version */
 	u8 max_msgs_per_htc_bundle;
-	__le16 alt_data_credit_size;
+	u8 pad0;
+	u8 pad1;
 } __packed;
 
 struct ath10k_htc_conn_svc {
@@ -345,7 +346,6 @@ struct ath10k_htc_ep {
 
 	u8 seq_no; /* for debugging */
 	int tx_credits;
-	int tx_credit_size;
 	bool tx_credit_flow_enabled;
 };
 
@@ -370,13 +370,7 @@ struct ath10k_htc {
 
 	int total_transmit_credits;
 	int target_credit_size;
-	int target_alt_data_credit_size;
 	u8 max_msgs_per_htc_bundle;
-
-	struct ath10k_hif_sg_item *sg_items_bundle;
-	size_t n_sg_items_bundle;
-	/* protects sg_items_bundle */
-	spinlock_t sg_items_bundle_lock;
 };
 
 int ath10k_htc_init(struct ath10k *ar);
@@ -387,8 +381,6 @@ int ath10k_htc_connect_service(struct ath10k_htc *htc,
 			       struct ath10k_htc_svc_conn_resp *conn_resp);
 int ath10k_htc_send(struct ath10k_htc *htc, enum ath10k_htc_ep_id eid,
 		    struct sk_buff *packet);
-int ath10k_htc_send_bundle(struct ath10k_htc *htc, enum ath10k_htc_ep_id eid,
-			   struct sk_buff *skb, bool more_data);
 struct sk_buff *ath10k_htc_alloc_skb(struct ath10k *ar, int size);
 void ath10k_htc_tx_completion_handler(struct ath10k *ar, struct sk_buff *skb);
 void ath10k_htc_rx_completion_handler(struct ath10k *ar, struct sk_buff *skb);

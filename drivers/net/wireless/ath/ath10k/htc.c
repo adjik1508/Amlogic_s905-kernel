@@ -53,8 +53,7 @@ static inline void ath10k_htc_restore_tx_skb(struct ath10k_htc *htc,
 {
 	struct ath10k_skb_cb *skb_cb = ATH10K_SKB_CB(skb);
 
-	if (htc->ar->dev_type != ATH10K_DEV_TYPE_HL)
-		dma_unmap_single(htc->ar->dev, skb_cb->paddr, skb->len, DMA_TO_DEVICE);
+	dma_unmap_single(htc->ar->dev, skb_cb->paddr, skb->len, DMA_TO_DEVICE);
 	skb_pull(skb, sizeof(struct ath10k_htc_hdr));
 }
 
@@ -79,33 +78,30 @@ void ath10k_htc_notify_tx_completion(struct ath10k_htc_ep *ep,
 EXPORT_SYMBOL(ath10k_htc_notify_tx_completion);
 
 static void ath10k_htc_prepare_tx_skb(struct ath10k_htc_ep *ep,
-				      struct sk_buff *skb,
-				      enum ath10k_htc_tx_flags flags)
+				      struct sk_buff *skb)
 {
 	struct ath10k_htc_hdr *hdr;
 
 	hdr = (struct ath10k_htc_hdr *)skb->data;
-	memset(hdr, 0, sizeof(struct ath10k_htc_hdr));
 
 	hdr->eid = ep->eid;
 	hdr->len = __cpu_to_le16(skb->len - sizeof(*hdr));
-	hdr->flags = (u8)flags;
-	if (ep->tx_credit_flow_enabled)
-		hdr->flags |= ATH10K_HTC_FLAG_NEED_CREDIT_UPDATE;
+	hdr->flags = 0;
+	hdr->flags |= ATH10K_HTC_FLAG_NEED_CREDIT_UPDATE;
 
 	spin_lock_bh(&ep->htc->tx_lock);
 	hdr->seq_no = ep->seq_no++;
 	spin_unlock_bh(&ep->htc->tx_lock);
 }
 
-static int ath10k_htc_prepare_tx_msg(struct ath10k_htc *htc,
-				     enum ath10k_htc_ep_id eid,
-				     struct sk_buff *skb,
-				     enum ath10k_htc_tx_flags htc_tx_flags)
+int ath10k_htc_send(struct ath10k_htc *htc,
+		    enum ath10k_htc_ep_id eid,
+		    struct sk_buff *skb)
 {
 	struct ath10k *ar = htc->ar;
 	struct ath10k_htc_ep *ep = &htc->endpoint[eid];
 	struct ath10k_skb_cb *skb_cb = ATH10K_SKB_CB(skb);
+	struct ath10k_hif_sg_item sg_item;
 	struct device *dev = htc->ar->dev;
 	int credits = 0;
 	int ret;
@@ -138,51 +134,15 @@ static int ath10k_htc_prepare_tx_msg(struct ath10k_htc *htc,
 		spin_unlock_bh(&htc->tx_lock);
 	}
 
-	ath10k_htc_prepare_tx_skb(ep, skb, htc_tx_flags);
+	ath10k_htc_prepare_tx_skb(ep, skb);
 
 	skb_cb->eid = eid;
-	if (ar->dev_type != ATH10K_DEV_TYPE_HL) {
-		skb_cb->paddr = dma_map_single(dev, skb->data, skb->len,
-					       DMA_TO_DEVICE);
-		ret = dma_mapping_error(dev, skb_cb->paddr);
-		if (ret) {
-			ret = -EIO;
-			goto err_credits;
-		}
+	skb_cb->paddr = dma_map_single(dev, skb->data, skb->len, DMA_TO_DEVICE);
+	ret = dma_mapping_error(dev, skb_cb->paddr);
+	if (ret) {
+		ret = -EIO;
+		goto err_credits;
 	}
-
-	return 0;
-
-err_credits:
-	if (ep->tx_credit_flow_enabled) {
-		spin_lock_bh(&htc->tx_lock);
-		ep->tx_credits += credits;
-		ath10k_dbg(ar, ATH10K_DBG_HTC,
-			   "htc ep %d reverted %d credits back (total %d)\n",
-			   eid, credits, ep->tx_credits);
-		spin_unlock_bh(&htc->tx_lock);
-
-		if (ep->ep_ops.ep_tx_credits)
-			ep->ep_ops.ep_tx_credits(htc->ar);
-	}
-err_pull:
-	skb_pull(skb, sizeof(struct ath10k_htc_hdr));
-	return ret;
-}
-
-int ath10k_htc_send(struct ath10k_htc *htc,
-		    enum ath10k_htc_ep_id eid,
-		    struct sk_buff *skb)
-{
-	struct ath10k_htc_ep *ep = &htc->endpoint[eid];
-	struct ath10k_skb_cb *skb_cb = ATH10K_SKB_CB(skb);
-	struct ath10k_hif_sg_item sg_item;
-	struct device *dev = htc->ar->dev;
-	int ret;
-
-	ret = ath10k_htc_prepare_tx_msg(htc, eid, skb, 0);
-	if (ret)
-		return ret;
 
 	sg_item.transfer_id = ep->eid;
 	sg_item.transfer_context = skb;
@@ -197,59 +157,21 @@ int ath10k_htc_send(struct ath10k_htc *htc,
 	return 0;
 
 err_unmap:
-	if (htc->ar->dev_type != ATH10K_DEV_TYPE_HL)
-		dma_unmap_single(dev, skb_cb->paddr, skb->len, DMA_TO_DEVICE);
+	dma_unmap_single(dev, skb_cb->paddr, skb->len, DMA_TO_DEVICE);
+err_credits:
+	if (ep->tx_credit_flow_enabled) {
+		spin_lock_bh(&htc->tx_lock);
+		ep->tx_credits += credits;
+		ath10k_dbg(ar, ATH10K_DBG_HTC,
+			   "htc ep %d reverted %d credits back (total %d)\n",
+			   eid, credits, ep->tx_credits);
+		spin_unlock_bh(&htc->tx_lock);
 
-	return ret;
-}
-
-int ath10k_htc_send_bundle(struct ath10k_htc *htc,
-			   enum ath10k_htc_ep_id eid,
-			   struct sk_buff *skb,
-			   bool more_data)
-{
-	struct ath10k_htc_ep *ep = &htc->endpoint[eid];
-	struct ath10k_skb_cb *skb_cb = ATH10K_SKB_CB(skb);
-	struct ath10k_hif_sg_item *sg_items;
-	size_t n_sg_items;
-	enum ath10k_htc_tx_flags htc_tx_flags;
-	int ret;
-
-	spin_lock_bh(&htc->sg_items_bundle_lock);
-	n_sg_items = htc->n_sg_items_bundle;
-	if (n_sg_items >= HTC_HOST_MAX_MSG_PER_TX_BUNDLE - 1)
-		more_data = false;
-
-	sg_items = htc->sg_items_bundle;
-
-	if ((!n_sg_items && !more_data) || htc->ar->hif.bus != ATH10K_BUS_SDIO)
-		htc_tx_flags = 0;
-	else
-		htc_tx_flags = ATH10K_HTC_FLAG_SEND_BUNDLE;
-
-	ret = ath10k_htc_prepare_tx_msg(htc, eid, skb, htc_tx_flags);
-	if (ret)
-		goto err;
-
-	sg_items[n_sg_items].transfer_id = ep->eid;
-	sg_items[n_sg_items].transfer_context = skb;
-	sg_items[n_sg_items].vaddr = skb->data;
-	sg_items[n_sg_items].paddr = skb_cb->paddr;
-	sg_items[n_sg_items].len = skb->len;
-	htc->n_sg_items_bundle++;
-
-	if (!more_data) {
-		ret = ath10k_hif_tx_sg(htc->ar, ep->ul_pipe_id,
-				       sg_items, htc->n_sg_items_bundle);
-		htc->n_sg_items_bundle = 0;
-		if (ret)
-			goto err;
+		if (ep->ep_ops.ep_tx_credits)
+			ep->ep_ops.ep_tx_credits(htc->ar);
 	}
-
-	spin_unlock_bh(&htc->sg_items_bundle_lock);
-	return 0;
-err:
-	spin_unlock_bh(&htc->sg_items_bundle_lock);
+err_pull:
+	skb_pull(skb, sizeof(struct ath10k_htc_hdr));
 	return ret;
 }
 
@@ -734,8 +656,6 @@ int ath10k_htc_wait_target(struct ath10k_htc *htc)
 		htc->max_msgs_per_htc_bundle =
 			min_t(u8, msg->ready_ext.max_msgs_per_htc_bundle,
 			      HTC_HOST_MAX_MSG_PER_RX_BUNDLE);
-		htc->target_alt_data_credit_size =
-			__le16_to_cpu(msg->ready_ext.alt_data_credit_size);
 		ath10k_dbg(ar, ATH10K_DBG_HTC,
 			   "Extended ready message. RX bundle size: %d\n",
 			   htc->max_msgs_per_htc_bundle);
@@ -875,10 +795,6 @@ setup:
 	ep->max_tx_queue_depth = conn_req->max_send_queue_depth;
 	ep->max_ep_message_len = __le16_to_cpu(resp_msg->max_msg_size);
 	ep->tx_credits = tx_alloc;
-	if (htc->target_alt_data_credit_size && (ar->hif.bus == ATH10K_BUS_SDIO))
-		ep->tx_credit_size = htc->target_alt_data_credit_size;
-	else
-		ep->tx_credit_size = htc->target_credit_size;
 
 	/* copy all the callbacks */
 	ep->ep_ops = conn_req->ep_ops;
@@ -967,20 +883,10 @@ int ath10k_htc_init(struct ath10k *ar)
 	struct ath10k_htc_svc_conn_resp conn_resp;
 
 	spin_lock_init(&htc->tx_lock);
-	spin_lock_init(&htc->sg_items_bundle_lock);
 
 	ath10k_htc_reset_endpoint_states(htc);
 
 	htc->ar = ar;
-
-	/* Allocate scatter-gather items array for TX bundles. */
-	htc->n_sg_items_bundle = 0;
-	htc->sg_items_bundle = devm_kzalloc(ar->dev,
-					    HTC_HOST_MAX_MSG_PER_TX_BUNDLE *
-					    sizeof(*htc->sg_items_bundle),
-					    GFP_KERNEL);
-	if (!htc->sg_items_bundle)
-		return -ENOMEM;
 
 	/* setup our pseudo HTC control endpoint connection */
 	memset(&conn_req, 0, sizeof(conn_req));
@@ -995,14 +901,10 @@ int ath10k_htc_init(struct ath10k *ar)
 	if (status) {
 		ath10k_err(ar, "could not connect to htc service (%d)\n",
 			   status);
-		goto err_free;
+		return status;
 	}
 
 	init_completion(&htc->ctl_resp);
 
 	return 0;
-
-err_free:
-	kfree(htc->sg_items_bundle);
-	return status;
 }

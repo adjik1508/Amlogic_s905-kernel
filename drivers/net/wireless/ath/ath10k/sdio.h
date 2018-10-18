@@ -48,7 +48,7 @@
 	(ATH10K_SDIO_MAX_BUFFER_SIZE - sizeof(struct ath10k_htc_hdr))
 
 #define ATH10K_HIF_MBOX_NUM_MAX                 4
-#define ATH10K_SDIO_BUS_REQUEST_MAX_NUM         256
+#define ATH10K_SDIO_BUS_REQUEST_MAX_NUM         64
 
 #define ATH10K_SDIO_HIF_COMMUNICATION_TIMEOUT_HZ (100 * HZ)
 
@@ -105,8 +105,6 @@
 #define ATH10K_SDIO_MAX_RX_MSGS \
 	(HTC_HOST_MAX_MSG_PER_RX_BUNDLE * HTC_HOST_MAX_MSG_PER_RX_BUNDLE)
 
-#define ATH10K_SDIO_MAX_BUNDLE_MESSAGE_SIZE \
-	(HTC_HOST_MAX_MSG_PER_TX_BUNDLE * 2000)
 #define ATH10K_FIFO_TIMEOUT_AND_CHIP_CONTROL   0x00000868u
 #define ATH10K_FIFO_TIMEOUT_AND_CHIP_CONTROL_DISABLE_SLEEP_OFF 0xFFFEFFFF
 #define ATH10K_FIFO_TIMEOUT_AND_CHIP_CONTROL_DISABLE_SLEEP_ON 0x10000
@@ -118,8 +116,6 @@ struct ath10k_sdio_bus_request {
 	u32 address;
 
 	struct sk_buff *skb;
-	u8 buf[ATH10K_SDIO_MAX_BUNDLE_MESSAGE_SIZE];
-	size_t buf_len;
 	enum ath10k_htc_ep_id eid;
 	int status;
 	/* Specifies if the current request is an HTC message.
@@ -153,8 +149,8 @@ struct ath10k_sdio_irq_proc_regs {
 	u8 rx_lookahead_valid;
 	u8 host_int_status2;
 	u8 gmbox_rx_avail;
-	__le32 rx_lookahead[2 * ATH10K_HIF_MBOX_NUM_MAX];
-	__le32 int_status_enable;
+	__le32 rx_lookahead[2];
+	__le32 rx_gmbox_lookahead_alias[2];
 };
 
 struct ath10k_sdio_irq_enable_regs {
@@ -210,12 +206,6 @@ struct ath10k_sdio {
 
 	struct ath10k *ar;
 	struct ath10k_sdio_irq_data irq_data;
-
-	u8 *vsg_buffer;
-	u8 *dma_buffer;
-
-	/* protects access to dma_buffer */
-	struct mutex dma_buffer_mutex;
 
 	/* temporary buffer for BMI requests */
 	u8 *bmi_buf;

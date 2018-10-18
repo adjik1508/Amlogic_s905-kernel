@@ -224,7 +224,7 @@ int amvdec_set_canvases(struct amvdec_session *sess,
 }
 EXPORT_SYMBOL_GPL(amvdec_set_canvases);
 
-void amvdec_add_ts_reorder(struct amvdec_session *sess, u64 ts, s32 offset)
+void amvdec_add_ts_reorder(struct amvdec_session *sess, u64 ts, u32 offset)
 {
 	struct amvdec_timestamp *new_ts, *tmp;
 	unsigned long flags;
@@ -251,27 +251,6 @@ unlock:
 	spin_unlock_irqrestore(&sess->ts_spinlock, flags);
 }
 EXPORT_SYMBOL_GPL(amvdec_add_ts_reorder);
-
-static void amvdec_rm_first_ts(struct amvdec_session *sess)
-{
-	unsigned long flags;
-	struct amvdec_buffer *tmp;
-	struct device *dev = sess->core->dev_dec;
-
-	spin_lock_irqsave(&sess->ts_spinlock, flags);
-	if (list_empty(&sess->timestamps)) {
-		dev_err(dev, "Can't rm first timestamp: list empty\n");
-		goto unlock;
-	}
-
-	tmp = list_first_entry(&sess->timestamps, struct amvdec_buffer, list);
-	list_del(&tmp->list);
-	kfree(tmp);
-	atomic_dec(&sess->esparser_queued_bufs);
-
-unlock:
-	spin_unlock_irqrestore(&sess->ts_spinlock, flags);
-}
 
 void amvdec_remove_ts(struct amvdec_session *sess, u64 ts)
 {
@@ -321,9 +300,8 @@ static void dst_buf_done(struct amvdec_session *sess,
 	vbuf->vb2_buf.timestamp = timestamp;
 	vbuf->sequence = sess->sequence_cap++;
 
-	atomic_dec(&sess->esparser_queued_bufs);
-
-	if (sess->should_stop && list_empty(&sess->timestamps)) {
+	if (sess->should_stop &&
+	    atomic_read(&sess->esparser_queued_bufs) <= 2) {
 		const struct v4l2_event ev = { .type = V4L2_EVENT_EOS };
 
 		dev_dbg(dev, "Signaling EOS\n");
@@ -367,28 +345,26 @@ void amvdec_dst_buf_done(struct amvdec_session *sess,
 	spin_unlock_irqrestore(&sess->ts_spinlock, flags);
 
 	dst_buf_done(sess, vbuf, field, timestamp);
+	atomic_dec(&sess->esparser_queued_bufs);
 }
 EXPORT_SYMBOL_GPL(amvdec_dst_buf_done);
 
 static void amvdec_dst_buf_done_offset(struct amvdec_session *sess,
 				       struct vb2_v4l2_buffer *vbuf,
-				       s32 offset,
+				       u32 offset,
 				       u32 field)
 {
 	struct device *dev = sess->core->dev_dec;
 	struct amvdec_timestamp *match = NULL;
 	struct amvdec_timestamp *tmp, *n;
-	u64 timestamp;
+	u64 timestamp = 0;
 	unsigned long flags;
-
-	/* codec offsets do not wrap around the vififo size */
-	offset %= sess->vififo_size;
 
 	spin_lock_irqsave(&sess->ts_spinlock, flags);
 
 	/* Look for our vififo offset to get the corresponding timestamp. */
 	list_for_each_entry_safe(tmp, n, &sess->timestamps, list) {
-		s32 delta = offset - tmp->offset;
+		s64 delta = (s64)offset - tmp->offset;
 
 		/* Offsets reported by codecs usually differ slightly,
 		 * so we need some wiggle room.
@@ -401,10 +377,8 @@ static void amvdec_dst_buf_done_offset(struct amvdec_session *sess,
 
 		/* Delete any timestamp entry that appears before our target
 		 * (not all src packets/timestamps lead to a frame)
-		 * Also handle the special case where the vififo wraps around,
-		 * leading to a big negative value
 		 */
-		if (delta > 0 || delta < -1 * ((s32)sess->vififo_size / 2)) {
+		if (delta > 0 || delta < -1 * (s32)sess->vififo_size) {
 			atomic_dec(&sess->esparser_queued_bufs);
 			list_del(&tmp->list);
 			kfree(tmp);
@@ -412,24 +386,22 @@ static void amvdec_dst_buf_done_offset(struct amvdec_session *sess,
 	}
 
 	if (!match) {
-		dev_err(dev, "Buffer %u done but can't match offset (%08X)\n",
+		dev_dbg(dev, "Buffer %u done but can't match offset (%08X)\n",
 			vbuf->vb2_buf.index, offset);
-
-		v4l2_m2m_buf_done(vbuf, VB2_BUF_STATE_ERROR);
-		spin_unlock_irqrestore(&sess->ts_spinlock, flags);
-		return;
+	} else {
+		timestamp = match->ts;
+		list_del(&match->list);
+		kfree(match);
 	}
-
-	timestamp = match->ts;
-	list_del(&match->list);
-	kfree(match);
 	spin_unlock_irqrestore(&sess->ts_spinlock, flags);
 
 	dst_buf_done(sess, vbuf, field, timestamp);
+	if (match)
+		atomic_dec(&sess->esparser_queued_bufs);
 }
 
 void amvdec_dst_buf_done_idx(struct amvdec_session *sess,
-			     u32 buf_idx, s32 offset, u32 field)
+			     u32 buf_idx, u32 offset, u32 field)
 {
 	struct vb2_v4l2_buffer *vbuf;
 	struct device *dev = sess->core->dev_dec;
@@ -439,11 +411,10 @@ void amvdec_dst_buf_done_idx(struct amvdec_session *sess,
 		dev_err(dev,
 			"Buffer %u done but it doesn't exist in m2m_ctx\n",
 			buf_idx);
-		amvdec_rm_first_ts(sess);
 		return;
 	}
 
-	if (offset >= 0)
+	if (offset != -1)
 		amvdec_dst_buf_done_offset(sess, vbuf, offset, field);
 	else
 		amvdec_dst_buf_done(sess, vbuf, field);

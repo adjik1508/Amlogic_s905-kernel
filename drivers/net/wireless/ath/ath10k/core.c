@@ -41,10 +41,8 @@ static bool uart_print;
 static bool skip_otp;
 static bool rawmode;
 
-/* Enable ATH10K_FW_CRASH_DUMP_REGISTERS and ATH10K_FW_CRASH_DUMP_CE_DATA
- * by default.
- */
-unsigned long ath10k_coredump_mask = 0x3;
+unsigned long ath10k_coredump_mask = BIT(ATH10K_FW_CRASH_DUMP_REGISTERS) |
+				     BIT(ATH10K_FW_CRASH_DUMP_CE_DATA);
 
 /* FIXME: most of these should be readonly */
 module_param_named(debug_mask, ath10k_debug_mask, uint, 0644);
@@ -65,7 +63,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 	{
 		.id = QCA988X_HW_2_0_VERSION,
 		.dev_id = QCA988X_2_0_DEVICE_ID,
-		.bus = ATH10K_BUS_PCI,
 		.name = "qca988x hw2.0",
 		.patch_load_addr = QCA988X_HW_2_0_PATCH_LOAD_ADDR,
 		.uart_pin = 7,
@@ -83,6 +80,7 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.hw_ops = &qca988x_ops,
 		.decap_align_bytes = 4,
 		.spectral_bin_discard = 0,
+		.spectral_bin_offset = 0,
 		.vht160_mcs_rx_highest = 0,
 		.vht160_mcs_tx_highest = 0,
 		.n_cipher_suites = 8,
@@ -114,6 +112,7 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.hw_ops = &qca988x_ops,
 		.decap_align_bytes = 4,
 		.spectral_bin_discard = 0,
+		.spectral_bin_offset = 0,
 		.vht160_mcs_rx_highest = 0,
 		.vht160_mcs_tx_highest = 0,
 		.n_cipher_suites = 8,
@@ -129,7 +128,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 	{
 		.id = QCA9887_HW_1_0_VERSION,
 		.dev_id = QCA9887_1_0_DEVICE_ID,
-		.bus = ATH10K_BUS_PCI,
 		.name = "qca9887 hw1.0",
 		.patch_load_addr = QCA9887_HW_1_0_PATCH_LOAD_ADDR,
 		.uart_pin = 7,
@@ -147,6 +145,7 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.hw_ops = &qca988x_ops,
 		.decap_align_bytes = 4,
 		.spectral_bin_discard = 0,
+		.spectral_bin_offset = 0,
 		.vht160_mcs_rx_highest = 0,
 		.vht160_mcs_tx_highest = 0,
 		.n_cipher_suites = 8,
@@ -162,7 +161,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 	{
 		.id = QCA6174_HW_2_1_VERSION,
 		.dev_id = QCA6164_2_1_DEVICE_ID,
-		.bus = ATH10K_BUS_PCI,
 		.name = "qca6164 hw2.1",
 		.patch_load_addr = QCA6174_HW_2_1_PATCH_LOAD_ADDR,
 		.uart_pin = 6,
@@ -179,6 +177,7 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.hw_ops = &qca988x_ops,
 		.decap_align_bytes = 4,
 		.spectral_bin_discard = 0,
+		.spectral_bin_offset = 0,
 		.vht160_mcs_rx_highest = 0,
 		.vht160_mcs_tx_highest = 0,
 		.n_cipher_suites = 8,
@@ -194,7 +193,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 	{
 		.id = QCA6174_HW_2_1_VERSION,
 		.dev_id = QCA6174_2_1_DEVICE_ID,
-		.bus = ATH10K_BUS_PCI,
 		.name = "qca6174 hw2.1",
 		.patch_load_addr = QCA6174_HW_2_1_PATCH_LOAD_ADDR,
 		.uart_pin = 6,
@@ -211,6 +209,7 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.hw_ops = &qca988x_ops,
 		.decap_align_bytes = 4,
 		.spectral_bin_discard = 0,
+		.spectral_bin_offset = 0,
 		.vht160_mcs_rx_highest = 0,
 		.vht160_mcs_tx_highest = 0,
 		.n_cipher_suites = 8,
@@ -226,7 +225,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 	{
 		.id = QCA6174_HW_3_0_VERSION,
 		.dev_id = QCA6174_2_1_DEVICE_ID,
-		.bus = ATH10K_BUS_PCI,
 		.name = "qca6174 hw3.0",
 		.patch_load_addr = QCA6174_HW_3_0_PATCH_LOAD_ADDR,
 		.uart_pin = 6,
@@ -243,6 +241,7 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.hw_ops = &qca988x_ops,
 		.decap_align_bytes = 4,
 		.spectral_bin_discard = 0,
+		.spectral_bin_offset = 0,
 		.vht160_mcs_rx_highest = 0,
 		.vht160_mcs_tx_highest = 0,
 		.n_cipher_suites = 8,
@@ -258,7 +257,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 	{
 		.id = QCA6174_HW_3_2_VERSION,
 		.dev_id = QCA6174_2_1_DEVICE_ID,
-		.bus = ATH10K_BUS_PCI,
 		.name = "qca6174 hw3.2",
 		.patch_load_addr = QCA6174_HW_3_0_PATCH_LOAD_ADDR,
 		.uart_pin = 6,
@@ -278,6 +276,7 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.target_cpu_freq = 176000000,
 		.decap_align_bytes = 4,
 		.spectral_bin_discard = 0,
+		.spectral_bin_offset = 0,
 		.vht160_mcs_rx_highest = 0,
 		.vht160_mcs_tx_highest = 0,
 		.n_cipher_suites = 8,
@@ -293,7 +292,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 	{
 		.id = QCA99X0_HW_2_0_DEV_VERSION,
 		.dev_id = QCA99X0_2_0_DEVICE_ID,
-		.bus = ATH10K_BUS_PCI,
 		.name = "qca99x0 hw2.0",
 		.patch_load_addr = QCA99X0_HW_2_0_PATCH_LOAD_ADDR,
 		.uart_pin = 7,
@@ -316,6 +314,7 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.hw_ops = &qca99x0_ops,
 		.decap_align_bytes = 1,
 		.spectral_bin_discard = 4,
+		.spectral_bin_offset = 0,
 		.vht160_mcs_rx_highest = 0,
 		.vht160_mcs_tx_highest = 0,
 		.n_cipher_suites = 11,
@@ -331,7 +330,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 	{
 		.id = QCA9984_HW_1_0_DEV_VERSION,
 		.dev_id = QCA9984_1_0_DEVICE_ID,
-		.bus = ATH10K_BUS_PCI,
 		.name = "qca9984/qca9994 hw1.0",
 		.patch_load_addr = QCA9984_HW_1_0_PATCH_LOAD_ADDR,
 		.uart_pin = 7,
@@ -355,6 +353,7 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.hw_ops = &qca99x0_ops,
 		.decap_align_bytes = 1,
 		.spectral_bin_discard = 12,
+		.spectral_bin_offset = 8,
 
 		/* Can do only 2x2 VHT160 or 80+80. 1560Mbps is 4x4 80Mhz
 		 * or 2x2 160Mhz, long-guard-interval.
@@ -374,7 +373,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 	{
 		.id = QCA9888_HW_2_0_DEV_VERSION,
 		.dev_id = QCA9888_2_0_DEVICE_ID,
-		.bus = ATH10K_BUS_PCI,
 		.name = "qca9888 hw2.0",
 		.patch_load_addr = QCA9888_HW_2_0_PATCH_LOAD_ADDR,
 		.uart_pin = 7,
@@ -397,6 +395,7 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.hw_ops = &qca99x0_ops,
 		.decap_align_bytes = 1,
 		.spectral_bin_discard = 12,
+		.spectral_bin_offset = 8,
 
 		/* Can do only 1x1 VHT160 or 80+80. 780Mbps is 2x2 80Mhz or
 		 * 1x1 160Mhz, long-guard-interval.
@@ -416,7 +415,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 	{
 		.id = QCA9377_HW_1_0_DEV_VERSION,
 		.dev_id = QCA9377_1_0_DEVICE_ID,
-		.bus = ATH10K_BUS_PCI,
 		.name = "qca9377 hw1.0",
 		.patch_load_addr = QCA9377_HW_1_0_PATCH_LOAD_ADDR,
 		.uart_pin = 6,
@@ -433,6 +431,7 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.hw_ops = &qca988x_ops,
 		.decap_align_bytes = 4,
 		.spectral_bin_discard = 0,
+		.spectral_bin_offset = 0,
 		.vht160_mcs_rx_highest = 0,
 		.vht160_mcs_tx_highest = 0,
 		.n_cipher_suites = 8,
@@ -448,7 +447,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 	{
 		.id = QCA9377_HW_1_1_DEV_VERSION,
 		.dev_id = QCA9377_1_0_DEVICE_ID,
-		.bus = ATH10K_BUS_PCI,
 		.name = "qca9377 hw1.1",
 		.patch_load_addr = QCA9377_HW_1_0_PATCH_LOAD_ADDR,
 		.uart_pin = 6,
@@ -467,6 +465,7 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.target_cpu_freq = 176000000,
 		.decap_align_bytes = 4,
 		.spectral_bin_discard = 0,
+		.spectral_bin_offset = 0,
 		.vht160_mcs_rx_highest = 0,
 		.vht160_mcs_tx_highest = 0,
 		.n_cipher_suites = 8,
@@ -480,80 +479,8 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.rri_on_ddr = false,
 	},
 	{
-		.id = QCA9377_HW_1_1_DEV_VERSION,
-		.dev_id = QCA9377_1_0_DEVICE_ID,
-		.bus = ATH10K_BUS_USB,
-		.name = "qca9377 hw1.1 usb",
-		.patch_load_addr = QCA9377_HW_1_0_PATCH_LOAD_ADDR,
-		.uart_pin = 6,
-		.otp_exe_param = 0,
-		.channel_counters_freq_hz = 88000,
-		.max_probe_resp_desc_thres = 0,
-		.cal_data_len = 8124,
-		.fw = {
-			.dir = QCA9377_HW_1_0_FW_DIR,
-			.board = QCA9377_HW_1_0_BOARD_DATA_FILE_USB,
-			.board_size = QCA9377_BOARD_DATA_SZ,
-			.board_ext_size = QCA9377_BOARD_EXT_DATA_SZ,
-		},
-		.hw_ops = &qca988x_ops,
-		.decap_align_bytes = 4,
-		.num_peers = TARGET_QCA9377_HL_NUM_PEERS,
-		.ast_skid_limit = 0x10,
-		.num_wds_entries = 0x20,
-	},
-	{
-		.id = QCA9377_HW_1_1_DEV_VERSION,
-		.dev_id = SPARKLAN_WPEQ_160N_DEVICE_ID,
-		.bus = ATH10K_BUS_USB,
-		.name = "qca9377 hw1.1 SparkLAN WPEQ-160ACN",
-		.patch_load_addr = QCA9377_HW_1_0_PATCH_LOAD_ADDR,
-		.uart_pin = 6,
-		.otp_exe_param = 0,
-		.channel_counters_freq_hz = 88000,
-		.max_probe_resp_desc_thres = 0,
-		.cal_data_len = 8124,
-		.fw = {
-			.dir = QCA9377_HW_1_0_FW_DIR,
-			.board = QCA9377_HW_1_0_BOARD_DATA_FILE_USB,
-			.board_size = QCA9377_BOARD_DATA_SZ,
-			.board_ext_size = QCA9377_BOARD_EXT_DATA_SZ,
-		},
-		.hw_ops = &qca988x_ops,
-		.decap_align_bytes = 4,
-		.num_peers = TARGET_QCA9377_HL_NUM_PEERS,
-		.ast_skid_limit = 0x10,
-		.num_wds_entries = 0x20,
-	},
-	{
-		.id = QCA9377_HW_1_1_DEV_VERSION,
-		.dev_id = QCA9377_1_0_DEVICE_ID,
-		.bus = ATH10K_BUS_SDIO,
-		.name = "qca9377 hw1.1 sdio",
-		.patch_load_addr = QCA9377_HW_1_0_PATCH_LOAD_ADDR,
-		.uart_pin = 19,
-		.otp_exe_param = 0,
-		.channel_counters_freq_hz = 88000,
-		.max_probe_resp_desc_thres = 0,
-		.cal_data_len = 8124,
-		.fw = {
-			.dir = QCA9377_HW_1_0_FW_DIR,
-			.board = QCA9377_HW_1_0_BOARD_DATA_FILE_SDIO,
-			.board_size = QCA9377_BOARD_DATA_SZ,
-			.board_ext_size = QCA9377_BOARD_EXT_DATA_SZ,
-		},
-		.hw_ops = &qca6174_ops,
-		.hw_clk = qca6174_clk,
-		.target_cpu_freq = 176000000,
-		.decap_align_bytes = 4,
-		.num_peers = TARGET_QCA9377_HL_NUM_PEERS,
-		.ast_skid_limit = 0x10,
-		.num_wds_entries = 0x20,
-	},
-	{
 		.id = QCA4019_HW_1_0_DEV_VERSION,
 		.dev_id = 0,
-		.bus = ATH10K_BUS_AHB,
 		.name = "qca4019 hw1.0",
 		.patch_load_addr = QCA4019_HW_1_0_PATCH_LOAD_ADDR,
 		.uart_pin = 7,
@@ -577,6 +504,7 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 		.hw_ops = &qca99x0_ops,
 		.decap_align_bytes = 1,
 		.spectral_bin_discard = 4,
+		.spectral_bin_offset = 0,
 		.vht160_mcs_rx_highest = 0,
 		.vht160_mcs_tx_highest = 0,
 		.n_cipher_suites = 11,
@@ -592,7 +520,6 @@ static const struct ath10k_hw_params ath10k_hw_params_list[] = {
 	{
 		.id = WCN3990_HW_1_0_DEV_VERSION,
 		.dev_id = 0,
-		.bus = ATH10K_BUS_PCI,
 		.name = "wcn3990 hw1.0",
 		.continuous_frag_desc = true,
 		.tx_chain_mask = 0x7,
@@ -688,26 +615,11 @@ static void ath10k_init_sdio(struct ath10k *ar)
 	ath10k_bmi_write32(ar, hi_mbox_isr_yield_limit, 99);
 	ath10k_bmi_read32(ar, hi_acs_flags, &param);
 
-	/* Data transfer is not initiated, when reduced Tx completion
-	 * is used for SDIO. disable it until fixed
-	 */
-	param &= ~HI_ACS_FLAGS_SDIO_REDUCE_TX_COMPL_SET;
+	param |= (HI_ACS_FLAGS_SDIO_SWAP_MAILBOX_SET |
+		  HI_ACS_FLAGS_SDIO_REDUCE_TX_COMPL_SET |
+		  HI_ACS_FLAGS_ALT_DATA_CREDIT_SIZE);
 
-	/* Alternate credit size of 1544 as used by SDIO firmware is
-	 * not big enough for mac80211 / native wifi frames.
-	 * When using native wifi to 802.3 it will work.
-	 */
-	param |= HI_ACS_FLAGS_ALT_DATA_CREDIT_SIZE;
-
-	param |= HI_ACS_FLAGS_SDIO_SWAP_MAILBOX_SET;
 	ath10k_bmi_write32(ar, hi_acs_flags, param);
-
-	/* Explicitly set fwlog prints to zero as target may turn it on
-	 * based on scratch registers.
-	 */
-	ath10k_bmi_read32(ar, hi_option_flag, &param);
-	param |= HI_OPTION_DISABLE_DBGLOG;
-	ath10k_bmi_write32(ar, hi_option_flag, param);
 }
 
 static int ath10k_init_configure_target(struct ath10k *ar)
@@ -1936,15 +1848,8 @@ static int ath10k_init_uart(struct ath10k *ar)
 		return ret;
 	}
 
-	if (!uart_print) {
-		/* Hack: override dbg TX pin to avoid side effects of default
-		 * GPIO_6 in QCA9377 WB396 reference card
-		 */
-		if (ar->hif.bus == ATH10K_BUS_SDIO)
-			ath10k_bmi_write32(ar, hi_dbg_uart_txpin,
-					   ar->hw_params.uart_pin);
+	if (!uart_print)
 		return 0;
-	}
 
 	ret = ath10k_bmi_write32(ar, hi_dbg_uart_txpin, ar->hw_params.uart_pin);
 	if (ret) {
@@ -1977,8 +1882,7 @@ static int ath10k_init_hw_params(struct ath10k *ar)
 	for (i = 0; i < ARRAY_SIZE(ath10k_hw_params_list); i++) {
 		hw_params = &ath10k_hw_params_list[i];
 
-		if (hw_params->bus == ar->hif.bus &&
-		    hw_params->id == ar->target_version &&
+		if (hw_params->id == ar->target_version &&
 		    hw_params->dev_id == ar->dev_id)
 			break;
 	}
@@ -2079,7 +1983,6 @@ static void ath10k_core_set_coverage_class_work(struct work_struct *work)
 static int ath10k_core_init_firmware_features(struct ath10k *ar)
 {
 	struct ath10k_fw_file *fw_file = &ar->normal_mode_fw.fw_file;
-	int max_num_peers;
 
 	if (test_bit(ATH10K_FW_FEATURE_WMI_10_2, fw_file->fw_features) &&
 	    !test_bit(ATH10K_FW_FEATURE_WMI_10X, fw_file->fw_features)) {
@@ -2159,7 +2062,7 @@ static int ath10k_core_init_firmware_features(struct ath10k *ar)
 
 	switch (fw_file->wmi_op_version) {
 	case ATH10K_FW_WMI_OP_VERSION_MAIN:
-		max_num_peers = TARGET_NUM_PEERS;
+		ar->max_num_peers = TARGET_NUM_PEERS;
 		ar->max_num_stations = TARGET_NUM_STATIONS;
 		ar->max_num_vdevs = TARGET_NUM_VDEVS;
 		ar->htt.max_num_pending_tx = TARGET_NUM_MSDU_DESC;
@@ -2171,10 +2074,10 @@ static int ath10k_core_init_firmware_features(struct ath10k *ar)
 	case ATH10K_FW_WMI_OP_VERSION_10_2:
 	case ATH10K_FW_WMI_OP_VERSION_10_2_4:
 		if (ath10k_peer_stats_enabled(ar)) {
-			max_num_peers = TARGET_10X_TX_STATS_NUM_PEERS;
+			ar->max_num_peers = TARGET_10X_TX_STATS_NUM_PEERS;
 			ar->max_num_stations = TARGET_10X_TX_STATS_NUM_STATIONS;
 		} else {
-			max_num_peers = TARGET_10X_NUM_PEERS;
+			ar->max_num_peers = TARGET_10X_NUM_PEERS;
 			ar->max_num_stations = TARGET_10X_NUM_STATIONS;
 		}
 		ar->max_num_vdevs = TARGET_10X_NUM_VDEVS;
@@ -2183,22 +2086,19 @@ static int ath10k_core_init_firmware_features(struct ath10k *ar)
 		ar->max_spatial_stream = WMI_MAX_SPATIAL_STREAM;
 		break;
 	case ATH10K_FW_WMI_OP_VERSION_TLV:
-		max_num_peers = TARGET_TLV_NUM_PEERS;
+		ar->max_num_peers = TARGET_TLV_NUM_PEERS;
 		ar->max_num_stations = TARGET_TLV_NUM_STATIONS;
 		ar->max_num_vdevs = TARGET_TLV_NUM_VDEVS;
 		ar->max_num_tdls_vdevs = TARGET_TLV_NUM_TDLS_VDEVS;
-		if (ar->hif.bus == ATH10K_BUS_SDIO)
-			ar->htt.max_num_pending_tx =
-				TARGET_TLV_NUM_MSDU_DESC_HL;
-		else
-			ar->htt.max_num_pending_tx = TARGET_TLV_NUM_MSDU_DESC;
+		ar->htt.max_num_pending_tx = TARGET_TLV_NUM_MSDU_DESC;
 		ar->wow.max_num_patterns = TARGET_TLV_NUM_WOW_PATTERNS;
 		ar->fw_stats_req_mask = WMI_STAT_PDEV | WMI_STAT_VDEV |
 			WMI_STAT_PEER;
 		ar->max_spatial_stream = WMI_MAX_SPATIAL_STREAM;
+		ar->wmi.mgmt_max_num_pending_tx = TARGET_TLV_MGMT_NUM_MSDU_DESC;
 		break;
 	case ATH10K_FW_WMI_OP_VERSION_10_4:
-		max_num_peers = TARGET_10_4_NUM_PEERS;
+		ar->max_num_peers = TARGET_10_4_NUM_PEERS;
 		ar->max_num_stations = TARGET_10_4_NUM_STATIONS;
 		ar->num_active_peers = TARGET_10_4_ACTIVE_PEERS;
 		ar->max_num_vdevs = TARGET_10_4_NUM_VDEVS;
@@ -2217,19 +2117,9 @@ static int ath10k_core_init_firmware_features(struct ath10k *ar)
 		break;
 	case ATH10K_FW_WMI_OP_VERSION_UNSET:
 	case ATH10K_FW_WMI_OP_VERSION_MAX:
-	default:
 		WARN_ON(1);
 		return -EINVAL;
 	}
-
-	ar->htt.num_pending_tx_lock = ar->htt.max_num_pending_tx +
-		HTC_HOST_MAX_MSG_PER_TX_BUNDLE;
-	ar->htt.num_pending_tx_unlock = ar->htt.max_num_pending_tx / 2;
-
-	if (ar->hw_params.num_peers)
-		ar->max_num_peers = ar->hw_params.num_peers;
-	else
-		ar->max_num_peers = max_num_peers;
 
 	/* Backwards compatibility for firmwares without
 	 * ATH10K_FW_IE_HTT_OP_VERSION.
@@ -2824,11 +2714,9 @@ err:
 	return;
 }
 
-int ath10k_core_register(struct ath10k *ar,
-			 const struct ath10k_bus_params *bus_params)
+int ath10k_core_register(struct ath10k *ar, u32 chip_id)
 {
-	ar->chip_id = bus_params->chip_id;
-	ar->dev_type = bus_params->dev_type;
+	ar->chip_id = chip_id;
 	queue_work(ar->workqueue, &ar->register_work);
 
 	return 0;
