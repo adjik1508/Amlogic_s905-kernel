@@ -522,6 +522,7 @@ static struct clk_regmap gxbb_fclk_div3 = {
 		.ops = &clk_regmap_gate_ops,
 		.parent_names = (const char *[]){ "fclk_div3_div" },
 		.num_parents = 1,
++               .flags = CLK_IS_CRITICAL,
 	},
 };
 
