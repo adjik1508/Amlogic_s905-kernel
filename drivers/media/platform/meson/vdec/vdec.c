@@ -21,6 +21,7 @@
 #include "vdec.h"
 #include "esparser.h"
 #include "vdec_helpers.h"
+#include "vdec_ctrls.h"
 
 struct dummy_buf {
 	struct vb2_v4l2_buffer vb;
@@ -237,7 +238,8 @@ static int vdec_queue_setup(struct vb2_queue *q,
 		 * are free to choose any of them to write frames to. As such,
 		 * we need all of them to be queued into the driver
 		 */
-		q->min_buffers_needed = q->num_buffers + *num_buffers;
+		sess->num_dst_bufs = q->num_buffers + *num_buffers;
+		q->min_buffers_needed = sess->num_dst_bufs;
 		break;
 	default:
 		return -EINVAL;
@@ -267,6 +269,7 @@ static void vdec_vb2_buf_queue(struct vb2_buffer *vb)
 static int vdec_start_streaming(struct vb2_queue *q, unsigned int count)
 {
 	struct amvdec_session *sess = vb2_get_drv_priv(q);
+	struct amvdec_codec_ops *codec_ops = sess->fmt_out->codec_ops;
 	struct amvdec_core *core = sess->core;
 	struct vb2_v4l2_buffer *buf;
 	int ret;
@@ -284,6 +287,13 @@ static int vdec_start_streaming(struct vb2_queue *q, unsigned int count)
 	if (!sess->streamon_out || !sess->streamon_cap)
 		return 0;
 
+	if (sess->status == STATUS_NEEDS_RESUME &&
+	    q->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
+		codec_ops->resume(sess);
+		sess->status = STATUS_RUNNING;
+		return 0;
+	}
+
 	sess->vififo_size = SIZE_VIFIFO;
 	sess->vififo_vaddr =
 		dma_alloc_coherent(sess->core->dev, sess->vififo_size,
@@ -298,6 +308,7 @@ static int vdec_start_streaming(struct vb2_queue *q, unsigned int count)
 	sess->keyframe_found = 0;
 	sess->last_offset = 0;
 	sess->wrap_count = 0;
+	sess->dpb_size = 0;
 	sess->pixelaspect.numerator = 1;
 	sess->pixelaspect.denominator = 1;
 	atomic_set(&sess->esparser_queued_bufs, 0);
@@ -311,6 +322,7 @@ static int vdec_start_streaming(struct vb2_queue *q, unsigned int count)
 		sess->recycle_thread = kthread_run(vdec_recycle_thread, sess,
 						   "vdec_recycle");
 
+	sess->status = STATUS_RUNNING;
 	core->cur_sess = sess;
 
 	return 0;
@@ -368,7 +380,9 @@ static void vdec_stop_streaming(struct vb2_queue *q)
 	struct amvdec_core *core = sess->core;
 	struct vb2_v4l2_buffer *buf;
 
-	if (sess->streamon_out && sess->streamon_cap) {
+	if (sess->status == STATUS_RUNNING ||
+	    (sess->status == STATUS_NEEDS_RESUME &&
+	     (!sess->streamon_out || !sess->streamon_cap))) {
 		if (vdec_codec_needs_recycle(sess))
 			kthread_stop(sess->recycle_thread);
 
@@ -381,6 +395,7 @@ static void vdec_stop_streaming(struct vb2_queue *q)
 		kfree(sess->priv);
 		sess->priv = NULL;
 		core->cur_sess = NULL;
+		sess->status = STATUS_STOPPED;
 	}
 
 	if (q->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
@@ -621,6 +636,7 @@ static int vdec_enum_fmt(struct file *file, void *fh, struct v4l2_fmtdesc *f)
 
 		fmt_out = &platform->formats[f->index];
 		f->pixelformat = fmt_out->pixfmt;
+		f->flags = fmt_out->flags;
 	} else if (f->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
 		fmt_out = sess->fmt_out;
 		if (f->index >= 4 || !fmt_out->pixfmts_cap[f->index])
@@ -713,6 +729,8 @@ static int vdec_subscribe_event(struct v4l2_fh *fh,
 	switch (sub->type) {
 	case V4L2_EVENT_EOS:
 		return v4l2_event_subscribe(fh, sub, 2, NULL);
+	case V4L2_EVENT_SOURCE_CHANGE:
+		return v4l2_src_change_event_subscribe(fh, sub);
 	default:
 		return -EINVAL;
 	}
@@ -743,7 +761,6 @@ static const struct v4l2_ioctl_ops vdec_ioctl_ops = {
 	.vidioc_try_fmt_vid_out_mplane = vdec_try_fmt,
 	.vidioc_reqbufs = v4l2_m2m_ioctl_reqbufs,
 	.vidioc_querybuf = v4l2_m2m_ioctl_querybuf,
-	.vidioc_create_bufs = v4l2_m2m_ioctl_create_bufs,
 	.vidioc_prepare_buf = v4l2_m2m_ioctl_prepare_buf,
 	.vidioc_qbuf = v4l2_m2m_ioctl_qbuf,
 	.vidioc_expbuf = v4l2_m2m_ioctl_expbuf,
@@ -825,6 +842,10 @@ static int vdec_open(struct file *file)
 		goto err_m2m_release;
 	}
 
+	ret = amvdec_init_ctrls(&sess->ctrl_handler);
+	if (ret)
+		goto err_m2m_release;
+
 	sess->pixfmt_cap = formats[0].pixfmts_cap[0];
 	sess->fmt_out = &formats[0];
 	sess->width = 1280;
@@ -840,6 +861,7 @@ static int vdec_open(struct file *file)
 	spin_lock_init(&sess->ts_spinlock);
 
 	v4l2_fh_init(&sess->fh, core->vdev_dec);
+	sess->fh.ctrl_handler = &sess->ctrl_handler;
 	v4l2_fh_add(&sess->fh);
 	sess->fh.m2m_ctx = sess->m2m_ctx;
 	file->private_data = &sess->fh;

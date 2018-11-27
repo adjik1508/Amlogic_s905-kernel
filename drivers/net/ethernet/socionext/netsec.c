@@ -735,8 +735,11 @@ static int netsec_process_rx(struct netsec_priv *priv, int budget)
 		u16 idx = dring->tail;
 		struct netsec_de *de = dring->vaddr + (DESC_SZ * idx);
 
-		if (de->attr & (1U << NETSEC_RX_PKT_OWN_FIELD))
+		if (de->attr & (1U << NETSEC_RX_PKT_OWN_FIELD)) {
+			/* reading the register clears the irq */
+			netsec_read(priv, NETSEC_REG_NRM_RX_PKTCNT);
 			break;
+		}
 
 		/* This  barrier is needed to keep us from reading
 		 * any other fields out of the netsec_de until we have
@@ -937,6 +940,9 @@ static void netsec_uninit_pkt_dring(struct netsec_priv *priv, int id)
 	dring->head = 0;
 	dring->tail = 0;
 	dring->pkt_cnt = 0;
+
+	if (id == NETSEC_RING_TX)
+		netdev_reset_queue(priv->ndev);
 }
 
 static void netsec_free_dring(struct netsec_priv *priv, int id)

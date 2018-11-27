@@ -1572,8 +1572,12 @@ static int vmx_hv_remote_flush_tlb(struct kvm *kvm)
 		goto out;
 	}
 
+	/*
+	 * FLUSH_GUEST_PHYSICAL_ADDRESS_SPACE hypercall needs the address of the
+	 * base of EPT PML4 table, strip off EPT configuration information.
+	 */
 	ret = hyperv_flush_guest_mapping(
-			to_vmx(kvm_get_vcpu(kvm, 0))->ept_pointer);
+			to_vmx(kvm_get_vcpu(kvm, 0))->ept_pointer & PAGE_MASK);
 
 out:
 	spin_unlock(&to_kvm_vmx(kvm)->ept_pointer_lock);
@@ -3290,10 +3294,13 @@ static int nested_vmx_check_exception(struct kvm_vcpu *vcpu, unsigned long *exit
 		}
 	} else {
 		if (vmcs12->exception_bitmap & (1u << nr)) {
-			if (nr == DB_VECTOR)
+			if (nr == DB_VECTOR) {
 				*exit_qual = vcpu->arch.dr6;
-			else
+				*exit_qual &= ~(DR6_FIXED_1 | DR6_BT);
+				*exit_qual ^= DR6_RTM;
+			} else {
 				*exit_qual = 0;
+			}
 			return 1;
 		}
 	}
@@ -14006,13 +14013,6 @@ static int vmx_set_nested_state(struct kvm_vcpu *vcpu,
 	if (!page_address_valid(vcpu, kvm_state->vmx.vmxon_pa))
 		return -EINVAL;
 
-	if (kvm_state->size < sizeof(kvm_state) + sizeof(*vmcs12))
-		return -EINVAL;
-
-	if (kvm_state->vmx.vmcs_pa == kvm_state->vmx.vmxon_pa ||
-	    !page_address_valid(vcpu, kvm_state->vmx.vmcs_pa))
-		return -EINVAL;
-
 	if ((kvm_state->vmx.smm.flags & KVM_STATE_NESTED_SMM_GUEST_MODE) &&
 	    (kvm_state->flags & KVM_STATE_NESTED_GUEST_MODE))
 		return -EINVAL;
@@ -14041,6 +14041,14 @@ static int vmx_set_nested_state(struct kvm_vcpu *vcpu,
 	ret = enter_vmx_operation(vcpu);
 	if (ret)
 		return ret;
+
+	/* Empty 'VMXON' state is permitted */
+	if (kvm_state->size < sizeof(kvm_state) + sizeof(*vmcs12))
+		return 0;
+
+	if (kvm_state->vmx.vmcs_pa == kvm_state->vmx.vmxon_pa ||
+	    !page_address_valid(vcpu, kvm_state->vmx.vmcs_pa))
+		return -EINVAL;
 
 	set_current_vmptr(vmx, kvm_state->vmx.vmcs_pa);
 

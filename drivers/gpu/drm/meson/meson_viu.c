@@ -25,6 +25,7 @@
 #include "meson_viu.h"
 #include "meson_vpp.h"
 #include "meson_venc.h"
+#include "meson_canvas.h"
 #include "meson_registers.h"
 
 /**

@@ -211,7 +211,7 @@ int amvdec_set_canvases(struct amvdec_session *sess,
 			dev_err(sess->core->dev, "Unsupported pixfmt %08X\n",
 				pixfmt);
 			return -EINVAL;
-		};
+		}
 
 		reg_num_cur++;
 		if (reg_num_cur >= reg_num[reg_base_cur]) {
@@ -349,10 +349,9 @@ void amvdec_dst_buf_done(struct amvdec_session *sess,
 }
 EXPORT_SYMBOL_GPL(amvdec_dst_buf_done);
 
-static void amvdec_dst_buf_done_offset(struct amvdec_session *sess,
-				       struct vb2_v4l2_buffer *vbuf,
-				       u32 offset,
-				       u32 field)
+void amvdec_dst_buf_done_offset(struct amvdec_session *sess,
+				struct vb2_v4l2_buffer *vbuf,
+				u32 offset, u32 field, bool allow_drop)
 {
 	struct device *dev = sess->core->dev_dec;
 	struct amvdec_timestamp *match = NULL;
@@ -374,6 +373,9 @@ static void amvdec_dst_buf_done_offset(struct amvdec_session *sess,
 			match = tmp;
 			break;
 		}
+
+		if (!allow_drop)
+			continue;
 
 		/* Delete any timestamp entry that appears before our target
 		 * (not all src packets/timestamps lead to a frame)
@@ -399,6 +401,7 @@ static void amvdec_dst_buf_done_offset(struct amvdec_session *sess,
 	if (match)
 		atomic_dec(&sess->esparser_queued_bufs);
 }
+EXPORT_SYMBOL_GPL(amvdec_dst_buf_done_offset);
 
 void amvdec_dst_buf_done_idx(struct amvdec_session *sess,
 			     u32 buf_idx, u32 offset, u32 field)
@@ -415,7 +418,7 @@ void amvdec_dst_buf_done_idx(struct amvdec_session *sess,
 	}
 
 	if (offset != -1)
-		amvdec_dst_buf_done_offset(sess, vbuf, offset, field);
+		amvdec_dst_buf_done_offset(sess, vbuf, offset, field, true);
 	else
 		amvdec_dst_buf_done(sess, vbuf, field);
 }
@@ -433,6 +436,37 @@ void amvdec_set_par_from_dar(struct amvdec_session *sess,
 	sess->pixelaspect.denominator /= div;
 }
 EXPORT_SYMBOL_GPL(amvdec_set_par_from_dar);
+
+void amvdec_src_change(struct amvdec_session *sess, u32 width, u32 height, u32 dpb_size)
+{
+	static const struct v4l2_event ev = {
+		.type = V4L2_EVENT_SOURCE_CHANGE,
+		.u.src_change.changes = V4L2_EVENT_SRC_CH_RESOLUTION };
+
+	sess->dpb_size = dpb_size;
+
+	/* Check if the capture queue is already configured well for our
+	 * usecase. If so, keep decoding with it and do not send the event
+	 */
+	if (sess->width == width &&
+	    sess->height == height &&
+	    dpb_size <= sess->num_dst_bufs) {
+		sess->fmt_out->codec_ops->resume(sess);
+		return;
+	}
+
+	dev_dbg(sess->core->dev, "Res. changed (%ux%u), DPB size %u\n",
+		width, height, dpb_size);
+	dev_dbg(sess->core->dev, "Current: %ux%u, DPB %u\n",
+		sess->width, sess->height, sess->num_dst_bufs);
+
+	sess->width = width;
+	sess->height = height;
+	sess->status = STATUS_NEEDS_RESUME;
+
+	v4l2_event_queue_fh(&sess->fh, &ev);
+}
+EXPORT_SYMBOL_GPL(amvdec_src_change);
 
 void amvdec_abort(struct amvdec_session *sess)
 {

@@ -243,7 +243,7 @@ static struct clk_regmap gxbb_hdmi_pll = {
 		.frac = {
 			.reg_off = HHI_HDMI_PLL_CNTL2,
 			.shift   = 0,
-			.width   = 12,
+			.width   = 10,
 		},
 		.od = {
 			.reg_off = HHI_HDMI_PLL_CNTL2,
@@ -522,7 +522,7 @@ static struct clk_regmap gxbb_fclk_div3 = {
 		.ops = &clk_regmap_gate_ops,
 		.parent_names = (const char *[]){ "fclk_div3_div" },
 		.num_parents = 1,
-                .flags = CLK_IS_CRITICAL,
+		.flags = CLK_IS_CRITICAL,
 	},
 };
 

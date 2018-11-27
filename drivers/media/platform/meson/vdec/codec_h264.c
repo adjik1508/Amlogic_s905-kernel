@@ -20,7 +20,7 @@
 
 /* ISR status */
 #define CMD_MASK		GENMASK(7, 0)
-#define CMD_SET_PARAM		1
+#define CMD_SRC_CHANGE		1
 #define CMD_FRAMES_READY	2
 #define CMD_FATAL_ERROR		6
 #define CMD_BAD_WIDTH		7
@@ -134,6 +134,10 @@ struct codec_h264 {
 	/* Buffer for parsed SEI data */
 	void      *sei_vaddr;
 	dma_addr_t sei_paddr;
+
+	u32 mb_width;
+	u32 mb_height;
+	u32 max_refs;
 };
 
 static int codec_h264_can_recycle(struct amvdec_core *core)
@@ -272,50 +276,25 @@ static void codec_h264_set_par(struct amvdec_session *sess)
 	sess->pixelaspect = par_table[ar_idc];
 }
 
-/* Configure the H.264 decoder when the esparser finished parsing
- * the first keyframe
- */
-static void codec_h264_set_param(struct amvdec_session *sess)
+static void codec_h264_resume(struct amvdec_session *sess)
 {
 	struct amvdec_core *core = sess->core;
 	struct codec_h264 *h264 = sess->priv;
-	u32 max_reference_size;
-	u32 parsed_info, mb_width, mb_height, mb_total;
-	u32 actual_dpb_size = v4l2_m2m_num_dst_bufs_ready(sess->m2m_ctx);
-	u32 max_dpb_size = 4;
-
-	sess->keyframe_found = 1;
-
-	parsed_info = amvdec_read_dos(core, AV_SCRATCH_1);
-
-	/* Total number of 16x16 macroblocks */
-	mb_total = (parsed_info >> MB_TOTAL_BIT) & MB_TOTAL_MASK;
-
-	/* Number of macroblocks per line */
-	mb_width = parsed_info & MB_WIDTH_MASK;
-
-	/* Number of macroblock lines */
-	mb_height = mb_total / mb_width;
-
-	max_reference_size = (parsed_info >> MAX_REF_BIT) & MAX_REF_MASK;
-
-	/* Align to a multiple of 4 macroblocks */
-	mb_width = ALIGN(mb_width, 4);
-	mb_height = ALIGN(mb_height, 4);
-	mb_total = mb_width * mb_height;
+	u32 mb_width, mb_height, mb_total;
 
 	amvdec_set_canvases(sess, (u32[]){ ANC0_CANVAS_ADDR, 0 },
 				  (u32[]){ 24, 0 });
 
-	if (max_reference_size > max_dpb_size)
-		max_dpb_size = max_reference_size;
-
-	max_reference_size++;
 	dev_dbg(core->dev,
-		"max_ref_size = %u; max_dpb_size = %u; actual_dpb_size = %u\n",
-		max_reference_size, max_dpb_size, actual_dpb_size);
+		"max_refs = %u; actual_dpb_size = %u\n",
+		h264->max_refs, sess->num_dst_bufs);
 
-	h264->ref_size = mb_total * MB_MV_SIZE * max_reference_size;
+	/* Align to a multiple of 4 macroblocks */
+	mb_width = ALIGN(h264->mb_width, 4);
+	mb_height = ALIGN(h264->mb_height, 4);
+	mb_total = mb_width * mb_height;
+
+	h264->ref_size = mb_total * MB_MV_SIZE * h264->max_refs;
 	h264->ref_vaddr = dma_alloc_coherent(core->dev, h264->ref_size,
 					     &h264->ref_paddr, GFP_KERNEL);
 	if (!h264->ref_vaddr) {
@@ -325,16 +304,51 @@ static void codec_h264_set_param(struct amvdec_session *sess)
 		return;
 	}
 
-	codec_h264_set_par(sess);
-
 	/* Address to store the references' MVs */
 	amvdec_write_dos(core, AV_SCRATCH_1, h264->ref_paddr);
 	/* End of ref MV */
 	amvdec_write_dos(core, AV_SCRATCH_4, h264->ref_paddr + h264->ref_size);
 
-	amvdec_write_dos(core, AV_SCRATCH_0, (max_reference_size << 24) |
-					     (actual_dpb_size << 16) |
-					     (max_dpb_size << 8));
+	amvdec_write_dos(core, AV_SCRATCH_0, (h264->max_refs << 24) |
+					     (sess->num_dst_bufs << 16) |
+					     ((h264->max_refs - 1) << 8));
+}
+
+/* Configure the H.264 decoder when the parser detected a parameter set change
+ */
+static void codec_h264_src_change(struct amvdec_session *sess)
+{
+	struct amvdec_core *core = sess->core;
+	struct codec_h264 *h264 = sess->priv;
+	u32 parsed_info, mb_total;
+	u32 crop_infor, crop_bottom, crop_right;
+	u32 frame_width, frame_height;
+
+	sess->keyframe_found = 1;
+
+	parsed_info = amvdec_read_dos(core, AV_SCRATCH_1);
+
+	/* Total number of 16x16 macroblocks */
+	mb_total = (parsed_info >> MB_TOTAL_BIT) & MB_TOTAL_MASK;
+	/* Number of macroblocks per line */
+	h264->mb_width = parsed_info & MB_WIDTH_MASK;
+	/* Number of macroblock lines */
+	h264->mb_height = mb_total / h264->mb_width;
+
+	h264->max_refs = ((parsed_info >> MAX_REF_BIT) & MAX_REF_MASK) + 1;
+
+	crop_infor = amvdec_read_dos(core, AV_SCRATCH_6);
+	crop_bottom = (crop_infor & 0xff);
+	crop_right = (crop_infor >> 16) & 0xff;
+
+	frame_width = h264->mb_width * 16 - crop_right;
+	frame_height = h264->mb_height * 16 - crop_bottom;
+
+	dev_info(core->dev, "frame: %ux%u; crop: %u %u\n",
+		 frame_width, frame_height, crop_right, crop_bottom);
+
+	codec_h264_set_par(sess);
+	amvdec_src_change(sess, frame_width, frame_height, h264->max_refs + 5);
 }
 
 /**
@@ -404,8 +418,8 @@ static irqreturn_t codec_h264_threaded_isr(struct amvdec_session *sess)
 	cmd = status & CMD_MASK;
 
 	switch (cmd) {
-	case CMD_SET_PARAM:
-		codec_h264_set_param(sess);
+	case CMD_SRC_CHANGE:
+		codec_h264_src_change(sess);
 		break;
 	case CMD_FRAMES_READY:
 		codec_h264_frames_ready(sess, status);
@@ -429,7 +443,7 @@ static irqreturn_t codec_h264_threaded_isr(struct amvdec_session *sess)
 		break;
 	}
 
-	if (cmd && cmd != CMD_SET_PARAM)
+	if (cmd && cmd != CMD_SRC_CHANGE)
 		amvdec_write_dos(core, AV_SCRATCH_0, 0);
 
 	/* Decoder has some SEI data for us ; ignore */
@@ -460,4 +474,5 @@ struct amvdec_codec_ops codec_h264_ops = {
 	.can_recycle = codec_h264_can_recycle,
 	.recycle = codec_h264_recycle,
 	.eos_sequence = codec_h264_eos_sequence,
+	.resume = codec_h264_resume,
 };

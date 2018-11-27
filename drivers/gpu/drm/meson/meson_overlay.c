@@ -16,11 +16,13 @@
 #include <drm/drm_plane_helper.h>
 #include <drm/drm_gem_cma_helper.h>
 #include <drm/drm_fb_cma_helper.h>
+#include <drm/drm_gem_framebuffer_helper.h>
 #include <drm/drm_rect.h>
 
 #include "meson_overlay.h"
 #include "meson_vpp.h"
 #include "meson_viu.h"
+#include "meson_canvas.h"
 #include "meson_registers.h"
 
 /* VD1_IF0_GEN_REG */
@@ -87,7 +89,7 @@ struct meson_overlay {
 #define FRAC_16_16(mult, div)    (((mult) << 16) / (div))
 
 static int meson_overlay_atomic_check(struct drm_plane *plane,
-				    struct drm_plane_state *state)
+				      struct drm_plane_state *state)
 {
 	struct drm_crtc_state *crtc_state;
 
@@ -110,20 +112,19 @@ static inline int64_t fixed16_to_int(int64_t value)
 	return value >> 16;
 }
 
-static const uint8_t skip_tab[6] = {0x24, 0x04, 0x68, 0x48, 0x28, 0x08};
+static const uint8_t skip_tab[6] = {
+	0x24, 0x04, 0x68, 0x48, 0x28, 0x08,
+};
 
-static void meson_overlay_get_vertical_phase(unsigned ratio_y,
-					     int *phase,
-					     int *repeat,
-					     bool interlace)
+static void meson_overlay_get_vertical_phase(unsigned int ratio_y, int *phase,
+					     int *repeat, bool interlace)
 {
 	int offset_in = 0;
 	int offset_out = 0;
 	int repeat_skip = 0;
 
-	if (!interlace && ratio_y > (1 << 18)) {
+	if (!interlace && ratio_y > (1 << 18))
 		offset_out = (1 * ratio_y) >> 10;
-	}
 
 	while ((offset_in + (4 << 8)) <= offset_out) {
 		repeat_skip++;
@@ -147,19 +148,19 @@ static void meson_overlay_setup_scaler_params(struct meson_drm *priv,
 					      struct drm_plane *plane,
 					      bool interlace_mode)
 {
-	struct drm_plane_state *state = plane->state;
 	struct drm_crtc_state *crtc_state = priv->crtc->state;
 	int video_top, video_left, video_width, video_height;
-	unsigned int crop_top, crop_left;
-	unsigned int crtc_height, crtc_width;
+	struct drm_plane_state *state = plane->state;
 	unsigned int vd_start_lines, vd_end_lines;
 	unsigned int hd_start_lines, hd_end_lines;
+	unsigned int crtc_height, crtc_width;
 	unsigned int vsc_startp, vsc_endp;
 	unsigned int hsc_startp, hsc_endp;
-	unsigned int ratio_x, ratio_y;
-	unsigned int w_in, h_in;
+	unsigned int crop_top, crop_left;
 	int vphase, vphase_repeat_skip;
+	unsigned int ratio_x, ratio_y;
 	int temp_height, temp_width;
+	unsigned int w_in, h_in;
 	int temp, start, end;
 
 	if (!crtc_state) {
@@ -181,18 +182,14 @@ static void meson_overlay_setup_scaler_params(struct meson_drm *priv,
 	video_height = state->crtc_h;
 
 	DRM_DEBUG("crtc_width %d crtc_height %d interlace %d\n",
-	         crtc_width, crtc_height, interlace_mode);
+		  crtc_width, crtc_height, interlace_mode);
 	DRM_DEBUG("w_in %d h_in %d crop_top %d crop_left %d\n",
-	         w_in, h_in, crop_top, crop_left);
+		  w_in, h_in, crop_top, crop_left);
 	DRM_DEBUG("video top %d left %d width %d height %d\n",
-		 video_top, video_left, video_width, video_height);
+		  video_top, video_left, video_width, video_height);
 
 	ratio_x = (w_in << 18) / video_width;
 	ratio_y = (h_in << 18) / video_height;
-
-	/* TOFIX Interlace output */
-	if (interlace_mode)
-		ratio_y <<= 1;
 
 	if (ratio_x * video_width < (w_in << 18))
 		ratio_x++;
@@ -217,11 +214,13 @@ static void meson_overlay_setup_scaler_params(struct meson_drm *priv,
 		vd_start_lines = 0;
 
 	if (video_top < 0)
-		temp_height = min_t(unsigned int, (video_top + video_height - 1),
-				    (crtc_height - 1));
+		temp_height = min_t(unsigned int,
+				    video_top + video_height - 1,
+				    crtc_height - 1);
 	else
-		temp_height = min_t(unsigned int, (video_top + video_height - 1),
-				    (crtc_height - 1)) - video_top + 1;
+		temp_height = min_t(unsigned int,
+				    video_top + video_height - 1,
+				    crtc_height - 1) - video_top + 1;
 
 	temp = vd_start_lines + (temp_height * ratio_y >> 18);
 	vd_end_lines = (temp <= (h_in - 1)) ? temp : (h_in - 1);
@@ -229,6 +228,11 @@ static void meson_overlay_setup_scaler_params(struct meson_drm *priv,
 	vd_start_lines += crop_left;
 	vd_end_lines += crop_left;
 
+	/*
+	 * TOFIX: Input frames are handled and scaled like progressive frames,
+	 * proper handling of interlaced field input frames need to be figured
+	 * out using the proper framebuffer flags set by userspace.
+	 */
 	if (interlace_mode) {
 		start >>= 1;
 		end >>= 1;
@@ -256,21 +260,21 @@ static void meson_overlay_setup_scaler_params(struct meson_drm *priv,
 		hd_start_lines = 0;
 
 	if (video_left < 0)
-		temp_width = min_t(unsigned int, (video_left + video_width - 1),
-				   (crtc_width - 1));
+		temp_width = min_t(unsigned int,
+				   video_left + video_width - 1,
+				   crtc_width - 1);
 	else
-		temp_width = min_t(unsigned int, (video_left + video_width - 1),
-				   (crtc_width - 1)) - video_left + 1;
+		temp_width = min_t(unsigned int,
+				   video_left + video_width - 1,
+				   crtc_width - 1) - video_left + 1;
 
 	temp = hd_start_lines + (temp_width * ratio_x >> 18);
 	hd_end_lines = (temp <= (w_in - 1)) ? temp : (w_in - 1);
 
 	priv->viu.vpp_line_in_length = hd_end_lines - hd_start_lines + 1;
-	hsc_startp = max_t(int, start,
-			   max_t(int, 0, video_left));
-	hsc_endp = min_t(int, end,
-			 min_t(int, crtc_width - 1,
-			       video_left + video_width - 1));
+	hsc_startp = max_t(int, start, max_t(int, 0, video_left));
+	hsc_endp = min_t(int, end, min_t(int, crtc_width - 1,
+					 video_left + video_width - 1));
 
 	hd_start_lines += crop_top;
 	hd_end_lines += crop_top;
@@ -289,8 +293,9 @@ static void meson_overlay_setup_scaler_params(struct meson_drm *priv,
 	priv->viu.vd1_if0_chroma_x0 = VD_X_START(hd_start_lines >> 1) |
 				      VD_X_END(hd_end_lines >> 1);
 
-	priv->viu.viu_vd1_fmt_w = VD_H_WIDTH(hd_end_lines - hd_start_lines + 1) |
-				  VD_V_WIDTH(hd_end_lines/2 - hd_start_lines/2 + 1);
+	priv->viu.viu_vd1_fmt_w =
+			VD_H_WIDTH(hd_end_lines - hd_start_lines + 1) |
+			VD_V_WIDTH(hd_end_lines/2 - hd_start_lines/2 + 1);
 
 	priv->viu.vd1_if0_luma_y0 = VD_Y_START(vd_start_lines) |
 				    VD_Y_END(vd_end_lines);
@@ -306,7 +311,8 @@ static void meson_overlay_setup_scaler_params(struct meson_drm *priv,
 					      VD_H_END(hd_end_lines);
 	priv->viu.vpp_hsc_region12_startp = VD_REGION13_END(0) |
 					    VD_REGION24_START(hsc_startp);
-	priv->viu.vpp_hsc_region34_startp = VD_REGION13_END(hsc_startp) |
+	priv->viu.vpp_hsc_region34_startp =
+				VD_REGION13_END(hsc_startp) |
 				VD_REGION24_START(hsc_endp - hsc_startp);
 	priv->viu.vpp_hsc_region4_endp = hsc_endp - hsc_startp;
 	priv->viu.vpp_hsc_start_phase_step = ratio_x << 6;
@@ -325,8 +331,8 @@ static void meson_overlay_setup_scaler_params(struct meson_drm *priv,
 
 	priv->viu.vpp_vsc_region12_startp = 0;
 	priv->viu.vpp_vsc_region34_startp =
-					VD_REGION13_END(vsc_endp - vsc_startp) |
-					VD_REGION24_START(vsc_endp - vsc_startp);
+				VD_REGION13_END(vsc_endp - vsc_startp) |
+				VD_REGION24_START(vsc_endp - vsc_startp);
 	priv->viu.vpp_vsc_region4_endp = vsc_endp - vsc_startp;
 	priv->viu.vpp_vsc_start_phase_step = ratio_y << 6;
 }
@@ -344,14 +350,15 @@ static void meson_overlay_atomic_update(struct drm_plane *plane,
 
 	DRM_DEBUG_DRIVER("\n");
 
+	/* Fallback is canvas provider is not available */
+	if (!priv->canvas) {
+		priv->canvas_id_vd1_0 = MESON_CANVAS_ID_VD1_0;
+		priv->canvas_id_vd1_1 = MESON_CANVAS_ID_VD1_1;
+		priv->canvas_id_vd1_2 = MESON_CANVAS_ID_VD1_2;
+	}
+
 	interlace_mode = state->crtc->mode.flags & DRM_MODE_FLAG_INTERLACE;
 
-	/*
-	 * Update Coordinates
-	 * Update Formats
-	 * Update Buffer
-	 * Enable Plane
-	 */
 	spin_lock_irqsave(&priv->drm->event_lock, flags);
 
 	priv->viu.vd1_if0_gen_reg = VD_URGENT_CHROMA |
@@ -363,17 +370,9 @@ static void meson_overlay_atomic_update(struct drm_plane *plane,
 	/* Setup scaler params */
 	meson_overlay_setup_scaler_params(priv, plane, interlace_mode);
 
-	//VD1_IF0_CANVAS1=0
-	//VD1_IF0_CHROMA_X1=0
-	//VD1_IF0_CHROMA_Y1=0
 	priv->viu.vd1_if0_repeat_loop = 0;
 	priv->viu.vd1_if0_luma0_rpt_pat = interlace_mode ? 8 : 0;
 	priv->viu.vd1_if0_chroma0_rpt_pat = interlace_mode ? 8 : 0;
-	//VD1_IF0_LUMA1_RPT_PAT=0
-	//VD1_IF0_CHROMA1_RPT_PAT=0
-	//VD1_IF0_LUMA_PSEL=0
-	//VD1_IF0_CHROMA_PSEL=0
-	//VD1_IF0_DUMMY_PIXEL=?
 	priv->viu.vd1_range_map_y = 0;
 	priv->viu.vd1_range_map_cb = 0;
 	priv->viu.vd1_range_map_cr = 0;
@@ -383,15 +382,7 @@ static void meson_overlay_atomic_update(struct drm_plane *plane,
 	priv->viu.viu_vd1_fmt_ctrl = 0;
 
 	switch (fb->format->format) {
-	case DRM_FORMAT_RGB888:
-		/* TOFIX enable RGB2YUV somewhere ! */
-		priv->viu.vd1_if0_gen_reg |= VD_DEMUX_MODE_RGB |
-					     VD_BYTES_PER_PIXEL(2);
-		priv->viu.vd1_if0_canvas0 =
-					CANVAS_ADDR2(priv->canvas_id_vd1_0) |
-					CANVAS_ADDR1(priv->canvas_id_vd1_0) |
-					CANVAS_ADDR0(priv->canvas_id_vd1_0);
-		break;
+	/* TOFIX DRM_FORMAT_RGB888 should be supported */
 	case DRM_FORMAT_YUYV:
 		priv->viu.vd1_if0_gen_reg |= VD_BYTES_PER_PIXEL(1);
 		priv->viu.vd1_if0_canvas0 =
@@ -489,6 +480,7 @@ static void meson_overlay_atomic_update(struct drm_plane *plane,
 			 priv->viu.vd1_addr2,
 			 priv->viu.vd1_stride2,
 			 priv->viu.vd1_height2);
+	/* fallthrough */
 	case 2:
 		gem = drm_fb_cma_get_gem_obj(fb, 1);
 		priv->viu.vd1_addr1 = gem->paddr + fb->offsets[1];
@@ -500,6 +492,7 @@ static void meson_overlay_atomic_update(struct drm_plane *plane,
 			 priv->viu.vd1_addr1,
 			 priv->viu.vd1_stride1,
 			 priv->viu.vd1_height1);
+	/* fallthrough */
 	case 1:
 		gem = drm_fb_cma_get_gem_obj(fb, 0);
 		priv->viu.vd1_addr0 = gem->paddr + fb->offsets[0];
@@ -540,6 +533,7 @@ static const struct drm_plane_helper_funcs meson_overlay_helper_funcs = {
 	.atomic_check	= meson_overlay_atomic_check,
 	.atomic_disable	= meson_overlay_atomic_disable,
 	.atomic_update	= meson_overlay_atomic_update,
+	.prepare_fb	= drm_gem_fb_prepare_fb,
 };
 
 static const struct drm_plane_funcs meson_overlay_funcs = {
@@ -552,7 +546,6 @@ static const struct drm_plane_funcs meson_overlay_funcs = {
 };
 
 static const uint32_t supported_drm_formats[] = {
-	DRM_FORMAT_RGB888,
 	DRM_FORMAT_YUYV,
 	DRM_FORMAT_NV12,
 	DRM_FORMAT_NV21,

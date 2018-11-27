@@ -87,7 +87,7 @@
 
 	sound {
 		compatible = "simple-audio-card";
-		simple-audio-card,name = "meson-gx-audio";
+		simple-audio-card,name = "HDMI";
 
 		assigned-clocks = <&clkc CLKID_MPLL2>,
 				  <&clkc CLKID_MPLL0>,
@@ -100,7 +100,7 @@
 		simple-audio-card,dai-link@0 {
 			/* HDMI Output */
 			format = "i2s";
-			mclk-fs = <256>;
+			mclk-fs = <128>;
 			bitclock-master = <&i2s_dai>;
 			frame-master = <&i2s_dai>;
 
@@ -305,7 +305,7 @@
 		interrupt-parent = <&gpio_intc>;
 		/* MAC_INTR on GPIOZ_15 */
 		interrupts = <25 IRQ_TYPE_LEVEL_LOW>;
-                eee-broken-1000t;
+		eee-broken-1000t;
 	};
 };
 
@@ -373,6 +373,7 @@
 &sd_emmc_a {
 	status = "okay";
 	pinctrl-0 = <&sdio_pins>;
+	pinctrl-1 = <&sdio_clk_gate_pins>;
 	pinctrl-names = "default";
 	#address-cells = <1>;
 	#size-cells = <0>;
@@ -398,6 +399,7 @@
 &sd_emmc_b {
 	status = "okay";
 	pinctrl-0 = <&sdcard_pins>;
+	pinctrl-1 = <&sdcard_clk_gate_pins>;
 	pinctrl-names = "default";
 
 	bus-width = <4>;
@@ -416,6 +418,7 @@
 &sd_emmc_c {
 	status = "okay";
 	pinctrl-0 = <&emmc_pins>, <&emmc_ds_pins>;
+	pinctrl-1 = <&emmc_clk_gate_pins>;
 	pinctrl-names = "default";
 
 	bus-width = <8>;
@@ -426,7 +429,6 @@
 	disable-wp;
 	mmc-ddr-1_8v;
 	mmc-hs200-1_8v;
-	mmc-hs400-1_8v;
 
 	mmc-pwrseq = <&emmc_pwrseq>;
 	vmmc-supply = <&vcc_3v3>;
@@ -456,6 +458,11 @@
 	status = "okay";
 	pinctrl-0 = <&uart_a_pins>;
 	pinctrl-names = "default";
+
+	bluetooth {
+		compatible = "brcm,bcm43438-bt";
+		shutdown-gpios = <&gpio GPIOX_17 GPIO_ACTIVE_HIGH>;
+	};
 };
 
 /* This is brought out on the Linux_RX (18) and Linux_TX (19) pins: */

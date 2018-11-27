@@ -4175,10 +4175,15 @@ static void rtl_wol_suspend_quirk(struct rtl8169_private *tp)
 
 static bool rtl_wol_pll_power_down(struct rtl8169_private *tp)
 {
-	if (!netif_running(tp->dev) || !__rtl8169_get_wol(tp))
+	struct phy_device *phydev;
+
+	if (!__rtl8169_get_wol(tp))
 		return false;
 
-	phy_speed_down(tp->dev->phydev, false);
+	/* phydev may not be attached to netdevice */
+	phydev = mdiobus_get_phy(tp->mii_bus, 0);
+
+	phy_speed_down(phydev, false);
 	rtl_wol_suspend_quirk(tp);
 
 	return true;
@@ -4282,8 +4287,8 @@ static void rtl_init_rxcfg(struct rtl8169_private *tp)
 		RTL_W32(tp, RxConfig, RX_FIFO_THRESH | RX_DMA_BURST);
 		break;
 	case RTL_GIGA_MAC_VER_18 ... RTL_GIGA_MAC_VER_24:
-	case RTL_GIGA_MAC_VER_34:
-	case RTL_GIGA_MAC_VER_35:
+	case RTL_GIGA_MAC_VER_34 ... RTL_GIGA_MAC_VER_36:
+	case RTL_GIGA_MAC_VER_38:
 		RTL_W32(tp, RxConfig, RX128_INT_EN | RX_MULTI_EN | RX_DMA_BURST);
 		break;
 	case RTL_GIGA_MAC_VER_40 ... RTL_GIGA_MAC_VER_51:
@@ -6549,17 +6554,15 @@ static int rtl8169_poll(struct napi_struct *napi, int budget)
 	struct rtl8169_private *tp = container_of(napi, struct rtl8169_private, napi);
 	struct net_device *dev = tp->dev;
 	u16 enable_mask = RTL_EVENT_NAPI | tp->event_slow;
-	int work_done= 0;
+	int work_done;
 	u16 status;
 
 	status = rtl_get_events(tp);
 	rtl_ack_events(tp, status & ~tp->event_slow);
 
-	if (status & RTL_EVENT_NAPI_RX)
-		work_done = rtl_rx(dev, tp, (u32) budget);
+	work_done = rtl_rx(dev, tp, (u32) budget);
 
-	if (status & RTL_EVENT_NAPI_TX)
-		rtl_tx(dev, tp);
+	rtl_tx(dev, tp);
 
 	if (status & tp->event_slow) {
 		enable_mask &= ~tp->event_slow;
@@ -7093,20 +7096,12 @@ static int rtl_alloc_irq(struct rtl8169_private *tp)
 {
 	unsigned int flags;
 
-	switch (tp->mac_version) {
-	case RTL_GIGA_MAC_VER_01 ... RTL_GIGA_MAC_VER_06:
+	if (tp->mac_version <= RTL_GIGA_MAC_VER_06) {
 		RTL_W8(tp, Cfg9346, Cfg9346_Unlock);
 		RTL_W8(tp, Config2, RTL_R8(tp, Config2) & ~MSIEnable);
 		RTL_W8(tp, Cfg9346, Cfg9346_Lock);
 		flags = PCI_IRQ_LEGACY;
-		break;
-	case RTL_GIGA_MAC_VER_39 ... RTL_GIGA_MAC_VER_40:
-		/* This version was reported to have issues with resume
-		 * from suspend when using MSI-X
-		 */
-		flags = PCI_IRQ_LEGACY | PCI_IRQ_MSI;
-		break;
-	default:
+	} else {
 		flags = PCI_IRQ_ALL_TYPES;
 	}
 

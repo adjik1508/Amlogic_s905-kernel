@@ -29,6 +29,7 @@ struct meson_drm {
 	struct device *dev;
 	void __iomem *io_base;
 	struct regmap *hhi;
+	struct regmap *dmc;
 	int vsync_irq;
 
 	struct meson_canvas *canvas;
@@ -39,7 +40,6 @@ struct meson_drm {
 
 	struct drm_device *drm;
 	struct drm_crtc *crtc;
-	struct drm_fbdev_cma *fbdev;
 	struct drm_plane *primary_plane;
 	struct drm_plane *overlay_plane;
 
@@ -53,6 +53,16 @@ struct meson_drm {
 		uint32_t osd1_addr;
 		uint32_t osd1_stride;
 		uint32_t osd1_height;
+		uint32_t osd_sc_ctrl0;
+		uint32_t osd_sc_i_wh_m1;
+		uint32_t osd_sc_o_h_start_end;
+		uint32_t osd_sc_o_v_start_end;
+		uint32_t osd_sc_v_ini_phase;
+		uint32_t osd_sc_v_phase_step;
+		uint32_t osd_sc_h_ini_phase;
+		uint32_t osd_sc_h_phase_step;
+		uint32_t osd_sc_h_ctrl0;
+		uint32_t osd_sc_v_ctrl0;
 
 		bool vd1_enabled;
 		bool vd1_commit;
