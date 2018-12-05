@@ -184,18 +184,18 @@ void meson_viu_set_osd_lut(struct meson_drm *priv, enum viu_lut_sel_e lut_sel,
 	if (lut_sel == VIU_LUT_OSD_OETF) {
 		writel(0, priv->io_base + _REG(addr_port));
 
-		for (i = 0; i < 20; i++)
+		for (i = 0; i < (OSD_OETF_LUT_SIZE / 2); i++)
 			writel(r_map[i * 2] | (r_map[i * 2 + 1] << 16),
 				priv->io_base + _REG(data_port));
 
 		writel(r_map[OSD_OETF_LUT_SIZE - 1] | (g_map[0] << 16),
 			priv->io_base + _REG(data_port));
 
-		for (i = 0; i < 20; i++)
+		for (i = 0; i < (OSD_OETF_LUT_SIZE / 2); i++)
 			writel(g_map[i * 2 + 1] | (g_map[i * 2 + 2] << 16),
 				priv->io_base + _REG(data_port));
 
-		for (i = 0; i < 20; i++)
+		for (i = 0; i < (OSD_OETF_LUT_SIZE / 2); i++)
 			writel(b_map[i * 2] | (b_map[i * 2 + 1] << 16),
 				priv->io_base + _REG(data_port));
 
@@ -211,18 +211,18 @@ void meson_viu_set_osd_lut(struct meson_drm *priv, enum viu_lut_sel_e lut_sel,
 	} else if (lut_sel == VIU_LUT_OSD_EOTF) {
 		writel(0, priv->io_base + _REG(addr_port));
 
-		for (i = 0; i < 20; i++)
+		for (i = 0; i < (OSD_EOTF_LUT_SIZE / 2); i++)
 			writel(r_map[i * 2] | (r_map[i * 2 + 1] << 16),
 				priv->io_base + _REG(data_port));
 
 		writel(r_map[OSD_EOTF_LUT_SIZE - 1] | (g_map[0] << 16),
 			priv->io_base + _REG(data_port));
 
-		for (i = 0; i < 20; i++)
+		for (i = 0; i < (OSD_EOTF_LUT_SIZE / 2); i++)
 			writel(g_map[i * 2 + 1] | (g_map[i * 2 + 2] << 16),
 				priv->io_base + _REG(data_port));
 
-		for (i = 0; i < 20; i++)
+		for (i = 0; i < (OSD_EOTF_LUT_SIZE / 2); i++)
 			writel(b_map[i * 2] | (b_map[i * 2 + 1] << 16),
 				priv->io_base + _REG(data_port));
 
@@ -294,6 +294,33 @@ static void meson_viu_load_matrix(struct meson_drm *priv)
 	meson_viu_set_osd_matrix(priv, VIU_MATRIX_OSD,
 				 RGB709_to_YUV709l_coeff,
 				 true);
+}
+
+/* VIU OSD1 Reset as workaround for GXL+ Alpha OSD Bug */
+void meson_viu_reset(struct meson_drm *priv)
+{
+	uint32_t osd1_fifo_ctrl_stat, osd1_ctrl_stat2;
+
+	/* Save these 2 registers state */
+	osd1_fifo_ctrl_stat = readl_relaxed(
+				priv->io_base + _REG(VIU_OSD1_FIFO_CTRL_STAT));
+	osd1_ctrl_stat2 = readl_relaxed(
+				priv->io_base + _REG(VIU_OSD1_CTRL_STAT2));
+
+	/* Reset OSD1 */
+	writel_bits_relaxed(BIT(0), BIT(0),
+			    priv->io_base + _REG(VIU_SW_RESET));
+	writel_bits_relaxed(BIT(0), 0,
+			    priv->io_base + _REG(VIU_SW_RESET));
+
+	/* Rewrite these registers state lost in the reset */
+	writel_relaxed(osd1_fifo_ctrl_stat,
+		       priv->io_base + _REG(VIU_OSD1_FIFO_CTRL_STAT));
+	writel_relaxed(osd1_ctrl_stat2,
+		       priv->io_base + _REG(VIU_OSD1_CTRL_STAT2));
+
+	/* Reload the conversion matrix */
+	meson_viu_load_matrix(priv);
 }
 
 void meson_viu_init(struct meson_drm *priv)

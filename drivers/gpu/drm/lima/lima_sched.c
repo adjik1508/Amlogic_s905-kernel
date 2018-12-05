@@ -128,8 +128,10 @@ int lima_sched_task_add_dep(struct lima_sched_task *task, struct dma_fence *fenc
 	int i, new_dep = 4;
 
 	/* same context's fence is definitly earlier then this task */
-	if (fence->context == task->base.s_fence->finished.context)
+	if (fence->context == task->base.s_fence->finished.context) {
+		dma_fence_put(fence);
 		return 0;
+	}
 
 	if (task->dep && task->num_dep == task->max_dep)
 		new_dep = task->max_dep * 2;
@@ -185,8 +187,12 @@ void lima_sched_context_fini(struct lima_sched_pipe *pipe,
 
 	mutex_destroy(&context->lock);
 
-	if (context->fences)
+	if (context->fences) {
+		int i;
+		for (i = 0; i < lima_sched_max_tasks; i++)
+			dma_fence_put(context->fences[i]);
 		kfree(context->fences);
+	}
 }
 
 static uint32_t lima_sched_context_add_fence(struct lima_sched_context *context,
@@ -382,6 +388,8 @@ static void lima_sched_timedout_job(struct drm_sched_job *job)
 {
 	struct lima_sched_pipe *pipe = to_lima_pipe(job->sched);
 	struct lima_sched_task *task = to_lima_task(job);
+
+	DRM_ERROR("lima job timeout\n");
 
 	lima_sched_handle_error_task(pipe, task);
 }
