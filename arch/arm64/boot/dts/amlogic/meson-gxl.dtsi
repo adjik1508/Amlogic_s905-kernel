@@ -363,7 +363,7 @@
 			};
 		};
 
-		spi_pins: spi {
+		spi_pins: spi-pins {
 			mux {
 				groups = "spi_miso",
 					"spi_mosi",
@@ -696,17 +696,7 @@
 	reset-names = "aiu", "audin";
 };
 
-&aiu_i2s_dma {
-	clocks = <&clkc CLKID_I2S_OUT>;
-	clock-names = "fast";
-};
-
-&aiu_spdif_dma {
-	clocks = <&clkc CLKID_IEC958>;
-	clock-names = "fast";
-};
-
-&i2s_dai {
+&aiu_i2s {
 	clocks = <&clkc CLKID_I2S_OUT>,
 		 <&clkc CLKID_MIXER_IFACE>,
 		 <&clkc CLKID_AOCLK_GATE>,
@@ -796,7 +786,7 @@
 	num-cs = <1>;
 };
 
-&spdif_dai {
+&aiu_spdif {
 	clocks = <&clkc CLKID_IEC958>,
 		 <&clkc CLKID_IEC958_GATE>,
 		 <&clkc CLKID_CTS_MCLK_I958>,

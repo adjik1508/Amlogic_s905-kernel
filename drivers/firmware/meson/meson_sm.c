@@ -49,7 +49,7 @@ struct meson_sm_chip gxbb_chip = {
 		CMD(SM_EFUSE_READ,	0x82000030),
 		CMD(SM_EFUSE_WRITE,	0x82000031),
 		CMD(SM_EFUSE_USER_MAX,	0x82000033),
-		CMD(SM_SERIAL_ID,	0x82000044),
+		CMD(SM_GET_CHIP_ID,	0x82000044),
 		{ /* sentinel */ },
 	},
 };
@@ -216,9 +216,9 @@ int meson_sm_call_write(void *buffer, unsigned int size, unsigned int cmd_index,
 }
 EXPORT_SYMBOL(meson_sm_call_write);
 
-#define SM_SERIAL_ID_LENGTH	119
-#define SM_SERIAL_ID_OFFSET	4
-#define SM_SERIAL_ID_SIZE	12
+#define SM_CHIP_ID_LENGTH	119
+#define SM_CHIP_ID_OFFSET	4
+#define SM_CHIP_ID_SIZE		12
 
 static ssize_t serial_show(struct device *dev, struct device_attribute *attr,
 			 char *buf)
@@ -226,11 +226,11 @@ static ssize_t serial_show(struct device *dev, struct device_attribute *attr,
 	uint8_t *id_buf;
 	int ret;
 
-	id_buf = kmalloc(SM_SERIAL_ID_LENGTH, GFP_KERNEL);
+	id_buf = kmalloc(SM_CHIP_ID_LENGTH, GFP_KERNEL);
 	if (!id_buf)
 		return -ENOMEM;
 
-	ret = meson_sm_call_read(id_buf, SM_SERIAL_ID_LENGTH, SM_SERIAL_ID,
+	ret = meson_sm_call_read(id_buf, SM_CHIP_ID_LENGTH, SM_GET_CHIP_ID,
 				 0, 0, 0, 0, 0);
 	if (ret < 0) {
 		kfree(id_buf);
@@ -238,18 +238,18 @@ static ssize_t serial_show(struct device *dev, struct device_attribute *attr,
 	}
 
 	ret = sprintf(buf, "%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n",
-			id_buf[SM_SERIAL_ID_OFFSET + 0],
-			id_buf[SM_SERIAL_ID_OFFSET + 1],
-			id_buf[SM_SERIAL_ID_OFFSET + 2],
-			id_buf[SM_SERIAL_ID_OFFSET + 3],
-			id_buf[SM_SERIAL_ID_OFFSET + 4],
-			id_buf[SM_SERIAL_ID_OFFSET + 5],
-			id_buf[SM_SERIAL_ID_OFFSET + 6],
-			id_buf[SM_SERIAL_ID_OFFSET + 7],
-			id_buf[SM_SERIAL_ID_OFFSET + 8],
-			id_buf[SM_SERIAL_ID_OFFSET + 9],
-			id_buf[SM_SERIAL_ID_OFFSET + 10],
-			id_buf[SM_SERIAL_ID_OFFSET + 11]);
+			id_buf[SM_CHIP_ID_OFFSET + 0],
+			id_buf[SM_CHIP_ID_OFFSET + 1],
+			id_buf[SM_CHIP_ID_OFFSET + 2],
+			id_buf[SM_CHIP_ID_OFFSET + 3],
+			id_buf[SM_CHIP_ID_OFFSET + 4],
+			id_buf[SM_CHIP_ID_OFFSET + 5],
+			id_buf[SM_CHIP_ID_OFFSET + 6],
+			id_buf[SM_CHIP_ID_OFFSET + 7],
+			id_buf[SM_CHIP_ID_OFFSET + 8],
+			id_buf[SM_CHIP_ID_OFFSET + 9],
+			id_buf[SM_CHIP_ID_OFFSET + 10],
+			id_buf[SM_CHIP_ID_OFFSET + 11]);
 
 	kfree(id_buf);
 

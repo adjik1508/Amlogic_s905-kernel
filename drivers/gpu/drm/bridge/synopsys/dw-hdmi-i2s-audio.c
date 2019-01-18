@@ -8,7 +8,6 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
-#include <drm/drm_connector.h>
 #include <drm/bridge/dw_hdmi.h>
 
 #include <sound/hdmi-codec.h>
@@ -153,12 +152,28 @@ static void dw_hdmi_i2s_audio_shutdown(struct device *dev, void *data)
 	hdmi_write(audio, (u8)~HDMI_MC_SWRSTZ_I2SSWRST_REQ, HDMI_MC_SWRSTZ);
 }
 
+static void dw_hdmi_i2s_update_eld(struct device *dev, u8 *eld)
+{
+	struct dw_hdmi_i2s_audio_data *audio = dev_get_platdata(dev);
+	struct platform_device *hcpdev = dev_get_drvdata(dev);
+
+	if (!audio || !hcpdev)
+		return;
+
+	if (!memcmp(audio->eld, eld, sizeof(audio->eld)))
+		return;
+
+	memcpy(audio->eld, eld, sizeof(audio->eld));
+
+	hdmi_codec_eld_notify(&hcpdev->dev);
+}
+
 static int dw_hdmi_i2s_get_eld(struct device *dev, void *data,
 			       u8 *buf, size_t len)
 {
 	struct dw_hdmi_i2s_audio_data *audio = data;
 
-	memcpy(buf, audio->eld, min((size_t)MAX_ELD_BYTES, len));
+	memcpy(buf, audio->eld, min(sizeof(audio->eld), len));
 
 	return 0;
 }
@@ -192,10 +207,12 @@ static struct hdmi_codec_ops dw_hdmi_i2s_ops = {
 
 static int snd_dw_hdmi_probe(struct platform_device *pdev)
 {
-	struct dw_hdmi_i2s_audio_data *audio = pdev->dev.platform_data;
+	struct dw_hdmi_i2s_audio_data *audio = dev_get_platdata(&pdev->dev);
 	struct platform_device_info pdevinfo;
 	struct hdmi_codec_pdata pdata;
 	struct platform_device *platform;
+
+	memset(audio->eld, 0, sizeof(audio->eld));
 
 	pdata.ops		= &dw_hdmi_i2s_ops;
 	pdata.i2s		= 1;
@@ -216,12 +233,17 @@ static int snd_dw_hdmi_probe(struct platform_device *pdev)
 
 	dev_set_drvdata(&pdev->dev, platform);
 
+	dw_hdmi_set_update_eld(audio->hdmi, dw_hdmi_i2s_update_eld);
+
 	return 0;
 }
 
 static int snd_dw_hdmi_remove(struct platform_device *pdev)
 {
+	struct dw_hdmi_i2s_audio_data *audio = dev_get_platdata(&pdev->dev);
 	struct platform_device *platform = dev_get_drvdata(&pdev->dev);
+
+	dw_hdmi_set_update_eld(audio->hdmi, NULL);
 
 	platform_device_unregister(platform);
 
