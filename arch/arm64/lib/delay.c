@@ -24,12 +24,27 @@
 #include <linux/module.h>
 #include <linux/timex.h>
 
-struct delay_timer *delay_timer = NULL;
-EXPORT_SYMBOL(delay_timer);
+#include <clocksource/arm_arch_timer.h>
+
+#define USECS_TO_CYCLES(time_usecs)			\
+	xloops_to_cycles((time_usecs) * 0x10C7UL)
+
+static inline unsigned long xloops_to_cycles(unsigned long xloops)
+{
+	return (xloops * loops_per_jiffy * HZ) >> 32;
+}
 
 void __delay(unsigned long cycles)
 {
 	cycles_t start = get_cycles();
+
+	if (arch_timer_evtstrm_available()) {
+		const cycles_t timer_evt_period =
+			USECS_TO_CYCLES(ARCH_TIMER_EVT_STREAM_PERIOD_US);
+
+		while ((get_cycles() - start + timer_evt_period) < cycles)
+			wfe();
+	}
 
 	while ((get_cycles() - start) < cycles)
 		cpu_relax();
@@ -38,10 +53,7 @@ EXPORT_SYMBOL(__delay);
 
 inline void __const_udelay(unsigned long xloops)
 {
-	unsigned long loops;
-
-	loops = xloops * loops_per_jiffy * HZ;
-	__delay(loops >> 32);
+	__delay(xloops_to_cycles(xloops));
 }
 EXPORT_SYMBOL(__const_udelay);
 
@@ -56,18 +68,3 @@ void __ndelay(unsigned long nsecs)
 	__const_udelay(nsecs * 0x5UL); /* 2**32 / 1000000000 (rounded up) */
 }
 EXPORT_SYMBOL(__ndelay);
-int read_current_timer(unsigned long *timer_val)
-{
-	if (!delay_timer)
-		return -ENXIO;
-
-	*timer_val = delay_timer->read_current_timer();
-	return 0;
-}
-EXPORT_SYMBOL_GPL(read_current_timer);
-void __init register_current_timer_delay(struct delay_timer *timer)
-{
-	pr_info("Switching to timer-based delay loop\n");
-	delay_timer			= timer;
-
-}

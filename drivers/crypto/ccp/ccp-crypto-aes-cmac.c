@@ -1,7 +1,7 @@
 /*
  * AMD Cryptographic Coprocessor (CCP) AES CMAC crypto API support
  *
- * Copyright (C) 2013 Advanced Micro Devices, Inc.
+ * Copyright (C) 2013,2018 Advanced Micro Devices, Inc.
  *
  * Author: Tom Lendacky <thomas.lendacky@amd.com>
  *
@@ -23,7 +23,6 @@
 
 #include "ccp-crypto.h"
 
-
 static int ccp_aes_cmac_complete(struct crypto_async_request *async_req,
 				 int ret)
 {
@@ -38,14 +37,16 @@ static int ccp_aes_cmac_complete(struct crypto_async_request *async_req,
 	if (rctx->hash_rem) {
 		/* Save remaining data to buffer */
 		unsigned int offset = rctx->nbytes - rctx->hash_rem;
+
 		scatterwalk_map_and_copy(rctx->buf, rctx->src,
 					 offset, rctx->hash_rem, 0);
 		rctx->buf_count = rctx->hash_rem;
-	} else
+	} else {
 		rctx->buf_count = 0;
+	}
 
 	/* Update result area if supplied */
-	if (req->result)
+	if (req->result && rctx->final)
 		memcpy(req->result, rctx->iv, digest_size);
 
 e_free:
@@ -117,10 +118,19 @@ static int ccp_do_cmac_update(struct ahash_request *req, unsigned int nbytes,
 	if (rctx->buf_count) {
 		sg_init_one(&rctx->buf_sg, rctx->buf, rctx->buf_count);
 		sg = ccp_crypto_sg_table_add(&rctx->data_sg, &rctx->buf_sg);
+		if (!sg) {
+			ret = -EINVAL;
+			goto e_free;
+		}
 	}
 
-	if (nbytes)
+	if (nbytes) {
 		sg = ccp_crypto_sg_table_add(&rctx->data_sg, req->src);
+		if (!sg) {
+			ret = -EINVAL;
+			goto e_free;
+		}
+	}
 
 	if (need_pad) {
 		int pad_length = block_size - (len & (block_size - 1));
@@ -131,6 +141,10 @@ static int ccp_do_cmac_update(struct ahash_request *req, unsigned int nbytes,
 		rctx->pad[0] = 0x80;
 		sg_init_one(&rctx->pad_sg, rctx->pad, pad_length);
 		sg = ccp_crypto_sg_table_add(&rctx->data_sg, &rctx->pad_sg);
+		if (!sg) {
+			ret = -EINVAL;
+			goto e_free;
+		}
 	}
 	if (sg) {
 		sg_mark_end(sg);
@@ -160,6 +174,11 @@ static int ccp_do_cmac_update(struct ahash_request *req, unsigned int nbytes,
 	rctx->cmd.u.aes.cmac_final = final;
 
 	ret = ccp_crypto_enqueue_request(&req->base, &rctx->cmd);
+
+	return ret;
+
+e_free:
+	sg_free_table(&rctx->data_sg);
 
 	return ret;
 }
@@ -238,7 +257,7 @@ static int ccp_aes_cmac_import(struct ahash_request *req, const void *in)
 }
 
 static int ccp_aes_cmac_setkey(struct crypto_ahash *tfm, const u8 *key,
-			   unsigned int key_len)
+			       unsigned int key_len)
 {
 	struct ccp_ctx *ctx = crypto_tfm_ctx(crypto_ahash_tfm(tfm));
 	struct ccp_crypto_ahash_alg *alg =
@@ -327,8 +346,7 @@ static int ccp_aes_cmac_cra_init(struct crypto_tfm *tfm)
 
 	crypto_ahash_set_reqsize(ahash, sizeof(struct ccp_aes_cmac_req_ctx));
 
-	cipher_tfm = crypto_alloc_cipher("aes", 0,
-			CRYPTO_ALG_ASYNC | CRYPTO_ALG_NEED_FALLBACK);
+	cipher_tfm = crypto_alloc_cipher("aes", 0, CRYPTO_ALG_NEED_FALLBACK);
 	if (IS_ERR(cipher_tfm)) {
 		pr_warn("could not load aes cipher driver\n");
 		return PTR_ERR(cipher_tfm);
@@ -379,13 +397,12 @@ int ccp_register_aes_cmac_algs(struct list_head *head)
 	base = &halg->base;
 	snprintf(base->cra_name, CRYPTO_MAX_ALG_NAME, "cmac(aes)");
 	snprintf(base->cra_driver_name, CRYPTO_MAX_ALG_NAME, "cmac-aes-ccp");
-	base->cra_flags = CRYPTO_ALG_TYPE_AHASH | CRYPTO_ALG_ASYNC |
+	base->cra_flags = CRYPTO_ALG_ASYNC |
 			  CRYPTO_ALG_KERN_DRIVER_ONLY |
 			  CRYPTO_ALG_NEED_FALLBACK;
 	base->cra_blocksize = AES_BLOCK_SIZE;
 	base->cra_ctxsize = sizeof(struct ccp_ctx);
 	base->cra_priority = CCP_CRA_PRIORITY;
-	base->cra_type = &crypto_ahash_type;
 	base->cra_init = ccp_aes_cmac_cra_init;
 	base->cra_exit = ccp_aes_cmac_cra_exit;
 	base->cra_module = THIS_MODULE;
@@ -393,7 +410,7 @@ int ccp_register_aes_cmac_algs(struct list_head *head)
 	ret = crypto_register_ahash(alg);
 	if (ret) {
 		pr_err("%s ahash algorithm registration error (%d)\n",
-			base->cra_name, ret);
+		       base->cra_name, ret);
 		kfree(ccp_alg);
 		return ret;
 	}

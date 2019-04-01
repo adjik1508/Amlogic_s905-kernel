@@ -14,17 +14,15 @@
 #include <linux/module.h>
 
 #define DRIVER_DESC    "ATI/Philips USB RF remote driver"
-#define DRIVER_VERSION "0.3"
 
 MODULE_DESCRIPTION(DRIVER_DESC);
-MODULE_VERSION(DRIVER_VERSION);
 MODULE_AUTHOR("Ville Syrjala <syrjala@sci.fi>");
 MODULE_LICENSE("GPL");
 
 /*
  * ATI Remote Wonder II Channel Configuration
  *
- * The remote control can by assigned one of sixteen "channels" in order to facilitate
+ * The remote control can be assigned one of sixteen "channels" in order to facilitate
  * the use of multiple remote controls within range of each other.
  * A remote's "channel" may be altered by pressing and holding the "PC" button for
  * approximately 3 seconds, after which the button will slowly flash the count of the
@@ -94,7 +92,7 @@ static int ati_remote2_get_mode_mask(char *buffer,
 
 static unsigned int channel_mask = ATI_REMOTE2_MAX_CHANNEL_MASK;
 #define param_check_channel_mask(name, p) __param_check(name, p, unsigned int)
-static struct kernel_param_ops param_ops_channel_mask = {
+static const struct kernel_param_ops param_ops_channel_mask = {
 	.set = ati_remote2_set_channel_mask,
 	.get = ati_remote2_get_channel_mask,
 };
@@ -103,14 +101,14 @@ MODULE_PARM_DESC(channel_mask, "Bitmask of channels to accept <15:Channel16>...<
 
 static unsigned int mode_mask = ATI_REMOTE2_MAX_MODE_MASK;
 #define param_check_mode_mask(name, p) __param_check(name, p, unsigned int)
-static struct kernel_param_ops param_ops_mode_mask = {
+static const struct kernel_param_ops param_ops_mode_mask = {
 	.set = ati_remote2_set_mode_mask,
 	.get = ati_remote2_get_mode_mask,
 };
 module_param(mode_mask, mode_mask, 0644);
 MODULE_PARM_DESC(mode_mask, "Bitmask of modes to accept <4:PC><3:AUX4><2:AUX3><1:AUX2><0:AUX1>");
 
-static struct usb_device_id ati_remote2_id_table[] = {
+static const struct usb_device_id ati_remote2_id_table[] = {
 	{ USB_DEVICE(0x0471, 0x0602) },	/* ATI Remote Wonder II */
 	{ }
 };

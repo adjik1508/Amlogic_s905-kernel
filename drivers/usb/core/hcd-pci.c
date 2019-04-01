@@ -1,19 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * (C) Copyright David Brownell 2000-2002
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation; either version 2 of the License, or (at your
- * option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
- * or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
- * for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #include <linux/kernel.h>
@@ -28,7 +15,6 @@
 #ifdef CONFIG_PPC_PMAC
 #include <asm/machdep.h>
 #include <asm/pmac_feature.h>
-#include <asm/pci-bridge.h>
 #include <asm/prom.h>
 #endif
 
@@ -201,7 +187,6 @@ int usb_hcd_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	if (pci_enable_device(dev) < 0)
 		return -ENODEV;
-	dev->current_state = PCI_D0;
 
 	/*
 	 * The xHCI driver has its own irq management
@@ -390,6 +375,8 @@ void usb_hcd_pci_shutdown(struct pci_dev *dev)
 	if (test_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags) &&
 			hcd->driver->shutdown) {
 		hcd->driver->shutdown(hcd);
+		if (usb_hcd_is_primary_hcd(hcd) && hcd->irq > 0)
+			free_irq(hcd->irq, hcd);
 		pci_disable_device(dev);
 	}
 }
@@ -437,7 +424,6 @@ static int check_root_hub_suspended(struct device *dev)
 	return 0;
 }
 
-#if defined(CONFIG_PM_SLEEP) || defined(CONFIG_PM_RUNTIME)
 static int suspend_common(struct device *dev, bool do_wakeup)
 {
 	struct pci_dev		*pci_dev = to_pci_dev(dev);
@@ -529,14 +515,11 @@ static int resume_common(struct device *dev, int event)
 				event == PM_EVENT_RESTORE);
 		if (retval) {
 			dev_err(dev, "PCI post-resume error %d!\n", retval);
-			if (hcd->shared_hcd)
-				usb_hc_died(hcd->shared_hcd);
 			usb_hc_died(hcd);
 		}
 	}
 	return retval;
 }
-#endif	/* SLEEP || RUNTIME */
 
 #ifdef	CONFIG_PM_SLEEP
 
@@ -586,12 +569,7 @@ static int hcd_pci_suspend_noirq(struct device *dev)
 
 static int hcd_pci_resume_noirq(struct device *dev)
 {
-	struct pci_dev		*pci_dev = to_pci_dev(dev);
-
-	powermac_set_asic(pci_dev, 1);
-
-	/* Go back to D0 and disable remote wakeup */
-	pci_back_from_sleep(pci_dev);
+	powermac_set_asic(to_pci_dev(dev), 1);
 	return 0;
 }
 
@@ -615,8 +593,6 @@ static int hcd_pci_restore(struct device *dev)
 
 #endif	/* CONFIG_PM_SLEEP */
 
-#ifdef	CONFIG_PM_RUNTIME
-
 static int hcd_pci_runtime_suspend(struct device *dev)
 {
 	int	retval;
@@ -637,13 +613,6 @@ static int hcd_pci_runtime_resume(struct device *dev)
 	dev_dbg(dev, "hcd_pci_runtime_resume: %d\n", retval);
 	return retval;
 }
-
-#else
-
-#define hcd_pci_runtime_suspend	NULL
-#define hcd_pci_runtime_resume	NULL
-
-#endif	/* CONFIG_PM_RUNTIME */
 
 const struct dev_pm_ops usb_hcd_pci_pm_ops = {
 	.suspend	= hcd_pci_suspend,

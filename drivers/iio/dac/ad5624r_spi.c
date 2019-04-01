@@ -67,7 +67,6 @@ static int ad5624r_write_raw(struct iio_dev *indio_dev,
 			       long mask)
 {
 	struct ad5624r_state *st = iio_priv(indio_dev);
-	int ret;
 
 	switch (mask) {
 	case IIO_CHAN_INFO_RAW:
@@ -79,10 +78,8 @@ static int ad5624r_write_raw(struct iio_dev *indio_dev,
 				chan->address, val,
 				chan->scan_type.shift);
 	default:
-		ret = -EINVAL;
+		return -EINVAL;
 	}
-
-	return -EINVAL;
 }
 
 static const char * const ad5624r_powerdown_modes[] = {
@@ -152,7 +149,6 @@ static ssize_t ad5624r_write_dac_powerdown(struct iio_dev *indio_dev,
 static const struct iio_info ad5624r_info = {
 	.write_raw = ad5624r_write_raw,
 	.read_raw = ad5624r_read_raw,
-	.driver_module = THIS_MODULE,
 };
 
 static const struct iio_chan_spec_ext_info ad5624r_ext_info[] = {
@@ -309,7 +305,6 @@ MODULE_DEVICE_TABLE(spi, ad5624r_id);
 static struct spi_driver ad5624r_driver = {
 	.driver = {
 		   .name = "ad5624r",
-		   .owner = THIS_MODULE,
 		   },
 	.probe = ad5624r_probe,
 	.remove = ad5624r_remove,
