@@ -493,6 +493,71 @@
 							bias-disable;
 						};
 					};
+
+					i2s_am_clk_pins: i2s_am_clk {
+						mux {
+							groups = "i2s_am_clk";
+							function = "i2s_out";
+							bias-disable;
+						};
+					};
+
+					i2s_out_ao_clk_pins: i2s_out_ao_clk {
+						mux {
+							groups = "i2s_out_ao_clk";
+							function = "i2s_out";
+							bias-disable;
+						};
+					};
+
+					i2s_out_lr_clk_pins: i2s_out_lr_clk {
+						mux {
+							groups = "i2s_out_lr_clk";
+							function = "i2s_out";
+							bias-disable;
+						};
+					};
+
+					i2s_out_ch01_pins: i2s_out_ch01 {
+						mux {
+							groups = "i2s_out_ch01";
+							function = "i2s_out";
+							bias-disable;
+						};
+					};
+
+					i2sout_ch23_z_pins: i2sout_ch23_z {
+						mux {
+							groups = "i2sout_ch23_z";
+							function = "i2s_out";
+							bias-disable;
+						};
+					};
+
+					i2sout_ch45_z_pins: i2sout_ch45_z {
+						mux {
+							groups = "i2sout_ch45_z";
+							function = "i2s_out";
+							bias-disable;
+						};
+					};
+
+					i2sout_ch67_z_pins: i2sout_ch67_z {
+						mux {
+							groups = "i2sout_ch67_z";
+							function = "i2s_out";
+							bias-disable;
+						};
+					};
+
+					spdif_out_h_pins: spdif_out_ao_h {
+						mux {
+							groups = "spdif_out_h";
+							function = "spdif_out";
+							bias-disable;
+						};
+					};
+
 				};
 			};
 
@@ -782,6 +847,39 @@
 							bias-disable;
 						};
 					};
+
+					i2s_out_ch23_ao_pins: i2s_out_ch23_ao {
+						mux {
+							groups = "i2s_out_ch23_ao";
+							function = "i2s_out_ao";
+							bias-disable;
+						};
+					};
+
+					i2s_out_ch45_ao_pins: i2s_out_ch45_ao {
+						mux {
+							groups = "i2s_out_ch45_ao";
+							function = "i2s_out_ao";
+							bias-disable;
+						};
+					};
+
+					spdif_out_ao_6_pins: spdif_out_ao_6 {
+						mux {
+							groups = "spdif_out_ao_6";
+							function = "spdif_out_ao";
+							bias-disable;
+						};
+					};
+
+					spdif_out_ao_9_pins: spdif_out_ao_9 {
+						mux {
+							groups = "spdif_out_ao_9";
+							function = "spdif_out_ao";
+							bias-disable;
+						};
+					};
+
 				};
 			};
 
@@ -969,6 +1067,29 @@
 				reg = <0x0 0x18000 0x0 0x10>;
 			};
 
+			audio: audio@5400 {
+				compatible = "amlogic,meson-gx-audio-core";
+				reg = <0x0 0x5400 0x0 0x2ac>,
+				      <0x0 0xa000 0x0 0x304>;
+				reg-names = "aiu", "audin";
+				status = "disabled";
+
+				aiu_i2s: audio-controller-0 {
+					#sound-dai-cells = <0>;
+					compatible = "amlogic,meson-aiu-i2s";
+					interrupts = <GIC_SPI 48 IRQ_TYPE_EDGE_RISING>;
+					status = "disabled";
+				};
+
+				aiu_spdif: audio-controller-1 {
+					#sound-dai-cells = <0>;
+					compatible = "amlogic,meson-aiu-spdif";
+					interrupts = <GIC_SPI 50 IRQ_TYPE_EDGE_RISING>;
+					status = "disabled";
+				};
+
+			};
+
 			uart_C: serial@22000 {
 				compatible = "amlogic,meson-gx-uart";
 				reg = <0x0 0x22000 0x0 0x18>;
@@ -1122,3 +1243,4 @@
 	};
 
 };
+
