@@ -239,7 +239,8 @@ static inline int clk_prepare(struct clk *clk)
 	return 0;
 }
 
-static inline int __must_check clk_bulk_prepare(int num_clks, struct clk_bulk_data *clks)
+static inline int __must_check
+clk_bulk_prepare(int num_clks, const struct clk_bulk_data *clks)
 {
 	might_sleep();
 	return 0;
@@ -263,7 +264,8 @@ static inline void clk_unprepare(struct clk *clk)
 {
 	might_sleep();
 }
-static inline void clk_bulk_unprepare(int num_clks, struct clk_bulk_data *clks)
+static inline void clk_bulk_unprepare(int num_clks,
+				      const struct clk_bulk_data *clks)
 {
 	might_sleep();
 }
@@ -630,6 +632,19 @@ long clk_round_rate(struct clk *clk, unsigned long rate);
 int clk_set_rate(struct clk *clk, unsigned long rate);
 
 /**
+ * clk_invalidate_rate - invalidate and recalc rate of the clock and it's tree
+ * @clk: the clk whose rate is too be invalidated
+ *
+ * If it's known the actual hardware state of a clock tree has changed,
+ * this call will invalidate the cached rate of the clk and it's possible
+ * parents tree to permit recalculation of the actual rate.
+ *
+ * Returns 0 on success, -EERROR otherwise.
+ * If clk is NULL then returns 0.
+ */
+int clk_invalidate_rate(struct clk *clk);
+
+/**
  * clk_set_rate_exclusive- set the clock rate and claim exclusivity over
  *                         clock source
  * @clk: clock source
@@ -820,7 +835,8 @@ static inline int clk_enable(struct clk *clk)
 	return 0;
 }
 
-static inline int __must_check clk_bulk_enable(int num_clks, struct clk_bulk_data *clks)
+static inline int __must_check clk_bulk_enable(int num_clks,
+					       const struct clk_bulk_data *clks)
 {
 	return 0;
 }
@@ -829,7 +845,7 @@ static inline void clk_disable(struct clk *clk) {}
 
 
 static inline void clk_bulk_disable(int num_clks,
-				    struct clk_bulk_data *clks) {}
+				    const struct clk_bulk_data *clks) {}
 
 static inline unsigned long clk_get_rate(struct clk *clk)
 {
@@ -918,8 +934,8 @@ static inline void clk_disable_unprepare(struct clk *clk)
 	clk_unprepare(clk);
 }
 
-static inline int __must_check clk_bulk_prepare_enable(int num_clks,
-					struct clk_bulk_data *clks)
+static inline int __must_check
+clk_bulk_prepare_enable(int num_clks, const struct clk_bulk_data *clks)
 {
 	int ret;
 
@@ -934,7 +950,7 @@ static inline int __must_check clk_bulk_prepare_enable(int num_clks,
 }
 
 static inline void clk_bulk_disable_unprepare(int num_clks,
-					      struct clk_bulk_data *clks)
+					      const struct clk_bulk_data *clks)
 {
 	clk_bulk_disable(num_clks, clks);
 	clk_bulk_unprepare(num_clks, clks);

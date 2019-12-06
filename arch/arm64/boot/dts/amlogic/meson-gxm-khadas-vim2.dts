@@ -18,7 +18,7 @@
 
 	aliases {
 		serial0 = &uart_AO;
-		serial1 = &uart_AO_B;
+		serial2 = &uart_AO_B;
 	};
 
 	chosen {
@@ -417,10 +417,13 @@
 	#size-cells = <0>;
 
 	bus-width = <4>;
-	max-frequency = <50000000>;
+	max-frequency = <100000000>;
 
 	non-removable;
 	disable-wp;
+
+	/* WiFi firmware requires power to be kept while in suspend */
+	keep-power-in-suspend;
 
 	mmc-pwrseq = <&sdio_pwrseq>;
 

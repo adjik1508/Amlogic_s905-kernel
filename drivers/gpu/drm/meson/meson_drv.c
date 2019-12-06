@@ -8,35 +8,32 @@
  *     Jasper St. Pierre <jstpierre@mecheye.net>
  */
 
-#include <linux/kernel.h>
-#include <linux/module.h>
-#include <linux/mutex.h>
-#include <linux/platform_device.h>
 #include <linux/component.h>
+#include <linux/module.h>
 #include <linux/of_graph.h>
+#include <linux/platform_device.h>
+#include <linux/soc/amlogic/meson-canvas.h>
 
-#include <drm/drmP.h>
-#include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
-#include <drm/drm_fb_cma_helper.h>
+#include <drm/drm_drv.h>
 #include <drm/drm_fb_helper.h>
-#include <drm/drm_flip_work.h>
 #include <drm/drm_gem_cma_helper.h>
 #include <drm/drm_gem_framebuffer_helper.h>
-#include <drm/drm_plane_helper.h>
+#include <drm/drm_irq.h>
+#include <drm/drm_modeset_helper_vtables.h>
 #include <drm/drm_probe_helper.h>
-#include <drm/drm_rect.h>
+#include <drm/drm_vblank.h>
 
-#include "meson_drv.h"
-#include "meson_plane.h"
-#include "meson_overlay.h"
 #include "meson_crtc.h"
-#include "meson_venc_cvbs.h"
-
-#include "meson_vpp.h"
-#include "meson_viu.h"
-#include "meson_venc.h"
+#include "meson_drv.h"
+#include "meson_overlay.h"
+#include "meson_plane.h"
+#include "meson_osd_afbcd.h"
 #include "meson_registers.h"
+#include "meson_venc_cvbs.h"
+#include "meson_viu.h"
+#include "meson_vpp.h"
+#include "meson_rdma.h"
 
 #define DRIVER_NAME "meson"
 #define DRIVER_DESC "Amlogic Meson DRM driver"
@@ -93,9 +90,7 @@ static int meson_dumb_create(struct drm_file *file, struct drm_device *dev,
 DEFINE_DRM_GEM_CMA_FOPS(fops);
 
 static struct drm_driver meson_driver = {
-	.driver_features	= DRIVER_GEM |
-				  DRIVER_MODESET | DRIVER_PRIME |
-				  DRIVER_ATOMIC,
+	.driver_features	= DRIVER_GEM | DRIVER_MODESET | DRIVER_ATOMIC,
 
 	/* IRQ */
 	.irq_handler		= meson_irq,
@@ -103,8 +98,6 @@ static struct drm_driver meson_driver = {
 	/* PRIME Ops */
 	.prime_handle_to_fd	= drm_gem_prime_handle_to_fd,
 	.prime_fd_to_handle	= drm_gem_prime_fd_to_handle,
-	.gem_prime_import	= drm_gem_prime_import,
-	.gem_prime_export	= drm_gem_prime_export,
 	.gem_prime_get_sg_table	= drm_gem_cma_prime_get_sg_table,
 	.gem_prime_import_sg_table = drm_gem_cma_prime_import_sg_table,
 	.gem_prime_vmap		= drm_gem_cma_prime_vmap,
@@ -193,6 +186,7 @@ static void meson_remove_framebuffers(void)
 static int meson_drv_bind_master(struct device *dev, bool has_components)
 {
 	struct platform_device *pdev = to_platform_device(dev);
+	const struct meson_drm_match_data *match;
 	struct meson_drm *priv;
 	struct drm_device *drm;
 	struct resource *res;
@@ -204,6 +198,10 @@ static int meson_drv_bind_master(struct device *dev, bool has_components)
 		dev_err(dev, "No output connector available\n");
 		return -ENODEV;
 	}
+
+	match = of_device_get_match_data(dev);
+	if (!match)
+		return -ENODEV;
 
 	drm = drm_dev_alloc(&meson_driver, dev);
 	if (IS_ERR(drm))
@@ -217,6 +215,8 @@ static int meson_drv_bind_master(struct device *dev, bool has_components)
 	drm->dev_private = priv;
 	priv->drm = drm;
 	priv->dev = dev;
+	priv->compat = match->compat;
+	priv->afbcd.ops = match->afbcd_ops;
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "vpu");
 	regs = devm_ioremap_resource(dev, res);
@@ -296,6 +296,11 @@ static int meson_drv_bind_master(struct device *dev, bool has_components)
 	meson_venc_init(priv);
 	meson_vpp_init(priv);
 	meson_viu_init(priv);
+	if (priv->afbcd.ops) {
+		ret = priv->afbcd.ops->init(priv);
+		if (ret)
+			return ret;
+	}
 
 	/* Encoder Initialization */
 
@@ -366,12 +371,16 @@ static void meson_drv_unbind(struct device *dev)
 		meson_canvas_free(priv->canvas, priv->canvas_id_vd1_2);
 	}
 
+	if (priv->afbcd.ops) {
+		priv->afbcd.ops->reset(priv);
+		meson_rdma_free(priv);
+	}
+
 	drm_dev_unregister(drm);
 	drm_irq_uninstall(drm);
 	drm_kms_helper_poll_fini(drm);
 	drm_mode_config_cleanup(drm);
 	drm_dev_put(drm);
-
 }
 
 static const struct component_master_ops meson_drv_master_ops = {
@@ -461,11 +470,33 @@ static int meson_drv_probe(struct platform_device *pdev)
 	return 0;
 };
 
+static struct meson_drm_match_data meson_drm_gxbb_data = {
+	.compat = VPU_COMPATIBLE_GXBB,
+};
+
+static struct meson_drm_match_data meson_drm_gxl_data = {
+	.compat = VPU_COMPATIBLE_GXL,
+};
+
+static struct meson_drm_match_data meson_drm_gxm_data = {
+	.compat = VPU_COMPATIBLE_GXM,
+	.afbcd_ops = &meson_afbcd_gxm_ops,
+};
+
+static struct meson_drm_match_data meson_drm_g12a_data = {
+	.compat = VPU_COMPATIBLE_G12A,
+	.afbcd_ops = &meson_afbcd_g12a_ops,
+};
+
 static const struct of_device_id dt_match[] = {
-	{ .compatible = "amlogic,meson-gxbb-vpu" },
-	{ .compatible = "amlogic,meson-gxl-vpu" },
-	{ .compatible = "amlogic,meson-gxm-vpu" },
-	{ .compatible = "amlogic,meson-g12a-vpu" },
+	{ .compatible = "amlogic,meson-gxbb-vpu",
+	  .data       = (void *)&meson_drm_gxbb_data },
+	{ .compatible = "amlogic,meson-gxl-vpu",
+	  .data       = (void *)&meson_drm_gxl_data },
+	{ .compatible = "amlogic,meson-gxm-vpu",
+	  .data       = (void *)&meson_drm_gxm_data },
+	{ .compatible = "amlogic,meson-g12a-vpu",
+	  .data       = (void *)&meson_drm_g12a_data },
 	{}
 };
 MODULE_DEVICE_TABLE(of, dt_match);

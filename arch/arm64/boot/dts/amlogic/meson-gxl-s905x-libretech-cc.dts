@@ -12,7 +12,7 @@
 #include "meson-gxl-s905x.dtsi"
 
 / {
-	compatible = "libretech,lepotato", "amlogic,s905x",
+	compatible = "libretech,aml-s905x-cc", "amlogic,s905x",
 		     "amlogic,meson-gxl";
 	model = "Libre Computer AML-S905X-CC";
 

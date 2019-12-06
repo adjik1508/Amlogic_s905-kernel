@@ -875,7 +875,7 @@
 };
 
 &vdec {
-	compatible = "amlogic,gxbb-vdec";
+	compatible = "amlogic,gxbb-vdec", "amlogic,gx-vdec";
 	clocks = <&clkc CLKID_DOS_PARSER>,
 		 <&clkc CLKID_DOS>,
 		 <&clkc CLKID_VDEC_1>,
