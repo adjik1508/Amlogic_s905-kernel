@@ -5,29 +5,30 @@
  * Copyright (C) 2015 Amlogic, Inc. All rights reserved.
  */
 
+#include <linux/clk.h>
+#include <linux/component.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/component.h>
 #include <linux/of_device.h>
 #include <linux/of_graph.h>
-#include <linux/reset.h>
-#include <linux/clk.h>
 #include <linux/regulator/consumer.h>
+#include <linux/reset.h>
 
-#include <drm/drmP.h>
+#include <drm/bridge/dw_hdmi.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_device.h>
 #include <drm/drm_edid.h>
 #include <drm/drm_probe_helper.h>
-#include <drm/bridge/dw_hdmi.h>
+#include <drm/drm_print.h>
 
-#include <uapi/linux/media-bus-format.h>
-#include <uapi/linux/videodev2.h>
+#include <linux/media-bus-format.h>
+#include <linux/videodev2.h>
 
 #include "meson_drv.h"
-#include "meson_venc.h"
-#include "meson_vclk.h"
 #include "meson_dw_hdmi.h"
 #include "meson_registers.h"
+#include "meson_vclk.h"
+#include "meson_venc.h"
 
 #define DRIVER_NAME "meson-dw-hdmi"
 #define DRIVER_DESC "Amlogic Meson HDMI-TX DRM driver"
@@ -147,8 +148,6 @@ struct meson_dw_hdmi {
 	struct regulator *hdmi_supply;
 	u32 irq_stat;
 	struct dw_hdmi *hdmi;
-	unsigned long input_bus_format;
-	unsigned long output_bus_format;
 };
 #define encoder_to_meson_dw_hdmi(x) \
 	container_of(x, struct meson_dw_hdmi, encoder)
@@ -298,10 +297,6 @@ static void meson_hdmi_phy_setup_mode(struct meson_dw_hdmi *dw_hdmi,
 	struct meson_drm *priv = dw_hdmi->priv;
 	unsigned int pixel_clock = mode->clock;
 
-	/* For 420, pixel clock is half unlike venc clock */
-	if (dw_hdmi->input_bus_format == MEDIA_BUS_FMT_UYYVYY8_0_5X24)
-		pixel_clock /= 2;
-
 	if (dw_hdmi_is_compatible(dw_hdmi, "amlogic,meson-gxl-dw-hdmi") ||
 	    dw_hdmi_is_compatible(dw_hdmi, "amlogic,meson-gxm-dw-hdmi")) {
 		if (pixel_clock >= 371250) {
@@ -377,36 +372,25 @@ static void dw_hdmi_set_vclk(struct meson_dw_hdmi *dw_hdmi,
 {
 	struct meson_drm *priv = dw_hdmi->priv;
 	int vic = drm_match_cea_mode(mode);
-	unsigned int phy_freq;
 	unsigned int vclk_freq;
 	unsigned int venc_freq;
 	unsigned int hdmi_freq;
 
 	vclk_freq = mode->clock;
 
-	/* For 420, pixel clock is half unlike venc clock */
-	if (dw_hdmi->input_bus_format == MEDIA_BUS_FMT_UYYVYY8_0_5X24)
-		vclk_freq /= 2;
-
-	/* TMDS clock is pixel_clock * 10 */
-	phy_freq = vclk_freq * 10;
-
 	if (!vic) {
-		meson_vclk_setup(priv, MESON_VCLK_TARGET_DMT, phy_freq,
-				 vclk_freq, vclk_freq, vclk_freq, false);
+		meson_vclk_setup(priv, MESON_VCLK_TARGET_DMT, vclk_freq,
+				 vclk_freq, vclk_freq, false);
 		return;
 	}
 
-	/* 480i/576i needs global pixel doubling */
 	if (mode->flags & DRM_MODE_FLAG_DBLCLK)
 		vclk_freq *= 2;
 
 	venc_freq = vclk_freq;
 	hdmi_freq = vclk_freq;
 
-	/* VENC double pixels for 1080i, 720p and YUV420 modes */
-	if (meson_venc_hdmi_venc_repeat(vic) ||
-	    dw_hdmi->input_bus_format == MEDIA_BUS_FMT_UYYVYY8_0_5X24)
+	if (meson_venc_hdmi_venc_repeat(vic))
 		venc_freq *= 2;
 
 	vclk_freq = max(venc_freq, hdmi_freq);
@@ -414,11 +398,11 @@ static void dw_hdmi_set_vclk(struct meson_dw_hdmi *dw_hdmi,
 	if (mode->flags & DRM_MODE_FLAG_DBLCLK)
 		venc_freq /= 2;
 
-	DRM_DEBUG_DRIVER("vclk:%d phy=%d venc=%d hdmi=%d enci=%d\n",
-		phy_freq, vclk_freq, venc_freq, hdmi_freq,
+	DRM_DEBUG_DRIVER("vclk:%d venc=%d hdmi=%d enci=%d\n",
+		vclk_freq, venc_freq, hdmi_freq,
 		priv->venc.hdmi_use_enci);
 
-	meson_vclk_setup(priv, MESON_VCLK_TARGET_HDMI, phy_freq, vclk_freq,
+	meson_vclk_setup(priv, MESON_VCLK_TARGET_HDMI, vclk_freq,
 			 venc_freq, hdmi_freq, priv->venc.hdmi_use_enci);
 }
 
@@ -445,15 +429,16 @@ static int dw_hdmi_phy_init(struct dw_hdmi *hdmi, void *data,
 	/* Enable internal pixclk, tmds_clk, spdif_clk, i2s_clk, cecclk */
 	dw_hdmi_top_write_bits(dw_hdmi, HDMITX_TOP_CLK_CNTL,
 			       0x3, 0x3);
+
+	/* Enable cec_clk and hdcp22_tmdsclk_en */
 	dw_hdmi_top_write_bits(dw_hdmi, HDMITX_TOP_CLK_CNTL,
 			       0x3 << 4, 0x3 << 4);
 
 	/* Enable normal output to PHY */
 	dw_hdmi->data->top_write(dw_hdmi, HDMITX_TOP_BIST_CNTL, BIT(12));
 
-	/* TMDS pattern setup */
-	if (mode->clock > 340000 &&
-	    dw_hdmi->input_bus_format == MEDIA_BUS_FMT_YUV8_1X24) {
+	/* TMDS pattern setup (TOFIX Handle the YUV420 case) */
+	if (mode->clock > 340000) {
 		dw_hdmi->data->top_write(dw_hdmi, HDMITX_TOP_TMDS_CLK_PTTN_01,
 				  0);
 		dw_hdmi->data->top_write(dw_hdmi, HDMITX_TOP_TMDS_CLK_PTTN_23,
@@ -628,8 +613,6 @@ dw_hdmi_mode_valid(struct drm_connector *connector,
 		   const struct drm_display_mode *mode)
 {
 	struct meson_drm *priv = connector->dev->dev_private;
-	bool is_hdmi2_sink = connector->display_info.hdmi.scdc.supported;
-	unsigned int phy_freq;
 	unsigned int vclk_freq;
 	unsigned int venc_freq;
 	unsigned int hdmi_freq;
@@ -638,11 +621,9 @@ dw_hdmi_mode_valid(struct drm_connector *connector,
 
 	DRM_DEBUG_DRIVER("Modeline " DRM_MODE_FMT "\n", DRM_MODE_ARG(mode));
 
-	/* If sink does not support 540MHz, reject the non-420 HDMI2 modes */
+	/* If sink max TMDS clock, we reject the mode */
 	if (connector->display_info.max_tmds_clock &&
-	    mode->clock > connector->display_info.max_tmds_clock &&
-	    !drm_mode_is_420_only(&connector->display_info, mode) &&
-	    !drm_mode_is_420_also(&connector->display_info, mode))
+	    mode->clock > connector->display_info.max_tmds_clock)
 		return MODE_BAD;
 
 	/* Check against non-VIC supported modes */
@@ -658,15 +639,6 @@ dw_hdmi_mode_valid(struct drm_connector *connector,
 
 	vclk_freq = mode->clock;
 
-	/* For 420, pixel clock is half unlike venc clock */
-	if (drm_mode_is_420_only(&connector->display_info, mode) ||
-	    (!is_hdmi2_sink &&
-	     drm_mode_is_420_also(&connector->display_info, mode)))
-		vclk_freq /= 2;
-
-	/* TMDS clock is pixel_clock * 10 */
-	phy_freq = vclk_freq * 10;
-
 	/* 480i/576i needs global pixel doubling */
 	if (mode->flags & DRM_MODE_FLAG_DBLCLK)
 		vclk_freq *= 2;
@@ -674,11 +646,8 @@ dw_hdmi_mode_valid(struct drm_connector *connector,
 	venc_freq = vclk_freq;
 	hdmi_freq = vclk_freq;
 
-	/* VENC double pixels for 1080i, 720p and YUV420 modes */
-	if (meson_venc_hdmi_venc_repeat(vic) ||
-	    drm_mode_is_420_only(&connector->display_info, mode) ||
-	    (!is_hdmi2_sink &&
-	     drm_mode_is_420_also(&connector->display_info, mode)))
+	/* VENC double pixels for 1080i and 720p modes */
+	if (meson_venc_hdmi_venc_repeat(vic))
 		venc_freq *= 2;
 
 	vclk_freq = max(venc_freq, hdmi_freq);
@@ -686,10 +655,10 @@ dw_hdmi_mode_valid(struct drm_connector *connector,
 	if (mode->flags & DRM_MODE_FLAG_DBLCLK)
 		venc_freq /= 2;
 
-	dev_dbg(connector->dev->dev, "%s: vclk:%d phy=%d venc=%d hdmi=%d\n",
-		__func__, phy_freq, vclk_freq, venc_freq, hdmi_freq);
+	dev_dbg(connector->dev->dev, "%s: vclk:%d venc=%d hdmi=%d\n", __func__,
+		vclk_freq, venc_freq, hdmi_freq);
 
-	return meson_vclk_vic_supported_freq(phy_freq, vclk_freq);
+	return meson_vclk_vic_supported_freq(vclk_freq);
 }
 
 /* Encoder */
@@ -707,24 +676,6 @@ static int meson_venc_hdmi_encoder_atomic_check(struct drm_encoder *encoder,
 					struct drm_crtc_state *crtc_state,
 					struct drm_connector_state *conn_state)
 {
-	struct meson_dw_hdmi *dw_hdmi = encoder_to_meson_dw_hdmi(encoder);
-	struct drm_display_info *info = &conn_state->connector->display_info;
-	struct drm_display_mode *mode = &crtc_state->mode;
-	bool is_hdmi2_sink =
-		conn_state->connector->display_info.hdmi.scdc.supported;
-
-	if (drm_mode_is_420_only(info, mode) ||
-	    (!is_hdmi2_sink && drm_mode_is_420_also(info, mode))) {
-		dw_hdmi->input_bus_format = MEDIA_BUS_FMT_UYYVYY8_0_5X24;
-		dw_hdmi->output_bus_format = MEDIA_BUS_FMT_UYYVYY8_0_5X24;
-	} else {
-		dw_hdmi->input_bus_format = MEDIA_BUS_FMT_YUV8_1X24;
-		if (info->color_formats & DRM_COLOR_FORMAT_YCRCB444)
-			dw_hdmi->output_bus_format = MEDIA_BUS_FMT_YUV8_1X24;
-		else
-			dw_hdmi->output_bus_format = MEDIA_BUS_FMT_RGB888_1X24;
-	}
-
 	return 0;
 }
 
@@ -762,29 +713,17 @@ static void meson_venc_hdmi_encoder_mode_set(struct drm_encoder *encoder,
 	struct meson_dw_hdmi *dw_hdmi = encoder_to_meson_dw_hdmi(encoder);
 	struct meson_drm *priv = dw_hdmi->priv;
 	int vic = drm_match_cea_mode(mode);
-	unsigned int ycrcb_map = MESON_VENC_MAP_CB_Y_CR;
-	bool yuv420_mode = false;
 
 	DRM_DEBUG_DRIVER("\"%s\" vic %d\n", mode->name, vic);
 
-	if (dw_hdmi->input_bus_format == MEDIA_BUS_FMT_UYYVYY8_0_5X24) {
-		ycrcb_map = MESON_VENC_MAP_CR_Y_CB;
-		yuv420_mode = true;
-	}
-
 	/* VENC + VENC-DVI Mode setup */
-	meson_venc_hdmi_mode_set(priv, vic, ycrcb_map, yuv420_mode, mode);
+	meson_venc_hdmi_mode_set(priv, vic, mode);
 
 	/* VCLK Set clock */
 	dw_hdmi_set_vclk(dw_hdmi, mode);
 
-	if (dw_hdmi->input_bus_format == MEDIA_BUS_FMT_UYYVYY8_0_5X24)
-		/* Setup YUV420 to HDMI-TX, no 10bit diphering */
-		writel_relaxed(2 | (2 << 2),
-			       priv->io_base + _REG(VPU_HDMI_FMT_CTRL));
-	else
-		/* Setup YUV444 to HDMI-TX, no 10bit diphering */
-		writel_relaxed(0, priv->io_base + _REG(VPU_HDMI_FMT_CTRL));
+	/* Setup YUV444 to HDMI-TX, no 10bit diphering */
+	writel_relaxed(0, priv->io_base + _REG(VPU_HDMI_FMT_CTRL));
 }
 
 static const struct drm_encoder_helper_funcs
@@ -841,20 +780,6 @@ static const struct meson_dw_hdmi_data meson_dw_hdmi_g12a_data = {
 	.dwc_write = dw_hdmi_g12a_dwc_write,
 };
 
-static unsigned long meson_dw_hdmi_get_in_bus_format(void *data)
-{
-	struct meson_dw_hdmi *dw_hdmi = (struct meson_dw_hdmi *)data;
-
-	return dw_hdmi->input_bus_format;
-}
-
-static unsigned long meson_dw_hdmi_get_out_bus_format(void *data)
-{
-	struct meson_dw_hdmi *dw_hdmi = (struct meson_dw_hdmi *)data;
-
-	return dw_hdmi->output_bus_format;
-}
-
 static bool meson_hdmi_connector_is_available(struct device *dev)
 {
 	struct device_node *ep, *remote;
@@ -875,6 +800,47 @@ static bool meson_hdmi_connector_is_available(struct device *dev)
 	of_node_put(remote);
 
 	return false;
+}
+
+static void meson_dw_hdmi_init(struct meson_dw_hdmi *meson_dw_hdmi)
+{
+	struct meson_drm *priv = meson_dw_hdmi->priv;
+
+	/* Enable clocks */
+	regmap_update_bits(priv->hhi, HHI_HDMI_CLK_CNTL, 0xffff, 0x100);
+
+	/* Bring HDMITX MEM output of power down */
+	regmap_update_bits(priv->hhi, HHI_MEM_PD_REG0, 0xff << 8, 0);
+
+	/* Reset HDMITX APB & TX & PHY */
+	reset_control_reset(meson_dw_hdmi->hdmitx_apb);
+	reset_control_reset(meson_dw_hdmi->hdmitx_ctrl);
+	reset_control_reset(meson_dw_hdmi->hdmitx_phy);
+
+	/* Enable APB3 fail on error */
+	if (!meson_vpu_is_compatible(priv, VPU_COMPATIBLE_G12A)) {
+		writel_bits_relaxed(BIT(15), BIT(15),
+				    meson_dw_hdmi->hdmitx + HDMITX_TOP_CTRL_REG);
+		writel_bits_relaxed(BIT(15), BIT(15),
+				    meson_dw_hdmi->hdmitx + HDMITX_DWC_CTRL_REG);
+	}
+
+	/* Bring out of reset */
+	meson_dw_hdmi->data->top_write(meson_dw_hdmi,
+				       HDMITX_TOP_SW_RESET,  0);
+
+	msleep(20);
+
+	meson_dw_hdmi->data->top_write(meson_dw_hdmi,
+				       HDMITX_TOP_CLK_CNTL, 0xff);
+
+	/* Enable HDMI-TX Interrupt */
+	meson_dw_hdmi->data->top_write(meson_dw_hdmi, HDMITX_TOP_INTR_STAT_CLR,
+				       HDMITX_TOP_INTR_CORE);
+
+	meson_dw_hdmi->data->top_write(meson_dw_hdmi, HDMITX_TOP_INTR_MASKN,
+				       HDMITX_TOP_INTR_CORE);
+
 }
 
 static int meson_dw_hdmi_bind(struct device *dev, struct device *master,
@@ -1000,40 +966,7 @@ static int meson_dw_hdmi_bind(struct device *dev, struct device *master,
 
 	DRM_DEBUG_DRIVER("encoder initialized\n");
 
-	/* Enable clocks */
-	regmap_update_bits(priv->hhi, HHI_HDMI_CLK_CNTL, 0xffff, 0x100);
-
-	/* Bring HDMITX MEM output of power down */
-	regmap_update_bits(priv->hhi, HHI_MEM_PD_REG0, 0xff << 8, 0);
-
-	/* Reset HDMITX APB & TX & PHY */
-	reset_control_reset(meson_dw_hdmi->hdmitx_apb);
-	reset_control_reset(meson_dw_hdmi->hdmitx_ctrl);
-	reset_control_reset(meson_dw_hdmi->hdmitx_phy);
-
-	/* Enable APB3 fail on error */
-	if (!meson_vpu_is_compatible(priv, "amlogic,meson-g12a-vpu")) {
-		writel_bits_relaxed(BIT(15), BIT(15),
-				    meson_dw_hdmi->hdmitx + HDMITX_TOP_CTRL_REG);
-		writel_bits_relaxed(BIT(15), BIT(15),
-				    meson_dw_hdmi->hdmitx + HDMITX_DWC_CTRL_REG);
-	}
-
-	/* Bring out of reset */
-	meson_dw_hdmi->data->top_write(meson_dw_hdmi,
-				       HDMITX_TOP_SW_RESET,  0);
-
-	msleep(20);
-
-	meson_dw_hdmi->data->top_write(meson_dw_hdmi,
-				       HDMITX_TOP_CLK_CNTL, 0xff);
-
-	/* Enable HDMI-TX Interrupt */
-	meson_dw_hdmi->data->top_write(meson_dw_hdmi, HDMITX_TOP_INTR_STAT_CLR,
-				       HDMITX_TOP_INTR_CORE);
-
-	meson_dw_hdmi->data->top_write(meson_dw_hdmi, HDMITX_TOP_INTR_MASKN,
-				       HDMITX_TOP_INTR_CORE);
+	meson_dw_hdmi_init(meson_dw_hdmi);
 
 	/* Bridge / Connector */
 
@@ -1043,9 +976,11 @@ static int meson_dw_hdmi_bind(struct device *dev, struct device *master,
 	dw_plat_data->phy_data = meson_dw_hdmi;
 	dw_plat_data->input_bus_format = MEDIA_BUS_FMT_YUV8_1X24;
 	dw_plat_data->input_bus_encoding = V4L2_YCBCR_ENC_709;
-	dw_plat_data->get_input_bus_format = meson_dw_hdmi_get_in_bus_format;
-	dw_plat_data->get_output_bus_format = meson_dw_hdmi_get_out_bus_format;
-	dw_plat_data->ycbcr_420_allowed = true;
+
+	if (dw_hdmi_is_compatible(meson_dw_hdmi, "amlogic,meson-gxl-dw-hdmi") ||
+	    dw_hdmi_is_compatible(meson_dw_hdmi, "amlogic,meson-gxm-dw-hdmi") ||
+	    dw_hdmi_is_compatible(meson_dw_hdmi, "amlogic,meson-g12a-dw-hdmi"))
+		dw_plat_data->use_drm_infoframe = true;
 
 	platform_set_drvdata(pdev, meson_dw_hdmi);
 
@@ -1072,6 +1007,34 @@ static const struct component_ops meson_dw_hdmi_ops = {
 	.unbind	= meson_dw_hdmi_unbind,
 };
 
+static int __maybe_unused meson_dw_hdmi_pm_suspend(struct device *dev)
+{
+	struct meson_dw_hdmi *meson_dw_hdmi = dev_get_drvdata(dev);
+
+	if (!meson_dw_hdmi)
+		return 0;
+
+	/* Reset TOP */
+	meson_dw_hdmi->data->top_write(meson_dw_hdmi,
+				       HDMITX_TOP_SW_RESET, 0);
+
+	return 0;
+}
+
+static int __maybe_unused meson_dw_hdmi_pm_resume(struct device *dev)
+{
+	struct meson_dw_hdmi *meson_dw_hdmi = dev_get_drvdata(dev);
+
+	if (!meson_dw_hdmi)
+		return 0;
+
+	meson_dw_hdmi_init(meson_dw_hdmi);
+
+	dw_hdmi_resume(meson_dw_hdmi->hdmi);
+
+	return 0;
+}
+
 static int meson_dw_hdmi_probe(struct platform_device *pdev)
 {
 	return component_add(&pdev->dev, &meson_dw_hdmi_ops);
@@ -1083,6 +1046,11 @@ static int meson_dw_hdmi_remove(struct platform_device *pdev)
 
 	return 0;
 }
+
+static const struct dev_pm_ops meson_dw_hdmi_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(meson_dw_hdmi_pm_suspend,
+				meson_dw_hdmi_pm_resume)
+};
 
 static const struct of_device_id meson_dw_hdmi_of_table[] = {
 	{ .compatible = "amlogic,meson-gxbb-dw-hdmi",
@@ -1103,6 +1071,7 @@ static struct platform_driver meson_dw_hdmi_platform_driver = {
 	.driver		= {
 		.name		= DRIVER_NAME,
 		.of_match_table	= meson_dw_hdmi_of_table,
+		.pm = &meson_dw_hdmi_pm_ops,
 	},
 };
 module_platform_driver(meson_dw_hdmi_platform_driver);

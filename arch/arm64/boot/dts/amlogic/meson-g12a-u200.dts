@@ -8,6 +8,8 @@
 #include "meson-g12a.dtsi"
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/gpio/meson-g12a-gpio.h>
+#include <dt-bindings/sound/meson-g12a-tohdmitx.h>
+#include <dt-bindings/sound/meson-g12a-toacodec.h>
 
 / {
 	compatible = "amlogic,u200", "amlogic,g12a";
@@ -16,6 +18,13 @@
 	aliases {
 		serial0 = &uart_AO;
 		ethernet0 = &ethmac;
+	};
+
+	dioo2133: audio-amplifier-0 {
+		compatible = "simple-audio-amplifier";
+		enable-gpios = <&gpio_ao GPIOAO_2 GPIO_ACTIVE_HIGH>;
+		VCC-supply = <&vcc_5v>;
+		sound-name-prefix = "10U2";
 	};
 
 	spdif_dit: audio-codec-1 {
@@ -160,7 +169,7 @@
 		model = "G12A-U200";
 		audio-aux-devs = <&tdmout_a>, <&tdmout_b>, <&tdmout_c>,
 				 <&tdmin_a>, <&tdmin_b>, <&tdmin_c>,
-				 <&tdmin_lb>;
+				 <&tdmin_lb>, <&dioo2133>;
 		audio-routing = "TDMOUT_A IN 0", "FRDDR_A OUT 0",
 				"TDMOUT_A IN 1", "FRDDR_B OUT 0",
 				"TDMOUT_A IN 2", "FRDDR_C OUT 0",
@@ -203,7 +212,9 @@
 				"TODDR_C IN 2", "TDMIN_C OUT",
 				"TODDR_A IN 6", "TDMIN_LB OUT",
 				"TODDR_B IN 6", "TDMIN_LB OUT",
-				"TODDR_C IN 6", "TDMIN_LB OUT";
+				"TODDR_C IN 6", "TDMIN_LB OUT",
+				"10U2 INL", "ACODEC LOLP",
+				"10U2 INR", "ACODEC LORP";
 
 		assigned-clocks = <&clkc CLKID_HIFI_PLL>,
 				  <&clkc CLKID_MPLL0>,
@@ -245,8 +256,12 @@
 			dai-tdm-slot-tx-mask-0 = <1 1>;
 			mclk-fs = <256>;
 
+			codec@0 {
+				sound-dai = <&toacodec TOACODEC_IN_B>;
+			};
+
 			codec@1 {
-				sound-dai = <&tohdmitx 1>;
+				sound-dai = <&tohdmitx TOHDMITX_I2S_IN_B>;
 			};
 		};
 
@@ -256,8 +271,12 @@
 			dai-tdm-slot-tx-mask-0 = <1 1>;
 			mclk-fs = <256>;
 
+			codec@0 {
+				sound-dai = <&toacodec TOACODEC_IN_A>;
+			};
+
 			codec@1 {
-				sound-dai = <&tohdmitx 0>;
+				sound-dai = <&tohdmitx TOHDMITX_I2S_IN_A>;
 			};
 		};
 
@@ -267,8 +286,12 @@
 			dai-tdm-slot-tx-mask-0 = <1 1>;
 			mclk-fs = <256>;
 
+			codec@0 {
+				sound-dai = <&toacodec TOACODEC_IN_C>;
+			};
+
 			codec@1 {
-				sound-dai = <&tohdmitx 2>;
+				sound-dai = <&tohdmitx TOHDMITX_I2S_IN_C>;
 			};
 		};
 
@@ -280,7 +303,7 @@
 			};
 
 			codec@1 {
-				sound-dai = <&tohdmitx 4>;
+				sound-dai = <&tohdmitx TOHDMITX_SPDIF_IN_A>;
 			};
 		};
 
@@ -288,18 +311,30 @@
 			sound-dai = <&spdifout_b>;
 
 			codec {
-				sound-dai = <&tohdmitx 5>;
+				sound-dai = <&tohdmitx TOHDMITX_SPDIF_IN_B>;
 			};
 		};
 
 		dai-link-11 {
-			sound-dai = <&tohdmitx 3>;
+			sound-dai = <&tohdmitx TOHDMITX_I2S_OUT>;
 
 			codec {
 				sound-dai = <&hdmi_tx>;
 			};
 		};
+
+		dai-link-12 {
+			sound-dai = <&toacodec TOACODEC_OUT>;
+
+			codec {
+				sound-dai = <&acodec>;
+			};
+		};
 	};
+};
+
+&acodec {
+	status = "okay";
 };
 
 &arb {
@@ -318,10 +353,6 @@
 	pinctrl-names = "default";
 	status = "okay";
 	hdmi-phandle = <&hdmi_tx>;
-};
-
-&clkc_audio {
-	status = "okay";
 };
 
 &cpu0 {
@@ -350,6 +381,10 @@
 	operating-points-v2 = <&cpu_opp_table>;
 	clocks = <&clkc CLKID_CPU_CLK>;
 	clock-latency = <50000>;
+};
+
+&clkc_audio {
+	status = "okay";
 };
 
 &cvbs_vdac_port {
@@ -482,6 +517,14 @@
 		    <&tdm_b_dout0_pins>;
 	pinctrl-names = "default";
 	status = "okay";
+
+	assigned-clocks = <&clkc_audio AUD_CLKID_TDM_MCLK_PAD0>,
+			  <&clkc_audio AUD_CLKID_TDM_SCLK_PAD1>,
+			  <&clkc_audio AUD_CLKID_TDM_LRCLK_PAD1>;
+	assigned-clock-parents = <&clkc_audio AUD_CLKID_MST_B_MCLK>,
+				 <&clkc_audio AUD_CLKID_MST_B_SCLK>,
+				 <&clkc_audio AUD_CLKID_MST_B_LRCLK>;
+	assigned-clock-rates = <0>, <0>, <0>;
 };
 
 &tdmif_c {
@@ -514,6 +557,10 @@
 };
 
 &tdmout_c {
+	status = "okay";
+};
+
+&toacodec {
 	status = "okay";
 };
 

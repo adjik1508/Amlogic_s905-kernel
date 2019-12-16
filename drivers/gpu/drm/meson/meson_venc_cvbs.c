@@ -9,19 +9,18 @@
  *     Jasper St. Pierre <jstpierre@mecheye.net>
  */
 
-#include <linux/kernel.h>
-#include <linux/module.h>
+#include <linux/export.h>
 #include <linux/of_graph.h>
 
-#include <drm/drmP.h>
 #include <drm/drm_atomic_helper.h>
+#include <drm/drm_device.h>
 #include <drm/drm_edid.h>
 #include <drm/drm_probe_helper.h>
+#include <drm/drm_print.h>
 
-#include "meson_venc_cvbs.h"
-#include "meson_venc.h"
-#include "meson_vclk.h"
 #include "meson_registers.h"
+#include "meson_vclk.h"
+#include "meson_venc_cvbs.h"
 
 /* HHI VDAC Registers */
 #define HHI_VDAC_CNTL0		0x2F4 /* 0xbd offset in data sheet */
@@ -50,7 +49,6 @@ struct meson_cvbs_mode meson_cvbs_modes[MESON_CVBS_MODES_COUNT] = {
 				 720, 732, 795, 864, 0, 576, 580, 586, 625, 0,
 				 DRM_MODE_FLAG_INTERLACE),
 			.vrefresh = 50,
-			.picture_aspect_ratio = HDMI_PICTURE_ASPECT_4_3,
 		},
 	},
 	{ /* NTSC */
@@ -60,7 +58,6 @@ struct meson_cvbs_mode meson_cvbs_modes[MESON_CVBS_MODES_COUNT] = {
 				720, 739, 801, 858, 0, 480, 488, 494, 525, 0,
 				DRM_MODE_FLAG_INTERLACE),
 			.vrefresh = 60,
-			.picture_aspect_ratio = HDMI_PICTURE_ASPECT_4_3,
 		},
 	},
 };
@@ -156,7 +153,7 @@ static void meson_venc_cvbs_encoder_disable(struct drm_encoder *encoder)
 	struct meson_drm *priv = meson_venc_cvbs->priv;
 
 	/* Disable CVBS VDAC */
-	if (meson_vpu_is_compatible(priv, "amlogic,meson-g12a-vpu")) {
+	if (meson_vpu_is_compatible(priv, VPU_COMPATIBLE_G12A)) {
 		regmap_write(priv->hhi, HHI_VDAC_CNTL0_G12A, 0);
 		regmap_write(priv->hhi, HHI_VDAC_CNTL1_G12A, 0);
 	} else {
@@ -172,16 +169,17 @@ static void meson_venc_cvbs_encoder_enable(struct drm_encoder *encoder)
 	struct meson_drm *priv = meson_venc_cvbs->priv;
 
 	/* VDAC0 source is not from ATV */
-	writel_bits_relaxed(BIT(5), 0, priv->io_base + _REG(VENC_VDAC_DACSEL0));
+	writel_bits_relaxed(VENC_VDAC_SEL_ATV_DMD, 0,
+			    priv->io_base + _REG(VENC_VDAC_DACSEL0));
 
-	if (meson_vpu_is_compatible(priv, "amlogic,meson-gxbb-vpu")) {
+	if (meson_vpu_is_compatible(priv, VPU_COMPATIBLE_GXBB)) {
 		regmap_write(priv->hhi, HHI_VDAC_CNTL0, 1);
 		regmap_write(priv->hhi, HHI_VDAC_CNTL1, 0);
-	} else if (meson_vpu_is_compatible(priv, "amlogic,meson-gxm-vpu") ||
-		 meson_vpu_is_compatible(priv, "amlogic,meson-gxl-vpu")) {
+	} else if (meson_vpu_is_compatible(priv, VPU_COMPATIBLE_GXM) ||
+		 meson_vpu_is_compatible(priv, VPU_COMPATIBLE_GXL)) {
 		regmap_write(priv->hhi, HHI_VDAC_CNTL0, 0xf0001);
 		regmap_write(priv->hhi, HHI_VDAC_CNTL1, 0);
-	} else if (meson_vpu_is_compatible(priv, "amlogic,meson-g12a-vpu")) {
+	} else if (meson_vpu_is_compatible(priv, VPU_COMPATIBLE_G12A)) {
 		regmap_write(priv->hhi, HHI_VDAC_CNTL0_G12A, 0x906001);
 		regmap_write(priv->hhi, HHI_VDAC_CNTL1_G12A, 0);
 	}
@@ -206,8 +204,7 @@ static void meson_venc_cvbs_encoder_mode_set(struct drm_encoder *encoder,
 			/* Setup 27MHz vclk2 for ENCI and VDAC */
 			meson_vclk_setup(priv, MESON_VCLK_TARGET_CVBS,
 					 MESON_VCLK_CVBS, MESON_VCLK_CVBS,
-					 MESON_VCLK_CVBS, MESON_VCLK_CVBS,
-					 true);
+					 MESON_VCLK_CVBS, true);
 			break;
 		}
 	}
