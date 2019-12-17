@@ -145,7 +145,7 @@
 
 &hdmi_tx_tmds_port {
 	hdmi_tx_tmds_out: endpoint {
-		remote-endpoint = <&hdmi_connector_in>;
+	remote-endpoint = <&hdmi_connector_in>;
 	};
 };
 
