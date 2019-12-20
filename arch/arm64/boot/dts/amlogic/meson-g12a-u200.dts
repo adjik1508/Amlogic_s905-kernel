@@ -166,7 +166,7 @@
 
 	sound {
 		compatible = "amlogic,axg-sound-card";
-		model = "G12A-U200";
+		model = "AMLG12";
 		audio-aux-devs = <&tdmout_a>, <&tdmout_b>, <&tdmout_c>,
 				 <&tdmin_a>, <&tdmin_b>, <&tdmin_c>,
 				 <&tdmin_lb>, <&dioo2133>;
