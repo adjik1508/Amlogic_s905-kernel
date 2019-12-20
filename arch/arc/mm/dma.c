@@ -48,8 +48,8 @@ void arch_dma_prep_coherent(struct page *page, size_t size)
  * upper layer functions (in include/linux/dma-mapping.h)
  */
 
-void arch_sync_dma_for_device(struct device *dev, phys_addr_t paddr,
-		size_t size, enum dma_data_direction dir)
+void arch_sync_dma_for_device(phys_addr_t paddr, size_t size,
+		enum dma_data_direction dir)
 {
 	switch (dir) {
 	case DMA_TO_DEVICE:
@@ -69,8 +69,8 @@ void arch_sync_dma_for_device(struct device *dev, phys_addr_t paddr,
 	}
 }
 
-void arch_sync_dma_for_cpu(struct device *dev, phys_addr_t paddr,
-		size_t size, enum dma_data_direction dir)
+void arch_sync_dma_for_cpu(phys_addr_t paddr, size_t size,
+		enum dma_data_direction dir)
 {
 	switch (dir) {
 	case DMA_TO_DEVICE:
@@ -101,12 +101,6 @@ void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
 	if (is_isa_arcv2() && ioc_enable && coherent)
 		dev->dma_coherent = true;
 
-	dev_info(dev, "use %sncoherent DMA ops\n",
+	dev_info(dev, "use %scoherent DMA ops\n",
 		 dev->dma_coherent ? "" : "non");
 }
-
-static int __init atomic_pool_init(void)
-{
-	return dma_atomic_pool_init(GFP_KERNEL, pgprot_noncached(PAGE_KERNEL));
-}
-postcore_initcall(atomic_pool_init);

@@ -983,7 +983,6 @@ static inline void xfrm_dst_destroy(struct xfrm_dst *xdst)
 void xfrm_dst_ifdown(struct dst_entry *dst, struct net_device *dev);
 
 struct xfrm_if_parms {
-	char name[IFNAMSIZ];	/* name of XFRM device */
 	int link;		/* ifindex of underlying L2 interface */
 	u32 if_id;		/* interface identifyer */
 };
@@ -991,7 +990,6 @@ struct xfrm_if_parms {
 struct xfrm_if {
 	struct xfrm_if __rcu *next;	/* next interface in list */
 	struct net_device *dev;		/* virtual device associated with interface */
-	struct net_device *phydev;	/* physical device */
 	struct net *net;		/* netns for packet i/o */
 	struct xfrm_if_parms p;		/* interface parms */
 
@@ -1614,13 +1612,6 @@ int xfrm_user_policy(struct sock *sk, int optname,
 static inline int xfrm_user_policy(struct sock *sk, int optname, u8 __user *optval, int optlen)
 {
  	return -ENOPROTOOPT;
-}
-
-static inline int xfrm4_udp_encap_rcv(struct sock *sk, struct sk_buff *skb)
-{
- 	/* should not happen */
- 	kfree_skb(skb);
-	return 0;
 }
 #endif
 

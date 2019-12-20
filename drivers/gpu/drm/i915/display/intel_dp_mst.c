@@ -32,10 +32,10 @@
 #include "intel_audio.h"
 #include "intel_connector.h"
 #include "intel_ddi.h"
+#include "intel_display_types.h"
 #include "intel_dp.h"
 #include "intel_dp_mst.h"
 #include "intel_dpio_phy.h"
-#include "intel_drv.h"
 
 static int intel_dp_mst_compute_link_config(struct intel_encoder *encoder,
 					    struct intel_crtc_state *crtc_state,
@@ -81,7 +81,7 @@ static int intel_dp_mst_compute_link_config(struct intel_encoder *encoder,
 			       adjusted_mode->crtc_clock,
 			       crtc_state->port_clock,
 			       &crtc_state->dp_m_n,
-			       constant_n);
+			       constant_n, crtc_state->fec_enable);
 	crtc_state->dp_m_n.tu = slots;
 
 	return 0;
@@ -128,7 +128,15 @@ static int intel_dp_mst_compute_config(struct intel_encoder *encoder,
 	limits.max_lane_count = intel_dp_max_lane_count(intel_dp);
 
 	limits.min_bpp = intel_dp_min_bpp(pipe_config);
-	limits.max_bpp = pipe_config->pipe_bpp;
+	/*
+	 * FIXME: If all the streams can't fit into the link with
+	 * their current pipe_bpp we should reduce pipe_bpp across
+	 * the board until things start to fit. Until then we
+	 * limit to <= 8bpc since that's what was hardcoded for all
+	 * MST streams previously. This hack should be removed once
+	 * we have the proper retry logic in place.
+	 */
+	limits.max_bpp = min(pipe_config->pipe_bpp, 24);
 
 	intel_dp_adjust_compliance_config(intel_dp, pipe_config, &limits);
 
@@ -207,7 +215,7 @@ static void intel_mst_disable_dp(struct intel_encoder *encoder,
 
 	ret = drm_dp_update_payload_part1(&intel_dp->mst_mgr);
 	if (ret) {
-		DRM_ERROR("failed to update payload %d\n", ret);
+		DRM_DEBUG_KMS("failed to update payload %d\n", ret);
 	}
 	if (old_crtc_state->has_audio)
 		intel_audio_codec_disable(encoder,
@@ -287,7 +295,6 @@ static void intel_mst_pre_enable_dp(struct intel_encoder *encoder,
 	struct intel_digital_port *intel_dig_port = intel_mst->primary;
 	struct intel_dp *intel_dp = &intel_dig_port->dp;
 	struct drm_i915_private *dev_priv = to_i915(encoder->base.dev);
-	enum port port = intel_dig_port->base.port;
 	struct intel_connector *connector =
 		to_intel_connector(conn_state->connector);
 	int ret;
@@ -318,12 +325,14 @@ static void intel_mst_pre_enable_dp(struct intel_encoder *encoder,
 		DRM_ERROR("failed to allocate vcpi\n");
 
 	intel_dp->active_mst_links++;
-	temp = I915_READ(DP_TP_STATUS(port));
-	I915_WRITE(DP_TP_STATUS(port), temp);
+	temp = I915_READ(intel_dp->regs.dp_tp_status);
+	I915_WRITE(intel_dp->regs.dp_tp_status, temp);
 
 	ret = drm_dp_update_payload_part1(&intel_dp->mst_mgr);
 
 	intel_ddi_enable_pipe_clock(pipe_config);
+
+	intel_ddi_set_dp_msa(pipe_config, conn_state);
 }
 
 static void intel_mst_enable_dp(struct intel_encoder *encoder,
@@ -334,15 +343,11 @@ static void intel_mst_enable_dp(struct intel_encoder *encoder,
 	struct intel_digital_port *intel_dig_port = intel_mst->primary;
 	struct intel_dp *intel_dp = &intel_dig_port->dp;
 	struct drm_i915_private *dev_priv = to_i915(encoder->base.dev);
-	enum port port = intel_dig_port->base.port;
 
 	DRM_DEBUG_KMS("active links %d\n", intel_dp->active_mst_links);
 
-	if (intel_wait_for_register(&dev_priv->uncore,
-				    DP_TP_STATUS(port),
-				    DP_TP_STATUS_ACT_SENT,
-				    DP_TP_STATUS_ACT_SENT,
-				    1))
+	if (intel_de_wait_for_set(dev_priv, intel_dp->regs.dp_tp_status,
+				  DP_TP_STATUS_ACT_SENT, 1))
 		DRM_ERROR("Timed out waiting for ACT sent\n");
 
 	drm_dp_check_act_status(&intel_dp->mst_mgr);
@@ -388,20 +393,7 @@ static int intel_dp_mst_get_ddc_modes(struct drm_connector *connector)
 	return ret;
 }
 
-static enum drm_connector_status
-intel_dp_mst_detect(struct drm_connector *connector, bool force)
-{
-	struct intel_connector *intel_connector = to_intel_connector(connector);
-	struct intel_dp *intel_dp = intel_connector->mst_port;
-
-	if (drm_connector_is_unregistered(connector))
-		return connector_status_disconnected;
-	return drm_dp_mst_detect_port(connector, &intel_dp->mst_mgr,
-				      intel_connector->port);
-}
-
 static const struct drm_connector_funcs intel_dp_mst_connector_funcs = {
-	.detect = intel_dp_mst_detect,
 	.fill_modes = drm_helper_probe_single_connector_modes,
 	.atomic_get_property = intel_digital_connector_atomic_get_property,
 	.atomic_set_property = intel_digital_connector_atomic_set_property,
@@ -421,6 +413,7 @@ static enum drm_mode_status
 intel_dp_mst_mode_valid(struct drm_connector *connector,
 			struct drm_display_mode *mode)
 {
+	struct drm_i915_private *dev_priv = to_i915(connector->dev);
 	struct intel_connector *intel_connector = to_intel_connector(connector);
 	struct intel_dp *intel_dp = intel_connector->mst_port;
 	int max_dotclk = to_i915(connector->dev)->max_dotclk_freq;
@@ -448,7 +441,7 @@ intel_dp_mst_mode_valid(struct drm_connector *connector,
 	if (mode_rate > max_rate || mode->clock > max_dotclk)
 		return MODE_CLOCK_HIGH;
 
-	return MODE_OK;
+	return intel_mode_valid_max_plane_size(dev_priv, mode);
 }
 
 static struct drm_encoder *intel_mst_atomic_best_encoder(struct drm_connector *connector,
@@ -461,11 +454,26 @@ static struct drm_encoder *intel_mst_atomic_best_encoder(struct drm_connector *c
 	return &intel_dp->mst_encoders[crtc->pipe]->base.base;
 }
 
+static int
+intel_dp_mst_detect(struct drm_connector *connector,
+		    struct drm_modeset_acquire_ctx *ctx, bool force)
+{
+	struct intel_connector *intel_connector = to_intel_connector(connector);
+	struct intel_dp *intel_dp = intel_connector->mst_port;
+
+	if (drm_connector_is_unregistered(connector))
+		return connector_status_disconnected;
+
+	return drm_dp_mst_detect_port(connector, ctx, &intel_dp->mst_mgr,
+				      intel_connector->port);
+}
+
 static const struct drm_connector_helper_funcs intel_dp_mst_connector_helper_funcs = {
 	.get_modes = intel_dp_mst_get_modes,
 	.mode_valid = intel_dp_mst_mode_valid,
 	.atomic_best_encoder = intel_mst_atomic_best_encoder,
 	.atomic_check = intel_dp_mst_atomic_check,
+	.detect_ctx = intel_dp_mst_detect,
 };
 
 static void intel_dp_mst_encoder_destroy(struct drm_encoder *encoder)
@@ -539,7 +547,15 @@ static struct drm_connector *intel_dp_add_mst_connector(struct drm_dp_mst_topolo
 
 	intel_attach_force_audio_property(connector);
 	intel_attach_broadcast_rgb_property(connector);
-	drm_connector_attach_max_bpc_property(connector, 6, 12);
+
+	/*
+	 * Reuse the prop from the SST connector because we're
+	 * not allowed to create new props after device registration.
+	 */
+	connector->max_bpc_property =
+		intel_dp->attached_connector->base.max_bpc_property;
+	if (connector->max_bpc_property)
+		drm_connector_attach_max_bpc_property(connector, 6, 12);
 
 	return connector;
 
@@ -602,8 +618,16 @@ intel_dp_create_fake_mst_encoder(struct intel_digital_port *intel_dig_port, enum
 	intel_encoder->type = INTEL_OUTPUT_DP_MST;
 	intel_encoder->power_domain = intel_dig_port->base.power_domain;
 	intel_encoder->port = intel_dig_port->base.port;
-	intel_encoder->crtc_mask = 0x7;
 	intel_encoder->cloneable = 0;
+	/*
+	 * This is wrong, but broken userspace uses the intersection
+	 * of possible_crtcs of all the encoders of a given connector
+	 * to figure out which crtcs can drive said connector. What
+	 * should be used instead is the union of possible_crtcs.
+	 * To keep such userspace functioning we must misconfigure
+	 * this to make sure the intersection is not empty :(
+	 */
+	intel_encoder->pipe_mask = ~0;
 
 	intel_encoder->compute_config = intel_dp_mst_compute_config;
 	intel_encoder->disable = intel_mst_disable_dp;
@@ -632,23 +656,39 @@ intel_dp_create_fake_mst_encoders(struct intel_digital_port *intel_dig_port)
 }
 
 int
+intel_dp_mst_encoder_active_links(struct intel_digital_port *intel_dig_port)
+{
+	return intel_dig_port->dp.active_mst_links;
+}
+
+int
 intel_dp_mst_encoder_init(struct intel_digital_port *intel_dig_port, int conn_base_id)
 {
+	struct drm_i915_private *i915 = to_i915(intel_dig_port->base.base.dev);
 	struct intel_dp *intel_dp = &intel_dig_port->dp;
-	struct drm_device *dev = intel_dig_port->base.base.dev;
+	enum port port = intel_dig_port->base.port;
 	int ret;
 
-	intel_dp->can_mst = true;
+	if (!HAS_DP_MST(i915) || intel_dp_is_edp(intel_dp))
+		return 0;
+
+	if (INTEL_GEN(i915) < 12 && port == PORT_A)
+		return 0;
+
+	if (INTEL_GEN(i915) < 11 && port == PORT_E)
+		return 0;
+
 	intel_dp->mst_mgr.cbs = &mst_cbs;
 
 	/* create encoders */
 	intel_dp_create_fake_mst_encoders(intel_dig_port);
-	ret = drm_dp_mst_topology_mgr_init(&intel_dp->mst_mgr, dev,
+	ret = drm_dp_mst_topology_mgr_init(&intel_dp->mst_mgr, &i915->drm,
 					   &intel_dp->aux, 16, 3, conn_base_id);
-	if (ret) {
-		intel_dp->can_mst = false;
+	if (ret)
 		return ret;
-	}
+
+	intel_dp->can_mst = true;
+
 	return 0;
 }
 

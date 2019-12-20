@@ -18,9 +18,6 @@
 #include <linux/cec-funcs.h>
 #include <media/rc-core.h>
 
-/* CEC_ADAP_G_CONNECTOR_INFO is available */
-#define CEC_CAP_CONNECTOR_INFO	(1 << 8)
-
 #define CEC_CAP_DEFAULTS (CEC_CAP_LOG_ADDRS | CEC_CAP_TRANSMIT | \
 			  CEC_CAP_PASSTHROUGH | CEC_CAP_RC)
 
@@ -147,34 +144,6 @@ struct cec_adap_ops {
  */
 #define CEC_MAX_MSG_TX_QUEUE_SZ		(18 * 1)
 
-/**
- * struct cec_drm_connector_info - tells which drm connector is
- * associated with the CEC adapter.
- * @card_no: drm card number
- * @connector_id: drm connector ID
- */
-struct cec_drm_connector_info {
-	__u32 card_no;
-	__u32 connector_id;
-};
-
-#define CEC_CONNECTOR_TYPE_NO_CONNECTOR	0
-#define CEC_CONNECTOR_TYPE_DRM		1
-
-/**
- * struct cec_connector_info - tells if and which connector is
- * associated with the CEC adapter.
- * @type: connector type (if any)
- * @drm: drm connector info
- */
-struct cec_connector_info {
-	__u32 type;
-	union {
-		struct cec_drm_connector_info drm;
-		__u32 raw[16];
-	};
-};
-
 struct cec_adapter {
 	struct module *owner;
 	char name[32];
@@ -194,6 +163,8 @@ struct cec_adapter {
 	struct task_struct *kthread;
 	wait_queue_head_t kthread_waitq;
 	wait_queue_head_t waitq;
+
+	struct delayed_work debounce_work;
 
 	const struct cec_adap_ops *ops;
 	void *priv;
