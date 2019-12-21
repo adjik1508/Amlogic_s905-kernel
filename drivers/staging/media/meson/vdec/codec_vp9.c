@@ -43,6 +43,7 @@
 #define REFS_PER_FRAME		3
 #define REF_FRAMES		8
 #define MV_MEM_UNIT		0x240
+#define ADAPT_PROB_SIZE		0xf80
 
 enum FRAME_TYPE {
 	KEY_FRAME = 0,
@@ -122,6 +123,217 @@ enum FRAME_TYPE {
 #define SEGMENT_DELTADATA	0
 #define SEGMENT_ABSDATA		1
 #define MAX_SEGMENTS		8
+
+/* VP9 PROB processing defines */
+#define VP9_PARTITION_START      0
+#define VP9_PARTITION_SIZE_STEP  (3 * 4)
+#define VP9_PARTITION_ONE_SIZE   (4 * VP9_PARTITION_SIZE_STEP)
+#define VP9_PARTITION_KEY_START  0
+#define VP9_PARTITION_P_START    VP9_PARTITION_ONE_SIZE
+#define VP9_PARTITION_SIZE       (2 * VP9_PARTITION_ONE_SIZE)
+#define VP9_SKIP_START           (VP9_PARTITION_START + VP9_PARTITION_SIZE)
+#define VP9_SKIP_SIZE            4 /* only use 3*/
+#define VP9_TX_MODE_START        (VP9_SKIP_START + VP9_SKIP_SIZE)
+#define VP9_TX_MODE_8_0_OFFSET   0
+#define VP9_TX_MODE_8_1_OFFSET   1
+#define VP9_TX_MODE_16_0_OFFSET  2
+#define VP9_TX_MODE_16_1_OFFSET  4
+#define VP9_TX_MODE_32_0_OFFSET  6
+#define VP9_TX_MODE_32_1_OFFSET  9
+#define VP9_TX_MODE_SIZE         12
+#define VP9_COEF_START           (VP9_TX_MODE_START + VP9_TX_MODE_SIZE)
+#define VP9_COEF_BAND_0_OFFSET   0
+#define VP9_COEF_BAND_1_OFFSET   (VP9_COEF_BAND_0_OFFSET + 3 * 3 + 1)
+#define VP9_COEF_BAND_2_OFFSET   (VP9_COEF_BAND_1_OFFSET + 6 * 3)
+#define VP9_COEF_BAND_3_OFFSET   (VP9_COEF_BAND_2_OFFSET + 6 * 3)
+#define VP9_COEF_BAND_4_OFFSET   (VP9_COEF_BAND_3_OFFSET + 6 * 3)
+#define VP9_COEF_BAND_5_OFFSET   (VP9_COEF_BAND_4_OFFSET + 6 * 3)
+#define VP9_COEF_SIZE_ONE_SET    100 /* ((3 + 5 * 6) * 3 + 1 padding)*/
+#define VP9_COEF_4X4_START       (VP9_COEF_START + 0 * VP9_COEF_SIZE_ONE_SET)
+#define VP9_COEF_8X8_START       (VP9_COEF_START + 4 * VP9_COEF_SIZE_ONE_SET)
+#define VP9_COEF_16X16_START     (VP9_COEF_START + 8 * VP9_COEF_SIZE_ONE_SET)
+#define VP9_COEF_32X32_START     (VP9_COEF_START + 12 * VP9_COEF_SIZE_ONE_SET)
+#define VP9_COEF_SIZE_PLANE      (2 * VP9_COEF_SIZE_ONE_SET)
+#define VP9_COEF_SIZE            (4 * 2 * 2 * VP9_COEF_SIZE_ONE_SET)
+#define VP9_INTER_MODE_START     (VP9_COEF_START + VP9_COEF_SIZE)
+#define VP9_INTER_MODE_SIZE      24 /* only use 21 (# * 7)*/
+#define VP9_INTERP_START         (VP9_INTER_MODE_START + VP9_INTER_MODE_SIZE)
+#define VP9_INTERP_SIZE          8
+#define VP9_INTRA_INTER_START    (VP9_INTERP_START + VP9_INTERP_SIZE)
+#define VP9_INTRA_INTER_SIZE     4
+#define VP9_INTERP_INTRA_INTER_START  VP9_INTERP_START
+#define VP9_INTERP_INTRA_INTER_SIZE   (VP9_INTERP_SIZE + VP9_INTRA_INTER_SIZE)
+#define VP9_COMP_INTER_START     \
+		(VP9_INTERP_INTRA_INTER_START + VP9_INTERP_INTRA_INTER_SIZE)
+#define VP9_COMP_INTER_SIZE      5
+#define VP9_COMP_REF_START       (VP9_COMP_INTER_START + VP9_COMP_INTER_SIZE)
+#define VP9_COMP_REF_SIZE        5
+#define VP9_SINGLE_REF_START     (VP9_COMP_REF_START + VP9_COMP_REF_SIZE)
+#define VP9_SINGLE_REF_SIZE      10
+#define VP9_REF_MODE_START       VP9_COMP_INTER_START
+#define VP9_REF_MODE_SIZE        \
+		(VP9_COMP_INTER_SIZE + VP9_COMP_REF_SIZE + VP9_SINGLE_REF_SIZE)
+#define VP9_IF_Y_MODE_START      (VP9_REF_MODE_START + VP9_REF_MODE_SIZE)
+#define VP9_IF_Y_MODE_SIZE       36
+#define VP9_IF_UV_MODE_START     (VP9_IF_Y_MODE_START + VP9_IF_Y_MODE_SIZE)
+#define VP9_IF_UV_MODE_SIZE      92 /* only use 90*/
+#define VP9_MV_JOINTS_START      (VP9_IF_UV_MODE_START + VP9_IF_UV_MODE_SIZE)
+#define VP9_MV_JOINTS_SIZE       3
+#define VP9_MV_SIGN_0_START      (VP9_MV_JOINTS_START + VP9_MV_JOINTS_SIZE)
+#define VP9_MV_SIGN_0_SIZE       1
+#define VP9_MV_CLASSES_0_START   (VP9_MV_SIGN_0_START + VP9_MV_SIGN_0_SIZE)
+#define VP9_MV_CLASSES_0_SIZE    10
+#define VP9_MV_CLASS0_0_START    \
+		(VP9_MV_CLASSES_0_START + VP9_MV_CLASSES_0_SIZE)
+#define VP9_MV_CLASS0_0_SIZE     1
+#define VP9_MV_BITS_0_START      (VP9_MV_CLASS0_0_START + VP9_MV_CLASS0_0_SIZE)
+#define VP9_MV_BITS_0_SIZE       10
+#define VP9_MV_SIGN_1_START      (VP9_MV_BITS_0_START + VP9_MV_BITS_0_SIZE)
+#define VP9_MV_SIGN_1_SIZE       1
+#define VP9_MV_CLASSES_1_START   \
+			(VP9_MV_SIGN_1_START + VP9_MV_SIGN_1_SIZE)
+#define VP9_MV_CLASSES_1_SIZE    10
+#define VP9_MV_CLASS0_1_START    \
+			(VP9_MV_CLASSES_1_START + VP9_MV_CLASSES_1_SIZE)
+#define VP9_MV_CLASS0_1_SIZE     1
+#define VP9_MV_BITS_1_START      \
+			(VP9_MV_CLASS0_1_START + VP9_MV_CLASS0_1_SIZE)
+#define VP9_MV_BITS_1_SIZE       10
+#define VP9_MV_CLASS0_FP_0_START \
+			(VP9_MV_BITS_1_START + VP9_MV_BITS_1_SIZE)
+#define VP9_MV_CLASS0_FP_0_SIZE  9
+#define VP9_MV_CLASS0_FP_1_START \
+			(VP9_MV_CLASS0_FP_0_START + VP9_MV_CLASS0_FP_0_SIZE)
+#define VP9_MV_CLASS0_FP_1_SIZE  9
+#define VP9_MV_CLASS0_HP_0_START \
+			(VP9_MV_CLASS0_FP_1_START + VP9_MV_CLASS0_FP_1_SIZE)
+#define VP9_MV_CLASS0_HP_0_SIZE  2
+#define VP9_MV_CLASS0_HP_1_START \
+			(VP9_MV_CLASS0_HP_0_START + VP9_MV_CLASS0_HP_0_SIZE)
+#define VP9_MV_CLASS0_HP_1_SIZE  2
+#define VP9_MV_START             VP9_MV_JOINTS_START
+#define VP9_MV_SIZE              72 /*only use 69*/
+
+#define VP9_TOTAL_SIZE           (VP9_MV_START + VP9_MV_SIZE)
+
+/* VP9 COUNT mem processing defines */
+#define VP9_COEF_COUNT_START           0
+#define VP9_COEF_COUNT_BAND_0_OFFSET   0
+#define VP9_COEF_COUNT_BAND_1_OFFSET   \
+			(VP9_COEF_COUNT_BAND_0_OFFSET + 3 * 5)
+#define VP9_COEF_COUNT_BAND_2_OFFSET   \
+			(VP9_COEF_COUNT_BAND_1_OFFSET + 6 * 5)
+#define VP9_COEF_COUNT_BAND_3_OFFSET   \
+			(VP9_COEF_COUNT_BAND_2_OFFSET + 6 * 5)
+#define VP9_COEF_COUNT_BAND_4_OFFSET   \
+			(VP9_COEF_COUNT_BAND_3_OFFSET + 6 * 5)
+#define VP9_COEF_COUNT_BAND_5_OFFSET   \
+			(VP9_COEF_COUNT_BAND_4_OFFSET + 6 * 5)
+#define VP9_COEF_COUNT_SIZE_ONE_SET    165 /* ((3 + 5 * 6) * 5 */
+#define VP9_COEF_COUNT_4X4_START       \
+		(VP9_COEF_COUNT_START + 0 * VP9_COEF_COUNT_SIZE_ONE_SET)
+#define VP9_COEF_COUNT_8X8_START       \
+		(VP9_COEF_COUNT_START + 4 * VP9_COEF_COUNT_SIZE_ONE_SET)
+#define VP9_COEF_COUNT_16X16_START     \
+		(VP9_COEF_COUNT_START + 8 * VP9_COEF_COUNT_SIZE_ONE_SET)
+#define VP9_COEF_COUNT_32X32_START     \
+		(VP9_COEF_COUNT_START + 12 * VP9_COEF_COUNT_SIZE_ONE_SET)
+#define VP9_COEF_COUNT_SIZE_PLANE      (2 * VP9_COEF_COUNT_SIZE_ONE_SET)
+#define VP9_COEF_COUNT_SIZE            (4 * 2 * 2 * VP9_COEF_COUNT_SIZE_ONE_SET)
+
+#define VP9_INTRA_INTER_COUNT_START    \
+		(VP9_COEF_COUNT_START + VP9_COEF_COUNT_SIZE)
+#define VP9_INTRA_INTER_COUNT_SIZE     (4 * 2)
+#define VP9_COMP_INTER_COUNT_START     \
+		(VP9_INTRA_INTER_COUNT_START + VP9_INTRA_INTER_COUNT_SIZE)
+#define VP9_COMP_INTER_COUNT_SIZE      (5 * 2)
+#define VP9_COMP_REF_COUNT_START       \
+		(VP9_COMP_INTER_COUNT_START + VP9_COMP_INTER_COUNT_SIZE)
+#define VP9_COMP_REF_COUNT_SIZE        (5 * 2)
+#define VP9_SINGLE_REF_COUNT_START     \
+		(VP9_COMP_REF_COUNT_START + VP9_COMP_REF_COUNT_SIZE)
+#define VP9_SINGLE_REF_COUNT_SIZE      (10 * 2)
+#define VP9_TX_MODE_COUNT_START        \
+		(VP9_SINGLE_REF_COUNT_START + VP9_SINGLE_REF_COUNT_SIZE)
+#define VP9_TX_MODE_COUNT_SIZE         (12 * 2)
+#define VP9_SKIP_COUNT_START           \
+		(VP9_TX_MODE_COUNT_START + VP9_TX_MODE_COUNT_SIZE)
+#define VP9_SKIP_COUNT_SIZE            (3 * 2)
+#define VP9_MV_SIGN_0_COUNT_START      \
+		(VP9_SKIP_COUNT_START + VP9_SKIP_COUNT_SIZE)
+#define VP9_MV_SIGN_0_COUNT_SIZE       (1 * 2)
+#define VP9_MV_SIGN_1_COUNT_START      \
+		(VP9_MV_SIGN_0_COUNT_START + VP9_MV_SIGN_0_COUNT_SIZE)
+#define VP9_MV_SIGN_1_COUNT_SIZE       (1 * 2)
+#define VP9_MV_BITS_0_COUNT_START      \
+		(VP9_MV_SIGN_1_COUNT_START + VP9_MV_SIGN_1_COUNT_SIZE)
+#define VP9_MV_BITS_0_COUNT_SIZE       (10 * 2)
+#define VP9_MV_BITS_1_COUNT_START      \
+		(VP9_MV_BITS_0_COUNT_START + VP9_MV_BITS_0_COUNT_SIZE)
+#define VP9_MV_BITS_1_COUNT_SIZE       (10 * 2)
+#define VP9_MV_CLASS0_HP_0_COUNT_START \
+		(VP9_MV_BITS_1_COUNT_START + VP9_MV_BITS_1_COUNT_SIZE)
+#define VP9_MV_CLASS0_HP_0_COUNT_SIZE  (2 * 2)
+#define VP9_MV_CLASS0_HP_1_COUNT_START \
+		(VP9_MV_CLASS0_HP_0_COUNT_START + VP9_MV_CLASS0_HP_0_COUNT_SIZE)
+#define VP9_MV_CLASS0_HP_1_COUNT_SIZE  (2 * 2)
+
+/* Start merge_tree */
+#define VP9_INTER_MODE_COUNT_START     \
+		(VP9_MV_CLASS0_HP_1_COUNT_START + VP9_MV_CLASS0_HP_1_COUNT_SIZE)
+#define VP9_INTER_MODE_COUNT_SIZE      (7 * 4)
+#define VP9_IF_Y_MODE_COUNT_START      \
+		(VP9_INTER_MODE_COUNT_START + VP9_INTER_MODE_COUNT_SIZE)
+#define VP9_IF_Y_MODE_COUNT_SIZE       (10 * 4)
+#define VP9_IF_UV_MODE_COUNT_START     \
+		(VP9_IF_Y_MODE_COUNT_START + VP9_IF_Y_MODE_COUNT_SIZE)
+#define VP9_IF_UV_MODE_COUNT_SIZE      (10 * 10)
+#define VP9_PARTITION_P_COUNT_START    \
+		(VP9_IF_UV_MODE_COUNT_START + VP9_IF_UV_MODE_COUNT_SIZE)
+#define VP9_PARTITION_P_COUNT_SIZE     (4 * 4 * 4)
+#define VP9_INTERP_COUNT_START         \
+		(VP9_PARTITION_P_COUNT_START + VP9_PARTITION_P_COUNT_SIZE)
+#define VP9_INTERP_COUNT_SIZE          (4 * 3)
+#define VP9_MV_JOINTS_COUNT_START      \
+		(VP9_INTERP_COUNT_START + VP9_INTERP_COUNT_SIZE)
+#define VP9_MV_JOINTS_COUNT_SIZE       (1 * 4)
+#define VP9_MV_CLASSES_0_COUNT_START   \
+		(VP9_MV_JOINTS_COUNT_START + VP9_MV_JOINTS_COUNT_SIZE)
+#define VP9_MV_CLASSES_0_COUNT_SIZE    (1 * 11)
+#define VP9_MV_CLASS0_0_COUNT_START    \
+		(VP9_MV_CLASSES_0_COUNT_START + VP9_MV_CLASSES_0_COUNT_SIZE)
+#define VP9_MV_CLASS0_0_COUNT_SIZE     (1 * 2)
+#define VP9_MV_CLASSES_1_COUNT_START   \
+		(VP9_MV_CLASS0_0_COUNT_START + VP9_MV_CLASS0_0_COUNT_SIZE)
+#define VP9_MV_CLASSES_1_COUNT_SIZE    (1 * 11)
+#define VP9_MV_CLASS0_1_COUNT_START    \
+		(VP9_MV_CLASSES_1_COUNT_START + VP9_MV_CLASSES_1_COUNT_SIZE)
+#define VP9_MV_CLASS0_1_COUNT_SIZE     (1 * 2)
+#define VP9_MV_CLASS0_FP_0_COUNT_START \
+		(VP9_MV_CLASS0_1_COUNT_START + VP9_MV_CLASS0_1_COUNT_SIZE)
+#define VP9_MV_CLASS0_FP_0_COUNT_SIZE  (3 * 4)
+#define VP9_MV_CLASS0_FP_1_COUNT_START \
+		(VP9_MV_CLASS0_FP_0_COUNT_START + VP9_MV_CLASS0_FP_0_COUNT_SIZE)
+#define VP9_MV_CLASS0_FP_1_COUNT_SIZE  (3 * 4)
+
+#define DC_PRED    0	/* Average of above and left pixels */
+#define V_PRED     1	/* Vertical */
+#define H_PRED     2	/* Horizontal */
+#define D45_PRED   3	/* Directional 45 deg = round(arctan(1/1) * 180/pi) */
+#define D135_PRED  4	/* Directional 135 deg = 180 - 45 */
+#define D117_PRED  5	/* Directional 117 deg = 180 - 63 */
+#define D153_PRED  6	/* Directional 153 deg = 180 - 27 */
+#define D207_PRED  7	/* Directional 207 deg = 180 + 27 */
+#define D63_PRED   8	/* Directional 63 deg = round(arctan(2/1) * 180/pi) */
+#define TM_PRED    9	/* True-motion */
+
+#define ROUND_POWER_OF_TWO(value, num) (((value) + (1 << ((num) - 1))) >> (num))
+
+#define MODE_MV_COUNT_SAT 20
+static const int count_to_update_factor[MODE_MV_COUNT_SAT + 1] = {
+	0, 6, 12, 19, 25, 32, 38, 44, 51, 57, 64,
+	70, 76, 83, 89, 96, 102, 108, 115, 121, 128
+};
 
 union rpm_param {
 	struct {
@@ -213,6 +425,7 @@ struct vp9_frame {
 	int show;
 	int type;
 	int done;
+	int refcount;
 };
 
 struct codec_vp9 {
@@ -261,6 +474,18 @@ struct codec_vp9 {
 	struct vp9_frame *prev_frame;
 };
 
+static int div_r32(s64 m, int n)
+{
+	s64 qu = div_s64(m, n);
+
+	return (int)qu;
+}
+
+static int clip_prob(int p)
+{
+	return (p > 255) ? 255 : (p < 1) ? 1 : p;
+}
+
 static int vp9_clamp(int value, int low, int high)
 {
 	return value < low ? low : (value > high ? high : value);
@@ -277,6 +502,26 @@ static int get_segdata(struct segmentation *seg, int segment_id,
 		       enum SEG_LVL_FEATURES feature_id)
 {
 	return seg->feature_data[segment_id][feature_id];
+}
+
+static u32 codec_vp9_get_lcu(int width, int height)
+{
+	int pic_width_64 = ALIGN(width, 64);
+	int pic_height_32 = ALIGN(height, 32);
+	int pic_width_lcu  = (pic_width_64 % LCU_SIZE) ?
+				pic_width_64 / LCU_SIZE  + 1
+				: pic_width_64 / LCU_SIZE;
+	int pic_height_lcu = (pic_height_32 % LCU_SIZE) ?
+				pic_height_32 / LCU_SIZE + 1
+				: pic_height_32 / LCU_SIZE;
+
+	return pic_width_lcu * pic_height_lcu;
+}
+
+static u32 codec_vp9_get_output_size(struct amvdec_session *sess)
+{
+	return ALIGN(codec_vp9_get_lcu(sess->width, sess->height) * 64 * 32,
+		     SZ_64K) << 1;
 }
 
 static void vp9_update_sharpness(struct loop_filter_info_n *lfi,
@@ -477,6 +722,8 @@ static int codec_vp9_alloc_workspace(struct amvdec_core *core,
 		return -ENOMEM;
 	}
 
+	memset(vp9->workspace_vaddr, 0, SIZE_WORKSPACE);
+
 	return 0;
 }
 
@@ -611,12 +858,15 @@ static int codec_vp9_stop(struct amvdec_session *sess)
 	struct amvdec_core *core = sess->core;
 	struct codec_vp9 *vp9 = sess->priv;
 
+	mutex_lock(&vp9->lock);
 	if (vp9->workspace_vaddr)
 		dma_free_coherent(core->dev, SIZE_WORKSPACE,
 				  vp9->workspace_vaddr,
 				  vp9->workspace_paddr);
 
 	codec_hevc_free_fbc_buffers(sess, &vp9->common);
+	mutex_unlock(&vp9->lock);
+
 	return 0;
 }
 
@@ -663,9 +913,9 @@ static void codec_vp9_set_sao(struct amvdec_session *sess,
 	}
 
 	amvdec_write_dos(core, HEVC_SAO_Y_LENGTH,
-			 amvdec_get_output_size(sess));
+			 codec_vp9_get_output_size(sess));
 	amvdec_write_dos(core, HEVC_SAO_C_LENGTH,
-			 (amvdec_get_output_size(sess) / 2));
+			 (codec_vp9_get_output_size(sess) / 2));
 
 	if (core->platform->revision >= VDEC_REVISION_G12A) {
 		amvdec_clear_dos_bits(core, HEVC_DBLK_CFGB,
@@ -747,6 +997,54 @@ static void codec_vp9_set_mpred_mv(struct amvdec_core *core,
 	amvdec_write_dos(core, HEVC_MPRED_MV_RD_END_ADDR, mpred_mv_rd_end_addr);
 }
 
+static struct vp9_frame *codec_vp9_get_frame_by_idx(struct codec_vp9 *vp9,
+						    int idx)
+{
+	struct vp9_frame *frame;
+
+	list_for_each_entry(frame, &vp9->ref_frames_list, list) {
+		if (frame->index == idx)
+			return frame;
+	}
+
+	return NULL;
+}
+
+static void codec_vp9_inc_ref_count(struct codec_vp9 *vp9, int idx)
+{
+	struct vp9_frame *frame;
+
+	if (idx >= 0)
+		frame = codec_vp9_get_frame_by_idx(vp9, idx);
+	else
+		return;
+
+	if (frame) {
+		frame->refcount++;
+		pr_debug("%d refcount++ = %d\n", idx, frame->refcount);
+	} else {
+		pr_err("%s: Couldn't find VP9 ref %d\n", __func__, idx);
+	}
+}
+
+static void codec_vp9_dec_ref_count(struct codec_vp9 *vp9, int idx)
+{
+	struct vp9_frame *frame;
+
+	if (idx >= 0)
+		frame = codec_vp9_get_frame_by_idx(vp9, idx);
+	else
+		return;
+
+	if (frame) {
+		if (frame->refcount)
+			frame->refcount--;
+		pr_debug("%d refcount-- = %d\n", idx, frame->refcount);
+	} else {
+		pr_err("%s: Couldn't find VP9 ref %d\n", __func__, idx);
+	}
+}
+
 static void codec_vp9_update_next_ref(struct codec_vp9 *vp9)
 {
 	union rpm_param *param = &vp9->rpm_param;
@@ -760,18 +1058,29 @@ static void codec_vp9_update_next_ref(struct codec_vp9 *vp9)
 
 	for (mask = refresh_frame_flags; mask; mask >>= 1) {
 		pr_debug("mask=%08X; ref_index=%d\n", mask, ref_index);
-		if (mask & 1)
+		if (mask & 1) {
 			vp9->next_ref_frame_map[ref_index] = buf_idx;
-		else
+			codec_vp9_inc_ref_count(vp9, buf_idx);
+		} else {
 			vp9->next_ref_frame_map[ref_index] =
 				vp9->ref_frame_map[ref_index];
+		}
+
+		if (vp9->ref_frame_map[ref_index] >= 0)
+			codec_vp9_inc_ref_count(vp9,
+						vp9->ref_frame_map[ref_index]);
 
 		++ref_index;
 	}
 
-	for (; ref_index < REF_FRAMES; ++ref_index)
+	for (; ref_index < REF_FRAMES; ++ref_index) {
 		vp9->next_ref_frame_map[ref_index] =
 			vp9->ref_frame_map[ref_index];
+
+		if (vp9->ref_frame_map[ref_index] >= 0)
+			codec_vp9_inc_ref_count(vp9,
+						vp9->ref_frame_map[ref_index]);
+	}
 }
 
 static void codec_vp9_update_ref(struct codec_vp9 *vp9)
@@ -788,6 +1097,12 @@ static void codec_vp9_update_ref(struct codec_vp9 *vp9)
 				0xff : param->p.refresh_frame_flags;
 
 	for (mask = refresh_frame_flags; mask; mask >>= 1) {
+		codec_vp9_dec_ref_count(vp9, vp9->ref_frame_map[ref_index]);
+
+		if ((mask & 1) && vp9->ref_frame_map[ref_index] >= 0)
+			codec_vp9_dec_ref_count(vp9,
+						vp9->ref_frame_map[ref_index]);
+
 		vp9->ref_frame_map[ref_index] =
 			vp9->next_ref_frame_map[ref_index];
 		++ref_index;
@@ -796,22 +1111,11 @@ static void codec_vp9_update_ref(struct codec_vp9 *vp9)
 	if (param->p.show_existing_frame)
 		return;
 
-	for (; ref_index < REF_FRAMES; ++ref_index)
+	for (; ref_index < REF_FRAMES; ++ref_index) {
+		codec_vp9_dec_ref_count(vp9, vp9->ref_frame_map[ref_index]);
 		vp9->ref_frame_map[ref_index] =
 			vp9->next_ref_frame_map[ref_index];
-}
-
-static struct vp9_frame *codec_vp9_get_frame_by_idx(struct codec_vp9 *vp9,
-						    int idx)
-{
-	struct vp9_frame *frame;
-
-	list_for_each_entry(frame, &vp9->ref_frames_list, list) {
-		if (frame->index == idx)
-			return frame;
 	}
-
-	return NULL;
 }
 
 static void codec_vp9_sync_ref(struct codec_vp9 *vp9)
@@ -826,6 +1130,8 @@ static void codec_vp9_sync_ref(struct codec_vp9 *vp9)
 		const int idx = vp9->ref_frame_map[ref];
 
 		vp9->frame_refs[i] = codec_vp9_get_frame_by_idx(vp9, idx);
+		if (!vp9->frame_refs[i])
+			pr_err("%s: Couldn't find VP9 ref %d\n", __func__, idx);
 	}
 }
 
@@ -879,9 +1185,15 @@ static void codec_vp9_set_mc(struct amvdec_session *sess,
 				 (vp9->width << 14) / vp9->width);
 		amvdec_write_dos(core, VP9D_MPP_REFINFO_DATA,
 				 (vp9->height << 14) / vp9->height);
-		amvdec_write_dos(core, VP9D_MPP_REFINFO_DATA,
-				 amvdec_am21c_body_size(vp9->width,
-							vp9->height) >> 5);
+		if (codec_hevc_use_mmu(core->platform->revision,
+				       sess->pixfmt_cap,
+				       vp9->is_10bit))
+			amvdec_write_dos(core, VP9D_MPP_REFINFO_DATA, 0);
+		else
+			amvdec_write_dos(core, VP9D_MPP_REFINFO_DATA,
+					 amvdec_am21c_body_size(vp9->width,
+								vp9->height)
+					 >> 5);
 	}
 
 	amvdec_write_dos(core, VP9D_MPP_REF_SCALE_ENBL, 0);
@@ -922,6 +1234,7 @@ static struct vp9_frame *codec_vp9_get_new_frame(struct amvdec_session *sess)
 	new_frame->intra_only = param->p.intra_only;
 	new_frame->show = param->p.show_frame;
 	new_frame->type = param->p.frame_type;
+	new_frame->refcount = 0;
 	list_add_tail(&new_frame->list, &vp9->ref_frames_list);
 	vp9->frames_num++;
 
@@ -944,7 +1257,7 @@ static void codec_vp9_rm_noshow_frame(struct amvdec_session *sess)
 	struct vp9_frame *tmp;
 
 	list_for_each_entry(tmp, &vp9->ref_frames_list, list) {
-		if (tmp->show)
+		if (tmp->show || tmp->refcount)
 			continue;
 
 		pr_debug("rm noshow: %u\n", tmp->index);
@@ -970,11 +1283,13 @@ static void codec_vp9_process_frame(struct amvdec_session *sess)
 	if (!vp9->cur_frame)
 		return;
 
-	pr_debug("frame type: %08X; show_exist: %u; show: %u, intra_only: %u\n",
+	pr_debug("frame %d: type: %08X; show_exist: %u; show: %u, intra_only: %u\n",
+		 vp9->cur_frame->index,
 		 param->p.frame_type, param->p.show_existing_frame,
 		 param->p.show_frame, param->p.intra_only);
 
-	codec_vp9_sync_ref(vp9);
+	if (param->p.frame_type != KEY_FRAME)
+		codec_vp9_sync_ref(vp9);
 	codec_vp9_update_next_ref(vp9);
 	codec_vp9_show_existing_frame(vp9);
 
@@ -1062,6 +1377,46 @@ static void codec_vp9_fetch_rpm(struct amvdec_session *sess)
 	for (i = 0; i < RPM_BUF_SIZE; i += 4)
 		for (j = 0; j < 4; j++)
 			vp9->rpm_param.l.data[i + j] = rpm_vaddr[i + 3 - j];
+
+	pr_debug("RPM:\n");
+	pr_debug(" - raw = 0x%64phN\n", vp9->rpm_param.l.data);
+	pr_debug(" - profile = 0x%x\n", vp9->rpm_param.p.profile);
+	pr_debug(" - show_existing_frame = 0x%x\n",
+		 vp9->rpm_param.p.show_existing_frame);
+	pr_debug(" - frame_to_show_idx = 0x%x\n",
+		 vp9->rpm_param.p.frame_to_show_idx);
+	pr_debug(" - frame_type = 0x%x\n", vp9->rpm_param.p.frame_type);
+	pr_debug(" - show_frame = 0x%x\n", vp9->rpm_param.p.show_frame);
+	pr_debug(" - error_resilient_mode = 0x%x\n",
+		 vp9->rpm_param.p.error_resilient_mode);
+	pr_debug(" - intra_only = 0x%x\n", vp9->rpm_param.p.intra_only);
+	pr_debug(" - display_size_present = 0x%x\n",
+		 vp9->rpm_param.p.display_size_present);
+	pr_debug(" - reset_frame_context = 0x%x\n",
+		 vp9->rpm_param.p.reset_frame_context);
+	pr_debug(" - refresh_frame_flags = 0x%x\n",
+		 vp9->rpm_param.p.refresh_frame_flags);
+	pr_debug(" - width = 0x%x\n", vp9->rpm_param.p.width);
+	pr_debug(" - height = 0x%x\n", vp9->rpm_param.p.height);
+	pr_debug(" - display_width = 0x%x\n", vp9->rpm_param.p.display_width);
+	pr_debug(" - display_height = 0x%x\n",
+		 vp9->rpm_param.p.display_height);
+	pr_debug(" - ref_info = 0x%x\n", vp9->rpm_param.p.ref_info);
+	pr_debug(" - same_frame_size = 0x%x\n",
+		 vp9->rpm_param.p.same_frame_size);
+	pr_debug(" - mode_ref_delta_enabled = 0x%x\n",
+		 vp9->rpm_param.p.mode_ref_delta_enabled);
+	pr_debug(" - ref_deltas = 0x%4phD\n", vp9->rpm_param.p.ref_deltas);
+	pr_debug(" - mode_deltas = 0x%2phD\n", vp9->rpm_param.p.mode_deltas);
+	pr_debug(" - filter_level = 0x%x\n", vp9->rpm_param.p.filter_level);
+	pr_debug(" - sharpness_level = 0x%x\n",
+		 vp9->rpm_param.p.sharpness_level);
+	pr_debug(" - bit_depth = 0x%x\n", vp9->rpm_param.p.bit_depth);
+	pr_debug(" - seg_quant_info = 0x%8phD\n",
+		 vp9->rpm_param.p.seg_quant_info);
+	pr_debug(" - seg_enabled = 0x%x\n", vp9->rpm_param.p.seg_enabled);
+	pr_debug(" - seg_abs_delta = 0x%x\n", vp9->rpm_param.p.seg_abs_delta);
+	pr_debug(" - seg_lf_info = 0x%8phD\n", vp9->rpm_param.p.seg_lf_info);
 }
 
 static int codec_vp9_process_rpm(struct codec_vp9 *vp9)
@@ -1069,15 +1424,8 @@ static int codec_vp9_process_rpm(struct codec_vp9 *vp9)
 	union rpm_param *param = &vp9->rpm_param;
 	int src_changed = 0;
 	int is_10bit = 0;
-	int pic_width_64 = ALIGN(param->p.width, 64);
-	int pic_height_32 = ALIGN(param->p.height, 32);
-	int pic_width_lcu  = (pic_width_64 % LCU_SIZE) ?
-				pic_width_64 / LCU_SIZE  + 1
-				: pic_width_64 / LCU_SIZE;
-	int pic_height_lcu = (pic_height_32 % LCU_SIZE) ?
-				pic_height_32 / LCU_SIZE + 1
-				: pic_height_32 / LCU_SIZE;
-	vp9->lcu_total = pic_width_lcu * pic_height_lcu;
+
+	vp9->lcu_total = codec_vp9_get_lcu(param->p.width, param->p.height);
 
 	if (param->p.bit_depth == 10)
 		is_10bit = 1;
@@ -1121,14 +1469,655 @@ static void codec_vp9_show_frame(struct amvdec_session *sess)
 			amvdec_dst_buf_done(sess, tmp->vbuf, V4L2_FIELD_NONE);
 			tmp->done = 1;
 			vp9->frames_num--;
+			codec_vp9_dec_ref_count(vp9, tmp->index);
 		}
 
-		if (codec_vp9_is_ref(vp9, tmp))
+		if (codec_vp9_is_ref(vp9, tmp) ||
+		    tmp == vp9->prev_frame ||
+		    tmp->refcount)
 			continue;
 
 		pr_debug("deleting %d\n", tmp->index);
 		list_del(&tmp->list);
 		kfree(tmp);
+	}
+}
+
+static void vp9_tree_merge_probs(unsigned int *prev_prob,
+				 unsigned int *cur_prob,
+				 int coef_node_start, int tree_left,
+				 int tree_right,
+				 int tree_i, int node)
+{
+	int prob_32, prob_res, prob_shift;
+	int pre_prob, new_prob;
+	int den, m_count, get_prob, factor;
+
+	prob_32 = prev_prob[coef_node_start / 4 * 2];
+	prob_res = coef_node_start & 3;
+	prob_shift = prob_res * 8;
+	pre_prob = (prob_32 >> prob_shift) & 0xff;
+
+	den = tree_left + tree_right;
+
+	if (den == 0) {
+		new_prob = pre_prob;
+	} else {
+		m_count = den < MODE_MV_COUNT_SAT ? den : MODE_MV_COUNT_SAT;
+		get_prob =
+			clip_prob(div_r32(((int64_t)tree_left * 256 +
+					   (den >> 1)),
+					  den));
+
+		/* weighted_prob */
+		factor = count_to_update_factor[m_count];
+		new_prob = ROUND_POWER_OF_TWO(pre_prob * (256 - factor) +
+					      get_prob * factor, 8);
+	}
+
+	cur_prob[coef_node_start / 4 * 2] =
+		(cur_prob[coef_node_start / 4 * 2] & (~(0xff << prob_shift))) |
+		(new_prob << prob_shift);
+}
+
+static void adapt_coef_probs_cxt(unsigned int *prev_prob,
+				 unsigned int *cur_prob,
+				 unsigned int *count,
+				 int update_factor,
+				 int cxt_num,
+				 int coef_cxt_start,
+				 int coef_count_cxt_start)
+{
+	int prob_32, prob_res, prob_shift;
+	int pre_prob, new_prob;
+	int num, den, m_count, get_prob, factor;
+	int node, coef_node_start;
+	int count_sat = 24;
+	int cxt;
+
+	for (cxt = 0; cxt < cxt_num; cxt++) {
+		const int n0 = count[coef_count_cxt_start];
+		const int n1 = count[coef_count_cxt_start + 1];
+		const int n2 = count[coef_count_cxt_start + 2];
+		const int neob = count[coef_count_cxt_start + 3];
+		const int nneob = count[coef_count_cxt_start + 4];
+		const unsigned int branch_ct[3][2] = {
+			{ neob, nneob },
+			{ n0, n1 + n2 },
+			{ n1, n2 }
+		};
+
+		coef_node_start = coef_cxt_start;
+		for (node = 0 ; node < 3 ; node++) {
+			prob_32 = prev_prob[coef_node_start / 4 * 2];
+			prob_res = coef_node_start & 3;
+			prob_shift = prob_res * 8;
+			pre_prob = (prob_32 >> prob_shift) & 0xff;
+
+			/* get binary prob */
+			num = branch_ct[node][0];
+			den = branch_ct[node][0] + branch_ct[node][1];
+			m_count = den < count_sat ? den : count_sat;
+
+			get_prob = (den == 0) ?
+					128u :
+					clip_prob(div_r32(((int64_t)num * 256 +
+							  (den >> 1)), den));
+
+			factor = update_factor * m_count / count_sat;
+			new_prob =
+				ROUND_POWER_OF_TWO(pre_prob * (256 - factor) +
+						   get_prob * factor, 8);
+
+			cur_prob[coef_node_start / 4 * 2] =
+				(cur_prob[coef_node_start / 4 * 2] &
+				 (~(0xff << prob_shift))) |
+				(new_prob << prob_shift);
+
+			coef_node_start += 1;
+		}
+
+		coef_cxt_start = coef_cxt_start + 3;
+		coef_count_cxt_start = coef_count_cxt_start + 5;
+	}
+}
+
+static void adapt_coef_probs(int prev_kf, int cur_kf, int pre_fc,
+			     unsigned int *prev_prob, unsigned int *cur_prob,
+			     unsigned int *count)
+{
+	int tx_size, coef_tx_size_start, coef_count_tx_size_start;
+	int plane, coef_plane_start, coef_count_plane_start;
+	int type, coef_type_start, coef_count_type_start;
+	int band, coef_band_start, coef_count_band_start;
+	int cxt_num;
+	int coef_cxt_start, coef_count_cxt_start;
+	int node, coef_node_start, coef_count_node_start;
+
+	int tree_i, tree_left, tree_right;
+	int mvd_i;
+
+	int update_factor = cur_kf ? 112 : (prev_kf ? 128 : 112);
+
+	int prob_32;
+	int prob_res;
+	int prob_shift;
+	int pre_prob;
+
+	int den;
+	int get_prob;
+	int m_count;
+	int factor;
+
+	int new_prob;
+
+	for (tx_size = 0 ; tx_size < 4 ; tx_size++) {
+		coef_tx_size_start = VP9_COEF_START +
+				tx_size * 4 * VP9_COEF_SIZE_ONE_SET;
+		coef_count_tx_size_start = VP9_COEF_COUNT_START +
+				tx_size * 4 * VP9_COEF_COUNT_SIZE_ONE_SET;
+		coef_plane_start = coef_tx_size_start;
+		coef_count_plane_start = coef_count_tx_size_start;
+
+		for (plane = 0 ; plane < 2 ; plane++) {
+			coef_type_start = coef_plane_start;
+			coef_count_type_start = coef_count_plane_start;
+
+			for (type = 0 ; type < 2 ; type++) {
+				coef_band_start = coef_type_start;
+				coef_count_band_start = coef_count_type_start;
+
+				for (band = 0 ; band < 6 ; band++) {
+					if (band == 0)
+						cxt_num = 3;
+					else
+						cxt_num = 6;
+					coef_cxt_start = coef_band_start;
+					coef_count_cxt_start =
+						coef_count_band_start;
+
+					adapt_coef_probs_cxt(prev_prob,
+							     cur_prob,
+							     count,
+							     update_factor,
+							     cxt_num,
+							     coef_cxt_start,
+							coef_count_cxt_start);
+
+					if (band == 0) {
+						coef_band_start += 10;
+						coef_count_band_start += 15;
+					} else {
+						coef_band_start += 18;
+						coef_count_band_start += 30;
+					}
+				}
+				coef_type_start += VP9_COEF_SIZE_ONE_SET;
+				coef_count_type_start +=
+					VP9_COEF_COUNT_SIZE_ONE_SET;
+			}
+
+			coef_plane_start += 2 * VP9_COEF_SIZE_ONE_SET;
+			coef_count_plane_start +=
+				2 * VP9_COEF_COUNT_SIZE_ONE_SET;
+		}
+	}
+
+	if (cur_kf == 0) {
+		/* mode_mv_merge_probs - merge_intra_inter_prob */
+		for (coef_count_node_start = VP9_INTRA_INTER_COUNT_START;
+		     coef_count_node_start < (VP9_MV_CLASS0_HP_1_COUNT_START +
+					      VP9_MV_CLASS0_HP_1_COUNT_SIZE);
+		     coef_count_node_start += 2) {
+			if (coef_count_node_start ==
+					VP9_INTRA_INTER_COUNT_START)
+				coef_node_start = VP9_INTRA_INTER_START;
+			else if (coef_count_node_start ==
+					VP9_COMP_INTER_COUNT_START)
+				coef_node_start = VP9_COMP_INTER_START;
+			else if (coef_count_node_start ==
+					VP9_TX_MODE_COUNT_START)
+				coef_node_start = VP9_TX_MODE_START;
+			else if (coef_count_node_start ==
+					VP9_SKIP_COUNT_START)
+				coef_node_start = VP9_SKIP_START;
+			else if (coef_count_node_start ==
+					VP9_MV_SIGN_0_COUNT_START)
+				coef_node_start = VP9_MV_SIGN_0_START;
+			else if (coef_count_node_start ==
+					VP9_MV_SIGN_1_COUNT_START)
+				coef_node_start = VP9_MV_SIGN_1_START;
+			else if (coef_count_node_start ==
+					VP9_MV_BITS_0_COUNT_START)
+				coef_node_start = VP9_MV_BITS_0_START;
+			else if (coef_count_node_start ==
+					VP9_MV_BITS_1_COUNT_START)
+				coef_node_start = VP9_MV_BITS_1_START;
+			else if (coef_count_node_start ==
+					VP9_MV_CLASS0_HP_0_COUNT_START)
+				coef_node_start = VP9_MV_CLASS0_HP_0_START;
+
+			den = count[coef_count_node_start] +
+			      count[coef_count_node_start + 1];
+
+			prob_32 = prev_prob[coef_node_start / 4 * 2];
+			prob_res = coef_node_start & 3;
+			prob_shift = prob_res * 8;
+			pre_prob = (prob_32 >> prob_shift) & 0xff;
+
+			if (den == 0) {
+				new_prob = pre_prob;
+			} else {
+				m_count = den < MODE_MV_COUNT_SAT ?
+						den : MODE_MV_COUNT_SAT;
+				get_prob =
+				clip_prob(div_r32(((int64_t)
+					count[coef_count_node_start] * 256 +
+					(den >> 1)),
+					den));
+
+				/* weighted prob */
+				factor = count_to_update_factor[m_count];
+				new_prob =
+					ROUND_POWER_OF_TWO(pre_prob *
+							   (256 - factor) +
+							   get_prob * factor,
+							   8);
+			}
+
+			cur_prob[coef_node_start / 4 * 2] =
+				(cur_prob[coef_node_start / 4 * 2] &
+				 (~(0xff << prob_shift))) |
+				(new_prob << prob_shift);
+
+			coef_node_start = coef_node_start + 1;
+		}
+
+		coef_node_start = VP9_INTER_MODE_START;
+		coef_count_node_start = VP9_INTER_MODE_COUNT_START;
+		for (tree_i = 0 ; tree_i < 7 ; tree_i++) {
+			for (node = 0 ; node < 3 ; node++) {
+				unsigned int start = coef_count_node_start;
+
+				switch (node) {
+				case 2:
+					tree_left = count[start + 1];
+					tree_right = count[start + 3];
+					break;
+				case 1:
+					tree_left = count[start + 0];
+					tree_right = count[start + 1] +
+						     count[start + 3];
+					break;
+				default:
+					tree_left = count[start + 2];
+					tree_right = count[start + 0] +
+						     count[start + 1] +
+						     count[start + 3];
+					break;
+				}
+
+				vp9_tree_merge_probs(prev_prob, cur_prob,
+						     coef_node_start,
+						     tree_left, tree_right,
+						     tree_i, node);
+
+				coef_node_start = coef_node_start + 1;
+			}
+
+			coef_count_node_start = coef_count_node_start + 4;
+		}
+
+		coef_node_start = VP9_IF_Y_MODE_START;
+		coef_count_node_start = VP9_IF_Y_MODE_COUNT_START;
+		for (tree_i = 0 ; tree_i < 14 ; tree_i++) {
+			for (node = 0 ; node < 9 ; node++) {
+				unsigned int start = coef_count_node_start;
+
+				switch (node) {
+				case 8:
+					tree_left =
+						count[start + D153_PRED];
+					tree_right =
+						count[start + D207_PRED];
+					break;
+				case 7:
+					tree_left =
+						count[start + D63_PRED];
+					tree_right =
+						count[start + D207_PRED] +
+						count[start + D153_PRED];
+					break;
+				case 6:
+					tree_left =
+						count[start + D45_PRED];
+					tree_right =
+						count[start + D207_PRED] +
+						count[start + D153_PRED] +
+						count[start + D63_PRED];
+					break;
+				case 5:
+					tree_left =
+						count[start + D135_PRED];
+					tree_right =
+						count[start + D117_PRED];
+					break;
+				case 4:
+					tree_left =
+						count[start + H_PRED];
+					tree_right =
+						count[start + D117_PRED] +
+						count[start + D135_PRED];
+					break;
+				case 3:
+					tree_left =
+						count[start + H_PRED] +
+						count[start + D117_PRED] +
+						count[start + D135_PRED];
+					tree_right =
+						count[start + D45_PRED] +
+						count[start + D207_PRED] +
+						count[start + D153_PRED] +
+						count[start + D63_PRED];
+					break;
+				case 2:
+					tree_left =
+						count[start + V_PRED];
+					tree_right =
+						count[start + H_PRED] +
+						count[start + D117_PRED] +
+						count[start + D135_PRED] +
+						count[start + D45_PRED] +
+						count[start + D207_PRED] +
+						count[start + D153_PRED] +
+						count[start + D63_PRED];
+					break;
+				case 1:
+					tree_left =
+						count[start + TM_PRED];
+					tree_right =
+						count[start + V_PRED] +
+						count[start + H_PRED] +
+						count[start + D117_PRED] +
+						count[start + D135_PRED] +
+						count[start + D45_PRED] +
+						count[start + D207_PRED] +
+						count[start + D153_PRED] +
+						count[start + D63_PRED];
+					break;
+				default:
+					tree_left =
+						count[start + DC_PRED];
+					tree_right =
+						count[start + TM_PRED] +
+						count[start + V_PRED] +
+						count[start + H_PRED] +
+						count[start + D117_PRED] +
+						count[start + D135_PRED] +
+						count[start + D45_PRED] +
+						count[start + D207_PRED] +
+						count[start + D153_PRED] +
+						count[start + D63_PRED];
+					break;
+				}
+
+				vp9_tree_merge_probs(prev_prob, cur_prob,
+						     coef_node_start,
+						     tree_left, tree_right,
+						     tree_i, node);
+
+				coef_node_start = coef_node_start + 1;
+			}
+			coef_count_node_start = coef_count_node_start + 10;
+		}
+
+		coef_node_start = VP9_PARTITION_P_START;
+		coef_count_node_start = VP9_PARTITION_P_COUNT_START;
+		for (tree_i = 0 ; tree_i < 16 ; tree_i++) {
+			for (node = 0 ; node < 3 ; node++) {
+				unsigned int start = coef_count_node_start;
+
+				switch (node) {
+				case 2:
+					tree_left = count[start + 2];
+					tree_right = count[start + 3];
+					break;
+				case 1:
+					tree_left = count[start + 1];
+					tree_right = count[start + 2] +
+						     count[start + 3];
+					break;
+				default:
+					tree_left = count[start + 0];
+					tree_right = count[start + 1] +
+						     count[start + 2] +
+						     count[start + 3];
+					break;
+				}
+
+				vp9_tree_merge_probs(prev_prob, cur_prob,
+						     coef_node_start,
+						     tree_left, tree_right,
+						     tree_i, node);
+
+				coef_node_start = coef_node_start + 1;
+			}
+
+			coef_count_node_start = coef_count_node_start + 4;
+		}
+
+		coef_node_start = VP9_INTERP_START;
+		coef_count_node_start = VP9_INTERP_COUNT_START;
+		for (tree_i = 0 ; tree_i < 4 ; tree_i++) {
+			for (node = 0 ; node < 2 ; node++) {
+				unsigned int start = coef_count_node_start;
+
+				switch (node) {
+				case 1:
+					tree_left = count[start + 1];
+					tree_right = count[start + 2];
+					break;
+				default:
+					tree_left = count[start + 0];
+					tree_right = count[start + 1] +
+						     count[start + 2];
+					break;
+				}
+
+				vp9_tree_merge_probs(prev_prob, cur_prob,
+						     coef_node_start,
+						     tree_left, tree_right,
+						     tree_i, node);
+
+				coef_node_start = coef_node_start + 1;
+			}
+			coef_count_node_start = coef_count_node_start + 3;
+		}
+
+		coef_node_start = VP9_MV_JOINTS_START;
+		coef_count_node_start = VP9_MV_JOINTS_COUNT_START;
+		for (tree_i = 0 ; tree_i < 1 ; tree_i++) {
+			for (node = 0 ; node < 3 ; node++) {
+				unsigned int start = coef_count_node_start;
+
+				switch (node) {
+				case 2:
+					tree_left = count[start + 2];
+					tree_right = count[start + 3];
+					break;
+				case 1:
+					tree_left = count[start + 1];
+					tree_right = count[start + 2] +
+						     count[start + 3];
+					break;
+				default:
+					tree_left = count[start + 0];
+					tree_right = count[start + 1] +
+						     count[start + 2] +
+						     count[start + 3];
+					break;
+				}
+
+				vp9_tree_merge_probs(prev_prob, cur_prob,
+						     coef_node_start,
+						     tree_left, tree_right,
+						     tree_i, node);
+
+				coef_node_start = coef_node_start + 1;
+			}
+			coef_count_node_start = coef_count_node_start + 4;
+		}
+
+		for (mvd_i = 0 ; mvd_i < 2 ; mvd_i++) {
+			coef_node_start = mvd_i ? VP9_MV_CLASSES_1_START :
+						  VP9_MV_CLASSES_0_START;
+			coef_count_node_start = mvd_i ?
+					VP9_MV_CLASSES_1_COUNT_START :
+					VP9_MV_CLASSES_0_COUNT_START;
+			tree_i = 0;
+			for (node = 0; node < 10; node++) {
+				unsigned int start = coef_count_node_start;
+
+				switch (node) {
+				case 9:
+					tree_left = count[start + 9];
+					tree_right = count[start + 10];
+					break;
+				case 8:
+					tree_left = count[start + 7];
+					tree_right = count[start + 8];
+					break;
+				case 7:
+					tree_left = count[start + 7] +
+						     count[start + 8];
+					tree_right = count[start + 9] +
+						     count[start + 10];
+					break;
+				case 6:
+					tree_left = count[start + 6];
+					tree_right = count[start + 7] +
+						     count[start + 8] +
+						     count[start + 9] +
+						     count[start + 10];
+					break;
+				case 5:
+					tree_left = count[start + 4];
+					tree_right = count[start + 5];
+					break;
+				case 4:
+					tree_left = count[start + 4] +
+						    count[start + 5];
+					tree_right = count[start + 6] +
+						     count[start + 7] +
+						     count[start + 8] +
+						     count[start + 9] +
+						     count[start + 10];
+					break;
+				case 3:
+					tree_left = count[start + 2];
+					tree_right = count[start + 3];
+					break;
+				case 2:
+					tree_left = count[start + 2] +
+						    count[start + 3];
+					tree_right = count[start + 4] +
+						     count[start + 5] +
+						     count[start + 6] +
+						     count[start + 7] +
+						     count[start + 8] +
+						     count[start + 9] +
+						     count[start + 10];
+					break;
+				case 1:
+					tree_left = count[start + 1];
+					tree_right = count[start + 2] +
+						     count[start + 3] +
+						     count[start + 4] +
+						     count[start + 5] +
+						     count[start + 6] +
+						     count[start + 7] +
+						     count[start + 8] +
+						     count[start + 9] +
+						     count[start + 10];
+					break;
+				default:
+					tree_left = count[start + 0];
+					tree_right = count[start + 1] +
+						     count[start + 2] +
+						     count[start + 3] +
+						     count[start + 4] +
+						     count[start + 5] +
+						     count[start + 6] +
+						     count[start + 7] +
+						     count[start + 8] +
+						     count[start + 9] +
+						     count[start + 10];
+					break;
+				}
+
+				vp9_tree_merge_probs(prev_prob, cur_prob,
+						     coef_node_start,
+						     tree_left, tree_right,
+						     tree_i, node);
+
+				coef_node_start = coef_node_start + 1;
+			}
+
+			coef_node_start = mvd_i ? VP9_MV_CLASS0_1_START :
+						  VP9_MV_CLASS0_0_START;
+			coef_count_node_start =	mvd_i ?
+						VP9_MV_CLASS0_1_COUNT_START :
+						VP9_MV_CLASS0_0_COUNT_START;
+			tree_i = 0;
+			node = 0;
+			tree_left = count[coef_count_node_start + 0];
+			tree_right = count[coef_count_node_start + 1];
+
+			vp9_tree_merge_probs(prev_prob, cur_prob,
+					     coef_node_start,
+					     tree_left, tree_right,
+					     tree_i, node);
+			coef_node_start = mvd_i ? VP9_MV_CLASS0_FP_1_START :
+						  VP9_MV_CLASS0_FP_0_START;
+			coef_count_node_start =	mvd_i ?
+					VP9_MV_CLASS0_FP_1_COUNT_START :
+					VP9_MV_CLASS0_FP_0_COUNT_START;
+
+			for (tree_i = 0; tree_i < 3; tree_i++) {
+				for (node = 0; node < 3; node++) {
+					unsigned int start =
+						coef_count_node_start;
+					switch (node) {
+					case 2:
+						tree_left = count[start + 2];
+						tree_right = count[start + 3];
+						break;
+					case 1:
+						tree_left = count[start + 1];
+						tree_right = count[start + 2] +
+							     count[start + 3];
+						break;
+					default:
+						tree_left = count[start + 0];
+						tree_right = count[start + 1] +
+							     count[start + 2] +
+							     count[start + 3];
+						break;
+					}
+
+					vp9_tree_merge_probs(prev_prob,
+							     cur_prob,
+							     coef_node_start,
+							     tree_left,
+							     tree_right,
+							     tree_i, node);
+
+					coef_node_start = coef_node_start + 1;
+				}
+				coef_count_node_start =
+					coef_count_node_start + 4;
+			}
+		}
 	}
 }
 
@@ -1140,7 +2129,7 @@ static irqreturn_t codec_vp9_threaded_isr(struct amvdec_session *sess)
 	u32 prob_status = amvdec_read_dos(core, VP9_ADAPT_PROB_REG);
 	int i;
 
-	if (!vp9)
+	if (!vp9 || sess->should_stop)
 		return IRQ_HANDLED;
 
 	mutex_lock(&vp9->lock);
@@ -1153,6 +2142,30 @@ static irqreturn_t codec_vp9_threaded_isr(struct amvdec_session *sess)
 
 	pr_debug("ISR: %08X;%08X\n", dec_status, prob_status);
 	sess->keyframe_found = 1;
+
+	if ((prob_status & 0xff) == 0xfd && vp9->cur_frame) {
+		/* VP9_REQ_ADAPT_PROB */
+		u8 *prev_prob_b = ((u8 *)vp9->workspace_vaddr +
+					 PROB_OFFSET) +
+					((prob_status >> 8) * 0x1000);
+		u8 *cur_prob_b = ((u8 *)vp9->workspace_vaddr +
+					 PROB_OFFSET) + 0x4000;
+		u8 *count_b = (u8 *)vp9->workspace_vaddr +
+				   COUNT_OFFSET;
+		int last_frame_type = vp9->prev_frame ?
+						vp9->prev_frame->type :
+						KEY_FRAME;
+
+		adapt_coef_probs(last_frame_type == KEY_FRAME,
+				 vp9->cur_frame->type == KEY_FRAME ? 1 : 0,
+				 prob_status >> 8,
+				 (unsigned int *)prev_prob_b,
+				 (unsigned int *)cur_prob_b,
+				 (unsigned int *)count_b);
+
+		memcpy(prev_prob_b, cur_prob_b, ADAPT_PROB_SIZE);
+		amvdec_write_dos(core, VP9_ADAPT_PROB_REG, 0);
+	}
 
 	/* Invalidate first 3 refs */
 	for (i = 0; i < 3; ++i)
@@ -1189,4 +2202,5 @@ struct amvdec_codec_ops codec_vp9_ops = {
 	.num_pending_bufs = codec_vp9_num_pending_bufs,
 	.drain = codec_vp9_flush_output,
 	.resume = codec_vp9_resume,
+	.get_output_size = codec_vp9_get_output_size,
 };
