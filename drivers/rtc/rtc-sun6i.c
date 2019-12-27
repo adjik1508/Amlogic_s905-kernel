@@ -33,6 +33,7 @@
 #define SUN6I_LOSC_CTRL				0x0000
 #define SUN6I_LOSC_CTRL_KEY			(0x16aa << 16)
 #define SUN6I_LOSC_CTRL_AUTO_SWT_BYPASS		BIT(15)
+#define SUN6I_LOSC_CTRL_AUTO_SWT_EN		BIT(14)
 #define SUN6I_LOSC_CTRL_ALM_DHMS_ACC		BIT(9)
 #define SUN6I_LOSC_CTRL_RTC_HMS_ACC		BIT(8)
 #define SUN6I_LOSC_CTRL_RTC_YMD_ACC		BIT(7)
@@ -252,6 +253,7 @@ static void __init sun6i_rtc_clk_init(struct device_node *node,
 
 	/* Switch to the external, more precise, oscillator */
 	reg |= SUN6I_LOSC_CTRL_EXT_OSC;
+	reg |= SUN6I_LOSC_CTRL_AUTO_SWT_EN;
 	if (rtc->data->has_losc_en)
 		reg |= SUN6I_LOSC_CTRL_EXT_LOSC_EN;
 	writel(reg, rtc->base + SUN6I_LOSC_CTRL);
@@ -369,7 +371,6 @@ static const struct sun6i_rtc_clk_data sun50i_h6_rtc_data = {
 	.has_out_clk = 1,
 	.export_iosc = 1,
 	.has_losc_en = 1,
-	.has_auto_swt = 1,
 };
 
 static void __init sun50i_h6_rtc_clk_init(struct device_node *node)

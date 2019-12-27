@@ -311,6 +311,7 @@ static int cedrus_s_fmt_vid_out(struct file *file, void *priv,
 
 	switch (ctx->src_fmt.pixelformat) {
 	case V4L2_PIX_FMT_H264_SLICE:
+	case V4L2_PIX_FMT_HEVC_SLICE:
 		vq->subsystem_flags |=
 			VB2_V4L2_FL_SUPPORTS_M2M_HOLD_CAPTURE_BUF;
 		break;
@@ -366,17 +367,27 @@ static int cedrus_queue_setup(struct vb2_queue *vq, unsigned int *nbufs,
 {
 	struct cedrus_ctx *ctx = vb2_get_drv_priv(vq);
 	struct v4l2_pix_format *pix_fmt;
+	unsigned int extra_size = 0;
 
-	if (V4L2_TYPE_IS_OUTPUT(vq->type))
+	if (V4L2_TYPE_IS_OUTPUT(vq->type)) {
 		pix_fmt = &ctx->src_fmt;
-	else
+	} else {
 		pix_fmt = &ctx->dst_fmt;
 
+		/* The HEVC decoder needs extra size on the output buffer. */
+		if (ctx->src_fmt.pixelformat == V4L2_PIX_FMT_HEVC_SLICE) {
+			extra_size = DIV_ROUND_UP(pix_fmt->width, 4);
+			extra_size = ALIGN(extra_size, 32);
+			extra_size *= ALIGN(pix_fmt->height, 16) * 3;
+			extra_size /= 2;
+		}
+	}
+
 	if (*nplanes) {
-		if (sizes[0] < pix_fmt->sizeimage)
-			return -EINVAL;
+		if (sizes[0] < (pix_fmt->sizeimage + extra_size))
+			sizes[0] = pix_fmt->sizeimage + extra_size;
 	} else {
-		sizes[0] = pix_fmt->sizeimage;
+		sizes[0] = pix_fmt->sizeimage + extra_size;
 		*nplanes = 1;
 	}
 
@@ -428,6 +439,18 @@ static int cedrus_buf_prepare(struct vb2_buffer *vb)
 	vb2_set_plane_payload(vb, 0, pix_fmt->sizeimage);
 
 	return 0;
+}
+
+static void cedrus_buf_cleanup(struct vb2_buffer *vb)
+{
+	struct vb2_queue *vq = vb->vb2_queue;
+	struct cedrus_ctx *ctx = vb2_get_drv_priv(vq);
+	struct cedrus_dev *dev = ctx->dev;
+	struct cedrus_dec_ops *ops = dev->dec_ops[ctx->current_codec];
+
+	if (!V4L2_TYPE_IS_OUTPUT(vq->type) && ops->buf_cleanup)
+		ops->buf_cleanup(ctx,
+				 vb2_to_cedrus_buffer(vq->bufs[vb->index]));
 }
 
 static int cedrus_start_streaming(struct vb2_queue *vq, unsigned int count)
@@ -493,6 +516,7 @@ static void cedrus_buf_request_complete(struct vb2_buffer *vb)
 static struct vb2_ops cedrus_qops = {
 	.queue_setup		= cedrus_queue_setup,
 	.buf_prepare		= cedrus_buf_prepare,
+	.buf_cleanup		= cedrus_buf_cleanup,
 	.buf_queue		= cedrus_buf_queue,
 	.buf_out_validate	= cedrus_buf_out_validate,
 	.buf_request_complete	= cedrus_buf_request_complete,
