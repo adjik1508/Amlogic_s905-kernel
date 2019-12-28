@@ -1041,7 +1041,6 @@ static bool vop_crtc_mode_fixup(struct drm_crtc *crtc,
 				struct drm_display_mode *adjusted_mode)
 {
 	struct vop *vop = to_vop(crtc);
-	unsigned long rate;
 
 	adjusted_mode->clock =
 		DIV_ROUND_UP(clk_round_rate(vop->dclk,
