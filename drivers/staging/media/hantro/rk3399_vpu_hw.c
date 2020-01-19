@@ -66,10 +66,10 @@ static const struct hantro_fmt rk3399_vpu_dec_fmts[] = {
 		.max_depth = 2,
 		.frmsize = {
 			.min_width = 48,
-			.max_width = 4096,
+			.max_width = 1920,
 			.step_width = MB_DIM,
 			.min_height = 48,
-			.max_height = 2304,
+			.max_height = 1088,
 			.step_height = MB_DIM,
 		},
 	},

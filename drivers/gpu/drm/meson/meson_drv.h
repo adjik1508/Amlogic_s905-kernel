@@ -141,7 +141,7 @@ struct meson_drm {
 	} afbcd;
 
 	struct {
-		dma_addr_t addr_phys;
+		dma_addr_t addr_dma;
 		uint32_t *addr;
 		unsigned int offset;
 	} rdma;

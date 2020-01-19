@@ -444,7 +444,7 @@ void rk3399_vpu_h264_dec_run(struct hantro_ctx *ctx)
 	/* Destination (decoded frame) buffer. */
 	addr = vb2_dma_contig_plane_dma_addr(&dst_buf->vb2_buf, 0);
 	/* Adjust dma addr to start at second line for bottom field */
-	if (ctrls->slices[0].flags & V4L2_H264_SLICE_FLAG_BOTTOM_FIELD)
+	if (slices[0].flags & V4L2_H264_SLICE_FLAG_BOTTOM_FIELD)
 		offset = ALIGN(ctx->src_fmt.width, MB_DIM);
 	vdpu_write_relaxed(vpu, addr + offset, VDPU_REG_DEC_OUT_BASE);
 
@@ -462,10 +462,10 @@ void rk3399_vpu_h264_dec_run(struct hantro_ctx *ctx)
 		 * DMV buffer is split in two for field encoded frames,
 		 * adjust offset for bottom field
 		 */
-		if (ctrls->slices[0].flags & V4L2_H264_SLICE_FLAG_BOTTOM_FIELD)
+		if (slices[0].flags & V4L2_H264_SLICE_FLAG_BOTTOM_FIELD)
 			offset += 32 * MB_WIDTH(ctx->src_fmt.width) *
 				  MB_HEIGHT(ctx->src_fmt.height);
-		vdpu_write_relaxed(vpu, addr, VDPU_REG_DIR_MV_BASE);
+		vdpu_write_relaxed(vpu, addr + offset, VDPU_REG_DIR_MV_BASE);
 	}
 
 	vdpu_write_relaxed(vpu, hantro_h264_get_ref_buf(ctx, 0), VDPU_REG_REFER0_BASE);
