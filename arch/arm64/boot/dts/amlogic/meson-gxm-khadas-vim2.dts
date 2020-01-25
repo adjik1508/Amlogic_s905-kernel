@@ -157,7 +157,7 @@
 
 	sound {
 		compatible = "amlogic,gx-sound-card";
-		model = "GXM-KHADAS-VIM2";
+		model = "AMLGX";
 		audio-routing = "I2S ENCODER Playback", "I2S FIFO Playback";
 
 		assigned-clocks = <&clkc CLKID_MPLL2>,
