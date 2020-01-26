@@ -25,7 +25,7 @@ int meson_rdma_init(struct meson_drm *priv)
 {
 	/* Allocate a 4k buffer */
 	priv->rdma.addr = dma_alloc_coherent(priv->dev, SZ_4K,
-					     &priv->rdma.addr_phys,
+					     &priv->rdma.addr_dma,
 					     GFP_KERNEL);
 	if (!priv->rdma.addr)
 		return -ENOMEM;
@@ -44,16 +44,16 @@ int meson_rdma_init(struct meson_drm *priv)
 
 void meson_rdma_free(struct meson_drm *priv)
 {
-	if (!priv->rdma.addr && !priv->rdma.addr_phys)
+	if (!priv->rdma.addr && !priv->rdma.addr_dma)
 		return;
 
 	meson_rdma_stop(priv);
 
 	dma_free_coherent(priv->dev, SZ_4K,
-			  priv->rdma.addr, priv->rdma.addr_phys);
+			  priv->rdma.addr, priv->rdma.addr_dma);
 
 	priv->rdma.addr = NULL;
-	priv->rdma.addr_phys = (dma_addr_t)NULL;
+	priv->rdma.addr_dma = (dma_addr_t)NULL;
 }
 
 void meson_rdma_setup(struct meson_drm *priv)
@@ -115,11 +115,11 @@ void meson_rdma_flush(struct meson_drm *priv)
 	meson_rdma_stop(priv);
 
 	/* Start of Channel 1 register writes buffer */
-	writel(priv->rdma.addr_phys,
+	writel(priv->rdma.addr_dma,
 	       priv->io_base + _REG(RDMA_AHB_START_ADDR_1));
 
 	/* Last byte on Channel 1 register writes buffer */
-	writel(priv->rdma.addr_phys + (priv->rdma.offset * RDMA_DESC_SIZE) - 1,
+	writel(priv->rdma.addr_dma + (priv->rdma.offset * RDMA_DESC_SIZE) - 1,
 	       priv->io_base + _REG(RDMA_AHB_END_ADDR_1));
 
 	/* Trigger Channel 1 on VSYNC event */

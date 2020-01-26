@@ -1664,9 +1664,6 @@ static void hdmi_config_AVI(struct dw_hdmi *hdmi, struct drm_display_mode *mode)
 		break;
 	}
 
-	drm_hdmi_avi_infoframe_quant_range(&frame, &hdmi->connector, mode,
-					   HDMI_QUANTIZATION_RANGE_FULL);
-
 	drm_hdmi_avi_infoframe_content_type(&frame, conn_state);
 
 	hdmi_infoframe_log(KERN_INFO, hdmi->dev, (union hdmi_infoframe *)&frame);
@@ -2423,7 +2420,8 @@ static int dw_hdmi_connector_atomic_check(struct drm_connector *connector,
 	if (!crtc)
 		return 0;
 
-	if (!hdr_metadata_equal(old_state, new_state)) {
+	if (!hdr_metadata_equal(old_state, new_state) ||
+	    old_state->content_type != new_state->content_type) {
 		crtc_state = drm_atomic_get_crtc_state(state, crtc);
 		if (IS_ERR(crtc_state))
 			return PTR_ERR(crtc_state);
