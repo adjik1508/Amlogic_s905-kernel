@@ -155,10 +155,6 @@
 	status = "okay";
 };
 
-&aiu {
-	status = "okay";
-};
-
 &cec_AO {
 	status = "okay";
 	pinctrl-0 = <&ao_cec_pins>;
