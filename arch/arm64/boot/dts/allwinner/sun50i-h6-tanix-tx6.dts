@@ -14,6 +14,7 @@
 	compatible = "oranth,tanix-tx6", "allwinner,sun50i-h6";
 
 	aliases {
+		ethernet0 = &emac;
 		serial0 = &uart0;
 	};
 
@@ -50,6 +51,14 @@
 };
 
 &dwc3 {
+	status = "okay";
+};
+
+&emac {
+	pinctrl-names = "default";
+	pinctrl-0 = <&ext_rmii_pins>;
+	phy-mode = "rmii";
+	phy-handle = <&ext_rmii_phy>;
 	status = "okay";
 };
 
