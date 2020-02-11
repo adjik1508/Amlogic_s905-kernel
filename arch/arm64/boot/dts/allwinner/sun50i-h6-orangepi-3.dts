@@ -16,7 +16,6 @@
 	aliases {
 		serial0 = &uart0;
 		serial1 = &uart1;
-		serial9 = &r_uart;
 		ethernet0 = &emac;
 	};
 
@@ -187,13 +186,10 @@
 };
 
 &mmc2 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&mmc2_pins>;
 	vmmc-supply = <&reg_cldo1>;
 	vqmmc-supply = <&reg_bldo2>;
-	bus-width = <8>;
-	non-removable;
 	cap-mmc-hw-reset;
+	bus-width = <8>;
 	status = "okay";
 };
 
@@ -203,20 +199,6 @@
 
 &ohci3 {
 	status = "okay";
-};
-
-&de {
-	status = "okay";
-};
-
-&hdmi {
-	status = "okay";
-};
-
-&hdmi_out {
-	hdmi_out_con: endpoint {
-		remote-endpoint = <&hdmi_con_in>;
-	};
 };
 
 &pio {
@@ -340,7 +322,9 @@
 	};
 };
 
-/delete-node/ &spi0;
+&r_ir {
+	status = "okay";
+};
 
 &uart0 {
 	pinctrl-names = "default";
