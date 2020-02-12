@@ -114,6 +114,10 @@
 	};
 };
 
+&cpu0 {
+	cpu-supply = <&vdd_cpux>;
+};
+
 &codec {
 	allwinner,audio-routing =
 		"Line Out", "LINEOUT",

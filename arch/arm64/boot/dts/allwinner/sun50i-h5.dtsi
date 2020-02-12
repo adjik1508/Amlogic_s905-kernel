@@ -300,4 +300,15 @@
 
 &sid {
 	compatible = "allwinner,sun50i-h5-sid";
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	ths_calibration: thermal-sensor-calibration@34 {
+		reg = <0x34 4>;
+	};
+};
+
+&ths {
+	compatible = "allwinner,sun50i-h5-ths";
+	#thermal-sensor-cells = <1>;
 };
